@@ -4,6 +4,7 @@ import {
   BrainCircuit,
   Code2,
   Database,
+  LibraryBig,
   Pencil,
   Plus,
   Route,
@@ -104,6 +105,7 @@ const categoryLabels: Record<string, string> = {
   backend: "后端",
   frontend: "前端",
   security: "安全",
+  knowledge: "检索",
   general: "通用",
 }
 
@@ -114,6 +116,7 @@ export function AgentsPage() {
   )
   const agents = state?.agents ?? []
   const skills = state?.skills ?? []
+  const knowledgeBases = state?.knowledgeBases ?? []
   const enabled = agents.filter((agent) => agent.enabled).length
   const customModels = agents.filter(
     (agent) => agent.model.provider || agent.model.model
@@ -169,6 +172,9 @@ export function AgentsPage() {
                 (id) =>
                   skills.find((skill) => skill.id === id)?.displayName ?? id
               )}
+              knowledgeBaseNames={agent.knowledgeBaseIds.map(
+                (id) => knowledgeBases.find((item) => item.id === id)?.name ?? id
+              )}
               globalProvider={state?.config.provider ?? "—"}
               globalModel={state?.config.model ?? "—"}
               onEdit={() => setEditing(agent)}
@@ -182,6 +188,7 @@ export function AgentsPage() {
           key={editing === "new" ? "new" : editing.id}
           agent={editing}
           skills={skills}
+          knowledgeBases={knowledgeBases}
           globalProvider={state?.config.provider ?? ""}
           globalModel={state?.config.model ?? ""}
           globalPricing={state?.config.pricing ?? zeroPricing}
@@ -201,12 +208,14 @@ export function AgentsPage() {
 function AgentCard({
   agent,
   skillNames,
+  knowledgeBaseNames,
   globalProvider,
   globalModel,
   onEdit,
 }: {
   agent: AgentDefinition
   skillNames: string[]
+  knowledgeBaseNames: string[]
   globalProvider: string
   globalModel: string
   onEdit: () => void
@@ -229,6 +238,7 @@ function AgentCard({
         </div>
         <CardAction className="flex items-center gap-2">
           {agent.builtin ? <Badge variant="outline">内置</Badge> : null}
+          {agent.internal ? <Badge variant="secondary">系统 Agent</Badge> : null}
           <Badge variant={agent.enabled ? "default" : "secondary"}>
             {agent.enabled ? "启用" : "停用"}
           </Badge>
@@ -247,6 +257,10 @@ function AgentCard({
           />
           <Metadata label="工具" value={`${agent.tools.length} 个`} />
           <Metadata label="Skills" value={`${agent.skillIds.length} 个`} />
+          <Metadata
+            label="知识库"
+            value={`${agent.knowledgeBaseIds.length} 个`}
+          />
         </div>
         <Separator />
         <div className="flex flex-wrap gap-2">
@@ -270,6 +284,16 @@ function AgentCard({
             ))}
           </div>
         ) : null}
+        {knowledgeBaseNames.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {knowledgeBaseNames.map((name) => (
+              <Badge key={name} variant="secondary">
+                <LibraryBig data-icon="inline-start" />
+                {name}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
       </CardContent>
       <CardFooter className="justify-between gap-3">
         <span className="truncate font-mono text-xs text-muted-foreground">
@@ -287,6 +311,7 @@ function AgentCard({
 function AgentDialog({
   agent,
   skills,
+  knowledgeBases,
   globalProvider,
   globalModel,
   globalPricing,
@@ -295,6 +320,7 @@ function AgentDialog({
 }: {
   agent: AgentDefinition | "new"
   skills: { id: string; displayName: string; description: string }[]
+  knowledgeBases: { id: string; name: string; description: string }[]
   globalProvider: string
   globalModel: string
   globalPricing: ModelPricing
@@ -360,6 +386,14 @@ function AgentDialog({
         : form.skillIds.filter((item) => item !== skillId)
     )
 
+  const toggleKnowledgeBase = (knowledgeBaseId: string, checked: boolean) =>
+    set(
+      "knowledgeBaseIds",
+      checked
+        ? [...new Set([...form.knowledgeBaseIds, knowledgeBaseId])]
+        : form.knowledgeBaseIds.filter((item) => item !== knowledgeBaseId)
+    )
+
   const updatePermission = <K extends keyof PermissionBoundary>(
     key: K,
     value: PermissionBoundary[K]
@@ -386,7 +420,7 @@ function AgentDialog({
             >
               <TabsTrigger value="identity">身份与模型</TabsTrigger>
               <TabsTrigger value="prompt">系统提示词</TabsTrigger>
-              <TabsTrigger value="capabilities">工具与 Skills</TabsTrigger>
+              <TabsTrigger value="capabilities">能力与知识</TabsTrigger>
               <TabsTrigger value="permissions">权限边界</TabsTrigger>
             </TabsList>
 
@@ -415,6 +449,7 @@ function AgentDialog({
                     <FieldLabel htmlFor="agent-category">类别</FieldLabel>
                     <Select
                       value={form.category}
+                      disabled={agent !== "new" && agent.internal}
                       onValueChange={(value) => set("category", String(value))}
                     >
                       <SelectTrigger id="agent-category" className="w-full">
@@ -444,6 +479,7 @@ function AgentDialog({
                     <Switch
                       id="agent-enabled"
                       checked={form.enabled}
+                      disabled={agent !== "new" && agent.internal}
                       onCheckedChange={(checked) => set("enabled", checked)}
                     />
                   </Field>
@@ -598,6 +634,24 @@ function AgentDialog({
             </TabsContent>
 
             <TabsContent value="capabilities" className="pt-4">
+              {agent !== "new" && agent.internal ? (
+                <Card size="sm">
+                  <CardHeader>
+                    <CardTitle>受保护的只读能力</CardTitle>
+                    <CardDescription>
+                      这个系统 Agent 只接收检索服务传入的候选文档片段，实际运行时使用
+                      --no-tools，不能访问文件系统、Shell、网络或写入任何内容。
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline">无工具</Badge>
+                      <Badge variant="outline">无 Skills</Badge>
+                      <Badge variant="outline">无外部知识库关联</Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
               <FieldGroup>
                 <FieldSet>
                   <FieldLegend>工具集</FieldLegend>
@@ -641,7 +695,7 @@ function AgentDialog({
                   </div>
                 </FieldSet>
                 <FieldSet>
-                  <FieldLegend>Skills / 知识</FieldLegend>
+                  <FieldLegend>Skills / 方法</FieldLegend>
                   <FieldDescription>
                     选中的 SKILL.md 会在创建这个 Agent 的 Pi session
                     时显式加载。
@@ -676,10 +730,70 @@ function AgentDialog({
                     ))}
                   </div>
                 </FieldSet>
+                <FieldSet>
+                  <FieldLegend>关联知识库</FieldLegend>
+                  <FieldDescription>
+                    关联后会把知识库介绍注入系统提示词，并自动为这个 Agent
+                    增加只读的 aegis_search_knowledge 工具。
+                  </FieldDescription>
+                  {knowledgeBases.length === 0 ? (
+                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                      暂无知识库，请先在知识库页面创建并添加 Markdown 文档。
+                    </div>
+                  ) : (
+                    <div
+                      data-slot="checkbox-group"
+                      className="grid gap-2 sm:grid-cols-2"
+                    >
+                      {knowledgeBases.map((knowledgeBase) => (
+                        <Field
+                          key={knowledgeBase.id}
+                          orientation="horizontal"
+                          className="rounded-lg border p-3"
+                        >
+                          <Checkbox
+                            id={`agent-knowledge-${knowledgeBase.id}`}
+                            checked={form.knowledgeBaseIds.includes(
+                              knowledgeBase.id
+                            )}
+                            onCheckedChange={(checked) =>
+                              toggleKnowledgeBase(knowledgeBase.id, checked)
+                            }
+                          />
+                          <FieldLabel
+                            htmlFor={`agent-knowledge-${knowledgeBase.id}`}
+                            className="font-normal"
+                          >
+                            <span>{knowledgeBase.name}</span>
+                            <FieldDescription>
+                              {knowledgeBase.description}
+                            </FieldDescription>
+                          </FieldLabel>
+                        </Field>
+                      ))}
+                    </div>
+                  )}
+                </FieldSet>
               </FieldGroup>
+              )}
             </TabsContent>
 
             <TabsContent value="permissions" className="pt-4">
+              {agent !== "new" && agent.internal ? (
+                <Card size="sm">
+                  <CardHeader>
+                    <CardTitle>固定权限边界</CardTitle>
+                    <CardDescription>
+                      禁止网络、Shell 与写入，审批策略固定为 none；检索进程没有可调用工具。
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2">
+                    <BoundaryBadge allowed={false} label="写入" />
+                    <BoundaryBadge allowed={false} label="Shell" />
+                    <BoundaryBadge allowed={false} label="网络" />
+                  </CardContent>
+                </Card>
+              ) : (
               <FieldGroup>
                 <Field>
                   <FieldTitle>工作区范围</FieldTitle>
@@ -748,6 +862,7 @@ function AgentDialog({
                   </Select>
                 </Field>
               </FieldGroup>
+              )}
             </TabsContent>
           </Tabs>
 
@@ -871,6 +986,7 @@ function categoryGlyph(category: string) {
   if (category === "backend") return <Server className={className} />
   if (category === "frontend") return <Code2 className={className} />
   if (category === "security") return <Shield className={className} />
+  if (category === "knowledge") return <Database className={className} />
   if (category === "data") return <Database className={className} />
   return <Wrench className={className} />
 }
@@ -883,6 +999,7 @@ function blankAgent(): SaveAgentInput {
     avatar: "bot",
     category: "general",
     enabled: true,
+    internal: false,
     model: {
       provider: "",
       model: "",
@@ -893,6 +1010,7 @@ function blankAgent(): SaveAgentInput {
     systemPrompt: "",
     tools: [...allTools],
     skillIds: [],
+    knowledgeBaseIds: [],
     permissions: {
       workspaceScope: "run_workspace",
       allowNetwork: false,
@@ -911,10 +1029,12 @@ function agentInput(agent: AgentDefinition): SaveAgentInput {
     avatar: agent.avatar,
     category: agent.category,
     enabled: agent.enabled,
+    internal: agent.internal,
     model: { ...agent.model },
     systemPrompt: agent.systemPrompt,
     tools: [...agent.tools],
     skillIds: [...agent.skillIds],
+    knowledgeBaseIds: [...agent.knowledgeBaseIds],
     permissions: { ...agent.permissions },
   }
 }

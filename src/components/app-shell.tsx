@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   FileSearch,
   ListTodo,
+  LibraryBig,
   MessagesSquare,
   Moon,
   Plus,
@@ -52,6 +53,7 @@ const navigation = [
     items: [
       { to: "/agents", label: "Agents", icon: Bot },
       { to: "/skills", label: "Skills", icon: Wrench },
+      { to: "/knowledge-bases", label: "知识库", icon: LibraryBig },
     ],
   },
   {

@@ -124,6 +124,14 @@ func defaultAgents(now time.Time) []AgentDefinition {
 			CreatedAt:   now, UpdatedAt: now,
 		},
 		{
+			ID: "knowledge-retriever", Name: builtinKnowledgeRetrievalAgent.Name, Description: "对知识库 Markdown 候选片段进行只读排序、摘要并返回可溯源检索结果。",
+			Avatar: "database", Category: "knowledge", Enabled: true, Builtin: true, Internal: true,
+			SystemPrompt: builtinKnowledgeRetrievalAgent.SystemPrompt,
+			Tools:        []string{}, SkillIDs: []string{}, KnowledgeBaseIDs: []string{},
+			Permissions: builtinKnowledgeRetrievalAgent.Permissions,
+			CreatedAt:   now, UpdatedAt: now,
+		},
+		{
 			ID: "backend-engineer", Name: "后端工程师", Description: "负责 Go 服务、Gin API、GORM/SQLite、并发运行时与后端测试。",
 			Avatar: "server", Category: "backend", Enabled: true, Builtin: true,
 			SystemPrompt: `You are Aegis's senior backend engineer. Own server-side implementation end to end: understand current contracts, make coherent changes, choose the cleanest architecture, handle concurrency explicitly, and prove behavior with focused and integration tests. Communicate concrete evidence and remaining risk; never report work you did not perform.`,
@@ -212,6 +220,9 @@ func (s *Store) seedRegistry() error {
 	// so saved definitions and the runtime tool list stay in sync.
 	for index := range s.agents {
 		agent := &s.agents[index]
+		if agent.Internal {
+			continue
+		}
 		missingRequiredTool := false
 		for _, required := range requiredAgentTools {
 			if !slices.Contains(agent.Tools, required) {
@@ -269,7 +280,6 @@ func (s *Store) UpdateAgent(id string, input SaveAgentInput) (AgentDefinition, e
 func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	input.Tools = ensureRequiredAgentTools(input.Tools)
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return AgentDefinition{}, errors.New("Agent 名称不能为空")
@@ -288,7 +298,15 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 	if !creating && !exists {
 		return AgentDefinition{}, errors.New("agent not found")
 	}
-	if err := validateAgentInput(input, s.skills); err != nil {
+	internal := exists && s.agents[index].Internal
+	if !internal {
+		input.Tools = ensureRequiredAgentTools(input.Tools)
+	}
+	knowledgeBaseIDs, err := s.knowledgeBaseIDSet()
+	if err != nil {
+		return AgentDefinition{}, err
+	}
+	if err := validateAgentInput(input, s.skills, knowledgeBaseIDs, internal); err != nil {
 		return AgentDefinition{}, err
 	}
 	now := time.Now()
@@ -300,10 +318,18 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 	}
 	agent := AgentDefinition{
 		ID: id, Name: name, Description: strings.TrimSpace(input.Description), Avatar: strings.TrimSpace(input.Avatar),
-		Category: fallback(strings.TrimSpace(input.Category), "general"), Enabled: input.Enabled, Builtin: builtin,
+		Category: fallback(strings.TrimSpace(input.Category), "general"), Enabled: input.Enabled, Builtin: builtin, Internal: internal,
 		Model: input.Model, SystemPrompt: strings.TrimSpace(input.SystemPrompt),
-		Tools: ensureRequiredAgentTools(input.Tools), SkillIDs: uniqueStrings(input.SkillIDs), Permissions: input.Permissions,
+		Tools: ensureRequiredAgentTools(input.Tools), SkillIDs: uniqueStrings(input.SkillIDs), KnowledgeBaseIDs: uniqueStrings(input.KnowledgeBaseIDs), Permissions: input.Permissions,
 		CreatedAt: createdAt, UpdatedAt: now,
+	}
+	if internal {
+		agent.Category = "knowledge"
+		agent.Enabled = true
+		agent.Tools = []string{}
+		agent.SkillIDs = []string{}
+		agent.KnowledgeBaseIDs = []string{}
+		agent.Permissions = builtinKnowledgeRetrievalAgent.Permissions
 	}
 	if agent.Avatar == "" {
 		agent.Avatar = "bot"
@@ -586,6 +612,9 @@ func (s *Store) executionAgent(id string) (AgentDefinition, error) {
 	if !agent.Enabled {
 		return AgentDefinition{}, errors.New("Agent 已停用")
 	}
+	if agent.Internal {
+		return AgentDefinition{}, errors.New("系统内部 Agent 不能执行 Issue")
+	}
 	return agent, nil
 }
 
@@ -608,7 +637,7 @@ func (s *Store) chooseAgent(issue Issue) (AgentDefinition, error) {
 		}
 	}
 	for _, agent := range agents {
-		if agent.ID == wanted && agent.Enabled {
+		if agent.ID == wanted && agent.Enabled && !agent.Internal {
 			return agent, nil
 		}
 	}
@@ -616,26 +645,31 @@ func (s *Store) chooseAgent(issue Issue) (AgentDefinition, error) {
 		return AgentDefinition{}, fmt.Errorf("Issue 指定的 Agent 不存在或已停用: %s", issue.AssigneeAgentID)
 	}
 	for _, agent := range agents {
-		if agent.Category != "orchestrator" && agent.Enabled {
+		if agent.Category != "orchestrator" && agent.Enabled && !agent.Internal {
 			return agent, nil
 		}
 	}
 	return AgentDefinition{}, errors.New("没有可用于执行 Issue 的已启用 Agent")
 }
 
-func validateAgentInput(input SaveAgentInput, skills []SkillDefinition) error {
+func validateAgentInput(input SaveAgentInput, skills []SkillDefinition, knowledgeBaseIDs map[string]struct{}, internal bool) error {
 	if strings.TrimSpace(input.SystemPrompt) == "" {
 		return errors.New("系统提示词不能为空")
 	}
 	if len(input.SystemPrompt) > 100000 {
 		return errors.New("系统提示词过长")
 	}
-	if len(input.Tools) == 0 {
+	if len(input.Tools) == 0 && !internal {
 		return errors.New("至少选择一个工具")
 	}
 	for _, id := range uniqueStrings(input.SkillIDs) {
 		if _, exists := skillIndex(skills, id); !exists {
 			return fmt.Errorf("Skill 不存在: %s", id)
+		}
+	}
+	for _, id := range uniqueStrings(input.KnowledgeBaseIDs) {
+		if _, exists := knowledgeBaseIDs[id]; !exists {
+			return fmt.Errorf("知识库不存在: %s", id)
 		}
 	}
 	if input.Permissions.WorkspaceScope != "" && input.Permissions.WorkspaceScope != "run_workspace" {
@@ -784,6 +818,7 @@ func cloneAgent(source AgentDefinition) AgentDefinition {
 	}
 	result.Tools = append([]string{}, source.Tools...)
 	result.SkillIDs = append([]string{}, source.SkillIDs...)
+	result.KnowledgeBaseIDs = append([]string{}, source.KnowledgeBaseIDs...)
 	return result
 }
 

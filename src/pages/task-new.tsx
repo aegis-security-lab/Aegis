@@ -76,7 +76,9 @@ export function TaskNewPage() {
       "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。",
   })
 
-  const enabledAgents = (state?.agents ?? []).filter((agent) => agent.enabled)
+  const enabledAgents = (state?.agents ?? []).filter(
+    (agent) => agent.enabled && !agent.internal
+  )
   const defaultAgent =
     enabledAgents.find((agent) => agent.id === "aegis-orchestrator") ??
     enabledAgents[0]

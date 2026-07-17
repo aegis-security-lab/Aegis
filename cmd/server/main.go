@@ -123,6 +123,23 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusCreated, result)
 	})
+	api.POST("/internal/executions/:id/knowledge/search", func(c *gin.Context) {
+		var in control.KnowledgeSearchInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.SearchExecutionKnowledge(c.Request.Context(), c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
 	api.GET("/attachments/:id", func(c *gin.Context) {
 		attachment, file, err := store.AttachmentFile(c.Param("id"))
 		if err != nil {
@@ -332,6 +349,84 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.Status(204)
+	})
+	api.GET("/knowledge-bases", func(c *gin.Context) {
+		result, err := store.ListKnowledgeBases()
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.GET("/knowledge-bases/:id", func(c *gin.Context) {
+		result, err := store.GetKnowledgeBase(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/knowledge-bases", func(c *gin.Context) {
+		var in control.SaveKnowledgeBaseInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		result, err := store.CreateKnowledgeBase(in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
+	api.PUT("/knowledge-bases/:id", func(c *gin.Context) {
+		var in control.SaveKnowledgeBaseInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		result, err := store.UpdateKnowledgeBase(c.Param("id"), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.DELETE("/knowledge-bases/:id", func(c *gin.Context) {
+		if err := store.DeleteKnowledgeBase(c.Param("id")); err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	api.POST("/knowledge-bases/:id/documents", func(c *gin.Context) {
+		var in control.SaveKnowledgeDocumentInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		result, err := store.CreateKnowledgeDocument(c.Param("id"), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
+	api.PUT("/knowledge-documents/:id", func(c *gin.Context) {
+		var in control.SaveKnowledgeDocumentInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		result, err := store.UpdateKnowledgeDocument(c.Param("id"), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.DELETE("/knowledge-documents/:id", func(c *gin.Context) {
+		if err := store.DeleteKnowledgeDocument(c.Param("id")); err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
 	})
 	api.GET("/skills", func(c *gin.Context) { c.JSON(200, store.Skills()) })
 	api.POST("/skills", func(c *gin.Context) {

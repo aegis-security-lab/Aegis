@@ -120,5 +120,14 @@ func toolCatalog() map[string]ToolSnapshot {
 				parameter("description", "string", "可选的交付物简短说明。", false),
 			},
 		},
+		"aegis_search_knowledge": {
+			Name: "aegis_search_knowledge", Label: "Search knowledge", Source: "aegis_extension",
+			Description: "在当前 Agent 关联的知识库中进行只读检索。系统先做关键词召回，再由内置只读检索 Agent 对 Markdown 文档开头进行排序和摘要。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("query", "string", "需要查找的问题、概念或关键词。", true),
+				parameter("knowledgeBaseId", "string", "可选的已关联知识库 ID；不填写时检索全部关联知识库。", false),
+				parameter("limit", "number", "返回结果上限，范围 1–10，默认 5。", false),
+			},
+		},
 	}
 }

@@ -9,6 +9,9 @@ import type {
   Issue,
   IssueComment,
   IssueDetail,
+  KnowledgeBase,
+  KnowledgeBaseDetail,
+  KnowledgeDocument,
   Message,
   RuntimeProbe,
   SaveConfigInput,
@@ -23,6 +26,14 @@ export type SaveAgentInput = Omit<
 export type SaveSkillInput = Omit<
   SkillDefinition,
   "builtin" | "createdAt" | "updatedAt"
+>
+export type SaveKnowledgeBaseInput = Pick<
+  KnowledgeBase,
+  "name" | "description" | "retrievalProvider"
+>
+export type SaveKnowledgeDocumentInput = Pick<
+  KnowledgeDocument,
+  "name" | "content"
 >
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -111,6 +122,47 @@ export const updateAgent = (id: string, input: SaveAgentInput) =>
   })
 export const deleteAgent = (id: string) =>
   request<void>(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" })
+export const fetchKnowledgeBase = (id: string) =>
+  request<KnowledgeBaseDetail>(
+    `/api/knowledge-bases/${encodeURIComponent(id)}`
+  )
+export const createKnowledgeBase = (input: SaveKnowledgeBaseInput) =>
+  request<KnowledgeBase>("/api/knowledge-bases", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+export const updateKnowledgeBase = (
+  id: string,
+  input: SaveKnowledgeBaseInput
+) =>
+  request<KnowledgeBase>(`/api/knowledge-bases/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })
+export const deleteKnowledgeBase = (id: string) =>
+  request<void>(`/api/knowledge-bases/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
+export const createKnowledgeDocument = (
+  knowledgeBaseId: string,
+  input: SaveKnowledgeDocumentInput
+) =>
+  request<KnowledgeDocument>(
+    `/api/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents`,
+    { method: "POST", body: JSON.stringify(input) }
+  )
+export const updateKnowledgeDocument = (
+  id: string,
+  input: SaveKnowledgeDocumentInput
+) =>
+  request<KnowledgeDocument>(
+    `/api/knowledge-documents/${encodeURIComponent(id)}`,
+    { method: "PUT", body: JSON.stringify(input) }
+  )
+export const deleteKnowledgeDocument = (id: string) =>
+  request<void>(`/api/knowledge-documents/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
 export const createSkill = (input: SaveSkillInput) =>
   request<SkillDefinition>("/api/skills", {
     method: "POST",

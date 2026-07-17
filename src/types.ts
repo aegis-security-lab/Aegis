@@ -263,13 +263,36 @@ export interface AgentDefinition {
   category: string
   enabled: boolean
   builtin: boolean
+  internal: boolean
   model: AgentModelConfig
   systemPrompt: string
   tools: string[]
   skillIds: string[]
+  knowledgeBaseIds: string[]
   permissions: PermissionBoundary
   createdAt: string
   updatedAt: string
+}
+export interface KnowledgeBase {
+  id: string
+  name: string
+  description: string
+  retrievalProvider: string
+  documentCount: number
+  createdAt: string
+  updatedAt: string
+}
+export interface KnowledgeDocument {
+  id: string
+  knowledgeBaseId: string
+  name: string
+  content: string
+  createdAt: string
+  updatedAt: string
+}
+export interface KnowledgeBaseDetail {
+  knowledgeBase: KnowledgeBase
+  documents: KnowledgeDocument[]
 }
 export interface SkillDefinition {
   id: string
@@ -306,6 +329,7 @@ export interface AppState {
   approvals: Approval[]
   agents: AgentDefinition[]
   skills: SkillDefinition[]
+  knowledgeBases: KnowledgeBase[]
   sessions: SessionSummary[]
   updatedAt: string
 }

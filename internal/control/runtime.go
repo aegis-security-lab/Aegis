@@ -31,6 +31,7 @@ var guardExtension []byte
 
 type Manager struct {
 	store      *Store
+	knowledge  *KnowledgeRetrievalService
 	guardPath  string
 	controlURL string
 	mu         sync.RWMutex
@@ -73,6 +74,7 @@ func NewManager(store *Store) (*Manager, error) {
 	port := fallback(strings.TrimSpace(os.Getenv("PORT")), "8080")
 	controlURL := fallback(strings.TrimSpace(os.Getenv("AEGIS_CONTROL_URL")), "http://127.0.0.1:"+port)
 	m := &Manager{store: store, guardPath: path, controlURL: strings.TrimRight(controlURL, "/"), sessions: map[string]*PiSession{}}
+	m.knowledge = NewKnowledgeRetrievalService(store, NewKeywordAIRetriever(NewPiKnowledgeRanker(store, path)))
 	if store.Config().Configured {
 		go m.resumeWork()
 	}
@@ -195,11 +197,22 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	if !cfg.Configured {
 		return nil, errors.New("Aegis 尚未配置")
 	}
-	args := []string{"--mode", "rpc", "--provider", cfg.Provider, "--model", cfg.Model, "--thinking", cfg.Thinking, "--session-dir", filepath.Join(m.store.DataDir(), "sessions"), "--session-id", e.SessionID, "--name", issue.Identifier + " · " + agent.Name, "--no-extensions", "--extension", m.guardPath, "--no-approve", "--no-skills", "--system-prompt", agent.SystemPrompt}
+	knowledgeBases, err := m.store.knowledgeBasesByIDs(agent.KnowledgeBaseIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(knowledgeBases) != len(uniqueStrings(agent.KnowledgeBaseIDs)) {
+		return nil, errors.New("Agent 关联的知识库不存在")
+	}
+	systemPrompt := agentKnowledgeSystemPrompt(agent.SystemPrompt, knowledgeBases)
+	args := []string{"--mode", "rpc", "--provider", cfg.Provider, "--model", cfg.Model, "--thinking", cfg.Thinking, "--session-dir", filepath.Join(m.store.DataDir(), "sessions"), "--session-id", e.SessionID, "--name", issue.Identifier + " · " + agent.Name, "--no-extensions", "--extension", m.guardPath, "--no-approve", "--no-skills", "--system-prompt", systemPrompt}
 	for _, p := range m.store.skillPaths(agent.SkillIDs) {
 		args = append(args, "--skill", p)
 	}
 	activeTools := uniqueStrings(agent.Tools)
+	if len(knowledgeBases) > 0 {
+		activeTools = uniqueStrings(append(activeTools, "aegis_search_knowledge"))
+	}
 	if len(activeTools) == 0 {
 		args = append(args, "--no-tools")
 	} else {
@@ -224,6 +237,10 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 		"AEGIS_EXECUTION_ID="+e.ID,
 		"AEGIS_CONTROL_TOKEN="+controlToken,
 	)
+	if len(knowledgeBases) > 0 {
+		encodedKnowledgeBaseIDs, _ := json.Marshal(agent.KnowledgeBaseIDs)
+		cmd.Env = append(cmd.Env, "AEGIS_KNOWLEDGE_BASE_IDS="+string(encodedKnowledgeBaseIDs))
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -241,7 +258,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	}
 	if err := m.store.updateExecution(e.ID, map[string]any{
 		"initial_prompt": prompt,
-		"system_prompt":  agent.SystemPrompt,
+		"system_prompt":  systemPrompt,
 		"tools_snapshot": snapshotTools(activeTools),
 	}); err != nil {
 		return nil, err
@@ -588,6 +605,19 @@ func (m *Manager) DecomposeExecution(executionID, token string, input DecomposeI
 	m.store.addEvent(session.executionID, session.issueID, "delegation", "Agent 已拆分子 Issues", fmt.Sprintf("%d 个子 Issues 已进入调度器。", len(result.Children)))
 	go m.scheduleChildren(session.issueID)
 	return result, nil
+}
+
+// SearchExecutionKnowledge is called only by the authenticated read-only knowledge tool.
+func (m *Manager) SearchExecutionKnowledge(ctx context.Context, executionID, token string, input KnowledgeSearchInput) (KnowledgeSearchResult, error) {
+	session := m.getSession(executionID)
+	if session == nil || token == "" || len(token) != len(session.controlToken) || subtle.ConstantTimeCompare([]byte(token), []byte(session.controlToken)) != 1 {
+		return KnowledgeSearchResult{}, errors.New("invalid execution control token")
+	}
+	agent, err := m.store.GetAgent(session.agentID)
+	if err != nil {
+		return KnowledgeSearchResult{}, err
+	}
+	return m.knowledge.Search(ctx, agent.KnowledgeBaseIDs, input)
 }
 
 func (m *Manager) ReconcileIssue(issue Issue) {
@@ -985,7 +1015,7 @@ func parsePlan(text string) (planPayload, error) {
 func planningPrompt(i Issue, agents []AgentDefinition) string {
 	var roster strings.Builder
 	for _, a := range agents {
-		if a.Enabled && a.Category != "orchestrator" {
+		if a.Enabled && a.Category != "orchestrator" && !a.Internal {
 			fmt.Fprintf(&roster, "- %s: %s\n", a.ID, a.Description)
 		}
 	}
@@ -1031,7 +1061,7 @@ func mentionPrompt(i Issue, w AgentWakeup, agents []AgentDefinition, db any) str
 	return fmt.Sprintf("You were mentioned on Issue %s: %s. Inspect the Issue context and provide a concrete response. You may perform scoped work using your tools. Finish with a response suitable for the Issue comment thread. Available agent IDs: %v", i.Identifier, i.Title, func() []string {
 		var out []string
 		for _, a := range agents {
-			if a.Enabled {
+			if a.Enabled && !a.Internal {
 				out = append(out, a.ID)
 			}
 		}

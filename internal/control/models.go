@@ -280,20 +280,22 @@ type PermissionBoundary struct {
 	ApprovalMode   string `json:"approvalMode"`
 }
 type AgentDefinition struct {
-	ID           string             `json:"id"`
-	Name         string             `json:"name"`
-	Description  string             `json:"description"`
-	Avatar       string             `json:"avatar"`
-	Category     string             `json:"category"`
-	Enabled      bool               `json:"enabled"`
-	Builtin      bool               `json:"builtin"`
-	Model        AgentModelConfig   `json:"model"`
-	SystemPrompt string             `json:"systemPrompt"`
-	Tools        []string           `json:"tools"`
-	SkillIDs     []string           `json:"skillIds"`
-	Permissions  PermissionBoundary `json:"permissions"`
-	CreatedAt    time.Time          `json:"createdAt"`
-	UpdatedAt    time.Time          `json:"updatedAt"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Avatar           string             `json:"avatar"`
+	Category         string             `json:"category"`
+	Enabled          bool               `json:"enabled"`
+	Builtin          bool               `json:"builtin"`
+	Internal         bool               `json:"internal"`
+	Model            AgentModelConfig   `json:"model"`
+	SystemPrompt     string             `json:"systemPrompt"`
+	Tools            []string           `json:"tools"`
+	SkillIDs         []string           `json:"skillIds"`
+	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds"`
+	Permissions      PermissionBoundary `json:"permissions"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	UpdatedAt        time.Time          `json:"updatedAt"`
 }
 type SkillDefinition struct {
 	ID          string    `json:"id"`
@@ -308,17 +310,19 @@ type SkillDefinition struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 type SaveAgentInput struct {
-	ID           string             `json:"id"`
-	Name         string             `json:"name"`
-	Description  string             `json:"description"`
-	Avatar       string             `json:"avatar"`
-	Category     string             `json:"category"`
-	Enabled      bool               `json:"enabled"`
-	Model        AgentModelConfig   `json:"model"`
-	SystemPrompt string             `json:"systemPrompt"`
-	Tools        []string           `json:"tools"`
-	SkillIDs     []string           `json:"skillIds"`
-	Permissions  PermissionBoundary `json:"permissions"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Avatar           string             `json:"avatar"`
+	Category         string             `json:"category"`
+	Enabled          bool               `json:"enabled"`
+	Internal         bool               `json:"internal"`
+	Model            AgentModelConfig   `json:"model"`
+	SystemPrompt     string             `json:"systemPrompt"`
+	Tools            []string           `json:"tools"`
+	SkillIDs         []string           `json:"skillIds"`
+	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds"`
+	Permissions      PermissionBoundary `json:"permissions"`
 }
 type SaveSkillInput struct {
 	ID          string `json:"id"`
@@ -356,18 +360,79 @@ type SessionDetail struct {
 	Approvals []Approval       `json:"approvals"`
 }
 type StateView struct {
-	Configured bool              `json:"configured"`
-	Config     ConfigView        `json:"config"`
-	Runtime    RuntimeProbe      `json:"runtime"`
-	Projects   []Project         `json:"projects"`
-	Issues     []Issue           `json:"issues"`
-	Relations  []IssueRelation   `json:"relations"`
-	Executions []Execution       `json:"executions"`
-	Approvals  []Approval        `json:"approvals"`
-	Agents     []AgentDefinition `json:"agents"`
-	Skills     []SkillDefinition `json:"skills"`
-	Sessions   []SessionSummary  `json:"sessions"`
-	UpdatedAt  time.Time         `json:"updatedAt"`
+	Configured     bool              `json:"configured"`
+	Config         ConfigView        `json:"config"`
+	Runtime        RuntimeProbe      `json:"runtime"`
+	Projects       []Project         `json:"projects"`
+	Issues         []Issue           `json:"issues"`
+	Relations      []IssueRelation   `json:"relations"`
+	Executions     []Execution       `json:"executions"`
+	Approvals      []Approval        `json:"approvals"`
+	Agents         []AgentDefinition `json:"agents"`
+	Skills         []SkillDefinition `json:"skills"`
+	KnowledgeBases []KnowledgeBase   `json:"knowledgeBases"`
+	Sessions       []SessionSummary  `json:"sessions"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
+}
+
+const KnowledgeProviderKeywordAI = "keyword_ai"
+
+type KnowledgeBase struct {
+	ID                string    `json:"id" gorm:"primaryKey"`
+	Name              string    `json:"name" gorm:"uniqueIndex"`
+	Description       string    `json:"description" gorm:"type:text"`
+	RetrievalProvider string    `json:"retrievalProvider" gorm:"index"`
+	DocumentCount     int64     `json:"documentCount" gorm:"-"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+type KnowledgeDocument struct {
+	ID              string    `json:"id" gorm:"primaryKey"`
+	KnowledgeBaseID string    `json:"knowledgeBaseId" gorm:"uniqueIndex:idx_knowledge_document_name;index"`
+	Name            string    `json:"name" gorm:"uniqueIndex:idx_knowledge_document_name"`
+	Content         string    `json:"content" gorm:"type:text"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+type KnowledgeBaseDetail struct {
+	KnowledgeBase KnowledgeBase       `json:"knowledgeBase"`
+	Documents     []KnowledgeDocument `json:"documents"`
+}
+
+type SaveKnowledgeBaseInput struct {
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	RetrievalProvider string `json:"retrievalProvider"`
+}
+
+type SaveKnowledgeDocumentInput struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+type KnowledgeSearchInput struct {
+	Query           string `json:"query"`
+	KnowledgeBaseID string `json:"knowledgeBaseId"`
+	Limit           int    `json:"limit"`
+}
+
+type KnowledgeSearchHit struct {
+	KnowledgeBaseID   string  `json:"knowledgeBaseId"`
+	KnowledgeBaseName string  `json:"knowledgeBaseName"`
+	DocumentID        string  `json:"documentId"`
+	DocumentName      string  `json:"documentName"`
+	Excerpt           string  `json:"excerpt"`
+	Score             float64 `json:"score"`
+	Reason            string  `json:"reason"`
+}
+
+type KnowledgeSearchResult struct {
+	Provider string               `json:"provider"`
+	Query    string               `json:"query"`
+	Summary  string               `json:"summary"`
+	Hits     []KnowledgeSearchHit `json:"hits"`
 }
 
 type CreateIssueInput struct {
