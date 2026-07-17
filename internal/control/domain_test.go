@@ -3,6 +3,7 @@ package control
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ func configuredStore(t *testing.T) *Store {
 
 func TestIssueHierarchyRelationsAndCheckout(t *testing.T) {
 	s := configuredStore(t)
-	parent, err := s.CreateIssue(CreateIssueInput{Title: "Build product", Priority: "high", WorkMode: "autonomous", Plan: true})
+	parent, err := s.CreateIssue(CreateIssueInput{Title: "Build product", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "aegis-orchestrator"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +69,45 @@ func TestIssueHierarchyRelationsAndCheckout(t *testing.T) {
 	}
 	if len(detail.Children) != 2 {
 		t.Fatalf("children=%d", len(detail.Children))
+	}
+}
+
+func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
+	s := configuredStore(t)
+	task, err := s.CreateIssue(CreateIssueInput{
+		Title: "Implement a focused API", Priority: "high", WorkMode: "autonomous",
+		AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.AssigneeAgentID != "backend-engineer" {
+		t.Fatalf("assignee=%q, want backend-engineer", task.AssigneeAgentID)
+	}
+
+	custom, err := s.CreateAgent(SaveAgentInput{
+		ID: "custom-worker", Name: "Custom Worker", Enabled: true,
+		SystemPrompt: "Complete the assigned Issue and report evidence.",
+		Tools:        []string{"read"},
+		Permissions:  PermissionBoundary{WorkspaceScope: "run_workspace"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(custom.Tools, "aegis_create_subissues") {
+		t.Fatalf("custom agent tools=%v, missing decomposition capability", custom.Tools)
+	}
+
+	custom.Tools = []string{"read"}
+	updated, err := s.UpdateAgent(custom.ID, SaveAgentInput{
+		Name: custom.Name, Enabled: true, SystemPrompt: custom.SystemPrompt,
+		Tools: custom.Tools, Permissions: custom.Permissions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(updated.Tools, "aegis_create_subissues") {
+		t.Fatalf("updated agent tools=%v, required capability was removed", updated.Tools)
 	}
 }
 

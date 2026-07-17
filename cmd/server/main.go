@@ -124,6 +124,18 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(202, gin.H{"accepted": true})
 	})
+	api.POST("/tasks/:id/cancel", func(c *gin.Context) {
+		var in control.CancelTaskInput
+		if c.Request.ContentLength > 0 && !bindJSON(c, &in) {
+			return
+		}
+		result, err := manager.CancelTask(c.Param("id"), in.Reason)
+		if err != nil {
+			writeError(c, 409, err)
+			return
+		}
+		c.JSON(200, result)
+	})
 	api.POST("/issues/:id/relations", func(c *gin.Context) {
 		var in control.CreateRelationInput
 		if !bindJSON(c, &in) {

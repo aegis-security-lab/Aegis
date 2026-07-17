@@ -1,16 +1,126 @@
 import * as React from "react"
-import {Braces,MessageSquareText,Search} from "lucide-react"
-import {toast} from "sonner"
-import {PageHeader} from "@/components/page-header"
-import {StatusBadge} from "@/components/status-badge"
-import {Button} from "@/components/ui/button"
-import {Card,CardContent,CardDescription,CardHeader,CardTitle} from "@/components/ui/card"
-import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle} from "@/components/ui/dialog"
-import {Input} from "@/components/ui/input"
-import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from "@/components/ui/table"
-import {Tabs,TabsContent,TabsList,TabsTrigger} from "@/components/ui/tabs"
-import {fetchSessionDetail} from "@/lib/api"
-import {formatTime,formatTokens} from "@/lib/format"
-import {useAppState} from "@/lib/state"
-import type {SessionDetail} from "@/types"
-export function SessionsPage(){const{state}=useAppState();const[query,setQuery]=React.useState("");const[detail,setDetail]=React.useState<SessionDetail|null>(null);const sessions=(state?.sessions??[]).filter(s=>`${s.execution.id} ${s.execution.sessionId} ${s.agentName} ${s.issueIdentifier} ${s.issueTitle}`.toLowerCase().includes(query.toLowerCase()));const inspect=async(id:string)=>{try{setDetail(await fetchSessionDetail(id))}catch(e){toast.error(e instanceof Error?e.message:"读取失败")}};return <div className="flex flex-col gap-7"><PageHeader eyebrow="Runtime observability" title="Sessions" description="Session 是 Execution 的运行时证据，不是 Agent 定义，也不是任务。"/><Card><CardHeader className="gap-4 md:flex-row md:items-end md:justify-between"><div><CardTitle>Pi 会话</CardTitle><CardDescription>一个 Execution 对应一个持久化 Pi session。</CardDescription></div><div className="relative w-full md:w-80"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input className="pl-9" value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索 Agent、Issue、Session…"/></div></CardHeader><CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Agent / Session</TableHead><TableHead>Issue</TableHead><TableHead>类型</TableHead><TableHead>状态</TableHead><TableHead>模型</TableHead><TableHead>用量</TableHead><TableHead/></TableRow></TableHeader><TableBody>{sessions.map(s=><TableRow key={s.execution.id}><TableCell><p className="text-sm font-medium">{s.agentName}</p><p className="max-w-52 truncate font-mono text-xs text-muted-foreground">{s.execution.sessionId}</p></TableCell><TableCell><p className="font-mono text-xs">{s.issueIdentifier}</p><p className="max-w-64 truncate text-sm">{s.issueTitle}</p></TableCell><TableCell><span className="text-xs">{s.execution.kind}</span></TableCell><TableCell><StatusBadge status={s.execution.status}/></TableCell><TableCell><p className="text-sm">{s.execution.model}</p><p className="text-xs text-muted-foreground">{s.execution.provider}</p></TableCell><TableCell className="text-xs text-muted-foreground">{formatTokens(s.execution.tokens)}<br/>${s.execution.cost.toFixed(4)}</TableCell><TableCell><Button size="sm" variant="outline" onClick={()=>void inspect(s.execution.id)}><Braces/>调试</Button></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>{detail&&<Dialog open onOpenChange={open=>!open&&setDetail(null)}><DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-4xl"><DialogHeader><DialogTitle>{detail.session.agentName} · {detail.session.issueIdentifier}</DialogTitle><DialogDescription className="font-mono">{detail.session.execution.sessionId}</DialogDescription></DialogHeader><Tabs defaultValue="messages" className="min-h-0"><TabsList><TabsTrigger value="messages">消息 {detail.messages.length}</TabsTrigger><TabsTrigger value="events">事件 {detail.events.length}</TabsTrigger><TabsTrigger value="meta">元数据</TabsTrigger></TabsList><TabsContent value="messages" className="max-h-[60vh] space-y-3 overflow-auto pt-3">{detail.messages.length?detail.messages.map(m=><div key={m.id} className={`rounded-xl p-4 ${m.role==="user"?"ml-12 bg-primary text-primary-foreground":"mr-12 border bg-muted/30"}`}><p className="mb-2 text-xs opacity-70">{m.role} · {formatTime(m.createdAt)}</p><p className="whitespace-pre-wrap text-sm leading-6">{m.content}</p></div>):<p className="py-12 text-center text-sm text-muted-foreground"><MessageSquareText className="mx-auto mb-2 size-5"/>没有消息</p>}</TabsContent><TabsContent value="events" className="max-h-[60vh] space-y-2 overflow-auto pt-3">{detail.events.map(e=><div key={e.id} className="rounded-lg border p-3"><div className="flex justify-between"><span className="text-sm font-medium">{e.title}</span><span className="text-xs text-muted-foreground">{formatTime(e.createdAt)}</span></div><pre className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{e.detail}</pre></div>)}</TabsContent><TabsContent value="meta" className="grid gap-3 pt-3 sm:grid-cols-2">{Object.entries(detail.session.execution).map(([k,v])=><div key={k} className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">{k}</p><p className="mt-1 break-all font-mono text-xs">{String(v??"—")}</p></div>)}</TabsContent></Tabs></DialogContent></Dialog>}</div>}
+import { MessageSquareText, Search } from "lucide-react"
+import { Link } from "react-router-dom"
+
+import { PageHeader } from "@/components/page-header"
+import { StatusBadge } from "@/components/status-badge"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { formatTokens } from "@/lib/format"
+import { useAppState } from "@/lib/state"
+
+export function SessionsPage() {
+  const { state } = useAppState()
+  const [query, setQuery] = React.useState("")
+  const sessions = (state?.sessions ?? []).filter((session) =>
+    `${session.execution.id} ${session.execution.sessionId} ${session.agentName} ${session.issueIdentifier} ${session.issueTitle}`
+      .toLowerCase()
+      .includes(query.toLowerCase())
+  )
+
+  return (
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Runtime observability"
+        title="Sessions"
+        description="查看每次 Pi Execution 的完整对话、工具事件和运行信息。"
+      />
+      <Card>
+        <CardHeader className="gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <CardTitle>Pi 会话</CardTitle>
+            <CardDescription>
+              一个 Execution 对应一个持久化 Pi Session。
+            </CardDescription>
+          </div>
+          <div className="relative w-full md:w-80">
+            <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索 Agent、Issue、Session…"
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Agent / Session</TableHead>
+                <TableHead>Issue</TableHead>
+                <TableHead>类型</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>模型</TableHead>
+                <TableHead>用量</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sessions.map((session) => (
+                <TableRow key={session.execution.id}>
+                  <TableCell>
+                    <p className="text-sm font-medium">{session.agentName}</p>
+                    <p className="max-w-52 truncate font-mono text-xs text-muted-foreground">
+                      {session.execution.sessionId}
+                    </p>
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-mono text-xs">
+                      {session.issueIdentifier}
+                    </p>
+                    <p className="max-w-64 truncate text-sm">
+                      {session.issueTitle}
+                    </p>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-xs">{session.execution.kind}</span>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={session.execution.status} />
+                  </TableCell>
+                  <TableCell>
+                    <p className="text-sm">{session.execution.model}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {session.execution.provider}
+                    </p>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatTokens(session.execution.tokens)}
+                    <br />${session.execution.cost.toFixed(4)}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      render={<Link to={`/sessions/${session.execution.id}`} />}
+                      nativeButton={false}
+                    >
+                      <MessageSquareText data-icon="inline-start" />
+                      查看对话
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

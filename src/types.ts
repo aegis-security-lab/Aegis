@@ -87,6 +87,7 @@ export type ExecutionStatus =
   | "completed"
   | "failed"
   | "stopped"
+  | "cancelled"
   | "disconnected"
 export interface Execution {
   id: string
@@ -116,7 +117,14 @@ export interface ExecutionEvent {
   type: string
   title: string
   detail: string
+  toolCallId?: string
+  toolName?: string
+  status?: "running" | "completed" | "failed"
+  inputJson?: string
+  outputJson?: string
+  isError?: boolean
   createdAt: string
+  updatedAt?: string
 }
 export interface Message {
   id: string
@@ -154,7 +162,7 @@ export interface AgentWakeup {
   agentId: string
   executionId?: string
   reason: string
-  status: "queued" | "delivered" | "completed" | "failed"
+  status: "queued" | "delivered" | "completed" | "failed" | "cancelled"
   error?: string
   createdAt: string
   deliveredAt?: string
@@ -181,6 +189,14 @@ export interface IssueDetail {
   approvals: Approval[]
   wakeups: AgentWakeup[]
   decompositions: IssueDecomposition[]
+}
+export interface TaskCancellationResult {
+  task: Issue
+  totalIssues: number
+  cancelledIssues: number
+  cancelledExecutions: number
+  expiredApprovals: number
+  cancelledWakeups: number
 }
 export interface AgentModelConfig {
   provider: string
@@ -274,7 +290,6 @@ export interface CreateIssueInput {
   workspace: string
   context: string
   constraints: string
-  plan: boolean
   blockedBy?: string[]
 }
 export interface ConnectionTestResult {

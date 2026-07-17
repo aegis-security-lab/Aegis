@@ -19,7 +19,8 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-var defaultAgentTools = []string{"read", "grep", "find", "ls", "bash", "edit", "write", "aegis_create_subissues"}
+var requiredAgentTools = []string{"aegis_create_subissues"}
+var defaultAgentTools = ensureRequiredAgentTools([]string{"read", "grep", "find", "ls", "bash", "edit", "write"})
 
 func defaultSkills(now time.Time) []SkillDefinition {
 	definitions := []struct {
@@ -118,7 +119,7 @@ func defaultAgents(now time.Time) []AgentDefinition {
 			ID: "aegis-orchestrator", Name: "Aegis Orchestrator", Description: "拆解任务、分配专业 Agent 并协调执行顺序。",
 			Avatar: "route", Category: "orchestrator", Enabled: true, Builtin: true,
 			SystemPrompt: `You are the Aegis Orchestrator. Inspect the workspace when useful, decompose objectives into verifiable Issues, assign each Issue to the best enabled specialist, keep dependencies explicit, and never claim implementation work yourself. Return exactly the requested planning JSON when planning.`,
-			Tools:        []string{"read", "grep", "find", "ls", "aegis_create_subissues"}, SkillIDs: []string{"decompose-issues"},
+			Tools:        ensureRequiredAgentTools([]string{"read", "grep", "find", "ls"}), SkillIDs: []string{"decompose-issues"},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: false, AllowShell: false, AllowWrite: false},
 			CreatedAt:   now, UpdatedAt: now,
 		},
@@ -193,14 +194,14 @@ func (s *Store) seedRegistry() error {
 		}
 		s.agents = append(s.agents, agent)
 	}
-	// The delegation tool is a control-plane capability introduced after the
-	// initial seeds. Add it without replacing any customized built-in settings.
+	// Issue decomposition is a control-plane capability available to every
+	// Agent. Persist it explicitly so the saved definition matches runtime.
 	for index := range s.agents {
 		agent := &s.agents[index]
-		if !agent.Builtin || slices.Contains(agent.Tools, "aegis_create_subissues") {
+		if slices.Contains(agent.Tools, "aegis_create_subissues") {
 			continue
 		}
-		agent.Tools = append(agent.Tools, "aegis_create_subissues")
+		agent.Tools = ensureRequiredAgentTools(agent.Tools)
 		agent.UpdatedAt = now
 		var record agentRecord
 		if err := s.db.First(&record, "id = ?", agent.ID).Error; err != nil {
@@ -247,6 +248,7 @@ func (s *Store) UpdateAgent(id string, input SaveAgentInput) (AgentDefinition, e
 func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	input.Tools = ensureRequiredAgentTools(input.Tools)
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return AgentDefinition{}, errors.New("Agent 名称不能为空")
@@ -279,7 +281,7 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 		ID: id, Name: name, Description: strings.TrimSpace(input.Description), Avatar: strings.TrimSpace(input.Avatar),
 		Category: fallback(strings.TrimSpace(input.Category), "general"), Enabled: input.Enabled, Builtin: builtin,
 		Model: input.Model, SystemPrompt: strings.TrimSpace(input.SystemPrompt),
-		Tools: uniqueStrings(input.Tools), SkillIDs: uniqueStrings(input.SkillIDs), Permissions: input.Permissions,
+		Tools: ensureRequiredAgentTools(input.Tools), SkillIDs: uniqueStrings(input.SkillIDs), Permissions: input.Permissions,
 		CreatedAt: createdAt, UpdatedAt: now,
 	}
 	if agent.Avatar == "" {
@@ -706,6 +708,12 @@ func uniqueStrings(values []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func ensureRequiredAgentTools(tools []string) []string {
+	values := append([]string{}, tools...)
+	values = append(values, requiredAgentTools...)
+	return uniqueStrings(values)
 }
 
 func containsAny(value string, candidates ...string) bool {

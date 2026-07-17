@@ -146,9 +146,18 @@ func (m *Manager) CreateIssue(input CreateIssueInput) (Issue, error) {
 	return issue, nil
 }
 func (m *Manager) DispatchIssue(id string) error {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
+	return m.dispatchIssue(id)
+}
+
+func (m *Manager) dispatchIssue(id string) error {
 	issue, err := m.store.GetIssue(id)
 	if err != nil {
 		return err
+	}
+	if m.store.belongsToCancelledTask(issue) {
+		return errors.New("所属任务已取消，不能继续调度")
 	}
 	if !slices.Contains([]string{"todo", "backlog"}, issue.Status) {
 		return errors.New("Issue 当前不可调度")
@@ -190,7 +199,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	for _, p := range m.store.skillPaths(agent.SkillIDs) {
 		args = append(args, "--skill", p)
 	}
-	activeTools := uniqueStrings(append(append([]string{}, agent.Tools...), "aegis_create_subissues"))
+	activeTools := uniqueStrings(agent.Tools)
 	if len(activeTools) == 0 {
 		args = append(args, "--no-tools")
 	} else {
@@ -242,6 +251,14 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	go s.readLoop(stdout)
 	go s.stderrLoop(stderr)
 	go func() { err := cmd.Wait(); m.sessionExited(s, err) }()
+	now := time.Now()
+	userMessage := Message{ID: nextID("message"), ExecutionID: e.ID, IssueID: issue.ID, Role: "user", Content: prompt, CreatedAt: now, UpdatedAt: now}
+	if err := m.store.db.Create(&userMessage).Error; err != nil {
+		s.Close()
+		return nil, err
+	}
+	_ = m.store.db.Model(&Execution{}).Where("id = ?", e.ID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
+	m.store.notify()
 	if err := s.Send(map[string]any{"id": nextID("rpc"), "type": "prompt", "message": prompt}); err != nil {
 		s.Close()
 		return nil, err
@@ -295,6 +312,9 @@ func (s *PiSession) stderrLoop(r io.Reader) {
 }
 
 func (m *Manager) handleRPCLine(s *PiSession, line []byte) {
+	if s.closed.Load() {
+		return
+	}
 	var event map[string]any
 	if err := json.Unmarshal(line, &event); err != nil {
 		m.store.addEvent(s.executionID, s.issueID, "error", "无法解析 Pi RPC 事件", truncate(string(line), 1000))
@@ -313,11 +333,12 @@ func (m *Manager) handleRPCLine(s *PiSession, line []byte) {
 	case "tool_execution_start":
 		tool := stringValue(event["toolName"])
 		_ = m.store.updateExecution(s.executionID, map[string]any{"status": "running", "current_tool": tool})
-		m.store.addEvent(s.executionID, s.issueID, "tool", "调用 "+tool, compactJSON(event["args"], 1600))
+		m.store.startToolEvent(s.executionID, s.issueID, stringValue(event["toolCallId"]), tool, event["args"])
 	case "tool_execution_end":
 		tool := stringValue(event["toolName"])
 		_ = m.store.updateExecution(s.executionID, map[string]any{"current_tool": ""})
-		m.store.addEvent(s.executionID, s.issueID, "tool_result", tool+" 执行完成", compactJSON(event["result"], 1600))
+		isError, _ := event["isError"].(bool)
+		m.store.finishToolEvent(s.executionID, s.issueID, stringValue(event["toolCallId"]), tool, event["result"], isError)
 	case "extension_ui_request":
 		m.handleApproval(s, event)
 	case "agent_settled":
@@ -352,7 +373,15 @@ func (m *Manager) appendAssistantDelta(s *PiSession, delta string) {
 }
 
 func (m *Manager) handleApproval(s *PiSession, event map[string]any) {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
 	if stringValue(event["method"]) != "confirm" {
+		_ = s.Send(map[string]any{"type": "extension_ui_response", "id": stringValue(event["id"]), "cancelled": true})
+		return
+	}
+	var execution Execution
+	issue, issueErr := m.store.GetIssue(s.issueID)
+	if m.store.db.First(&execution, "id = ?", s.executionID).Error != nil || issueErr != nil || execution.Status == "cancelled" || issue.Status == "cancelled" {
 		_ = s.Send(map[string]any{"type": "extension_ui_response", "id": stringValue(event["id"]), "cancelled": true})
 		return
 	}
@@ -362,6 +391,8 @@ func (m *Manager) handleApproval(s *PiSession, event map[string]any) {
 	m.store.addEvent(s.executionID, s.issueID, "approval", "等待工具审批", a.Title)
 }
 func (m *Manager) ResolveApproval(id string, approved bool) (Approval, error) {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
 	var a Approval
 	if err := m.store.db.First(&a, "id = ? AND status = ?", id, "pending").Error; err != nil {
 		return Approval{}, errors.New("pending approval not found")
@@ -387,8 +418,14 @@ func (m *Manager) ResolveApproval(id string, approved bool) (Approval, error) {
 }
 
 func (m *Manager) handleSettled(s *PiSession) {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
 	issue, err := m.store.GetIssue(s.issueID)
 	if err != nil {
+		return
+	}
+	var execution Execution
+	if m.store.db.First(&execution, "id = ?", s.executionID).Error != nil || issue.Status == "cancelled" || execution.Status == "cancelled" {
 		return
 	}
 	result := m.latestAssistant(s.executionID)
@@ -494,7 +531,7 @@ func (m *Manager) scheduleChildren(parentID string) {
 		if ready == nil {
 			return
 		}
-		if err := m.DispatchIssue(ready.ID); err != nil {
+		if err := m.dispatchIssue(ready.ID); err != nil {
 			_ = m.store.db.Model(&Issue{}).Where("id = ?", ready.ID).Updates(map[string]any{"status": "blocked", "error": err.Error(), "updated_at": time.Now()}).Error
 			m.store.notify()
 			continue
@@ -530,6 +567,8 @@ func (m *Manager) resumeParent(parent Issue, children []Issue) {
 
 // DecomposeExecution is called only by the authenticated Pi extension tool.
 func (m *Manager) DecomposeExecution(executionID, token string, input DecomposeIssueInput) (DecompositionResult, error) {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
 	session := m.getSession(executionID)
 	if session == nil || token == "" || len(token) != len(session.controlToken) || subtle.ConstantTimeCompare([]byte(token), []byte(session.controlToken)) != 1 {
 		return DecompositionResult{}, errors.New("invalid execution control token")
@@ -578,7 +617,7 @@ func (m *Manager) sessionExited(s *PiSession, waitErr error) {
 		return
 	}
 	var e Execution
-	if m.store.db.First(&e, "id = ?", s.executionID).Error != nil || slices.Contains([]string{"completed", "failed", "stopped"}, e.Status) {
+	if m.store.db.First(&e, "id = ?", s.executionID).Error != nil || slices.Contains([]string{"completed", "failed", "stopped", "cancelled"}, e.Status) {
 		return
 	}
 	message := "Pi 进程已退出"
@@ -643,6 +682,7 @@ func (m *Manager) SendChat(issueID, executionID, message string) (Message, error
 	if err := m.store.db.Create(&msg).Error; err != nil {
 		return Message{}, err
 	}
+	_ = m.store.db.Model(&Execution{}).Where("id = ?", s.executionID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
 	command := "prompt"
 	if s.busy.Load() {
 		command = "steer"
@@ -666,6 +706,33 @@ func (m *Manager) StopExecution(id string) error {
 	_ = m.store.db.Model(&Issue{}).Where("checkout_execution_id = ?", id).Updates(map[string]any{"status": "todo", "execution_phase": "active", "checkout_execution_id": "", "updated_at": now}).Error
 	m.store.notify()
 	return nil
+}
+
+func (m *Manager) CancelTask(id, reason string) (TaskCancellationResult, error) {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
+
+	result, issueIDs, err := m.store.cancelTaskTree(id, reason)
+	if err != nil {
+		return TaskCancellationResult{}, err
+	}
+	issueSet := make(map[string]bool, len(issueIDs))
+	for _, issueID := range issueIDs {
+		issueSet[issueID] = true
+	}
+	m.mu.RLock()
+	sessions := make([]*PiSession, 0)
+	for _, session := range m.sessions {
+		if issueSet[session.issueID] {
+			sessions = append(sessions, session)
+		}
+	}
+	m.mu.RUnlock()
+	for _, session := range sessions {
+		session.Close()
+	}
+	m.store.notify()
+	return result, nil
 }
 func (m *Manager) getSession(id string) *PiSession {
 	m.mu.RLock()
@@ -724,12 +791,19 @@ func (m *Manager) validMentions(body, exclude string) []string {
 	return out
 }
 func (m *Manager) dispatchWakeup(id string) {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
 	var w AgentWakeup
 	if m.store.db.First(&w, "id = ? AND status = ?", id, "queued").Error != nil {
 		return
 	}
 	issue, err := m.store.GetIssue(w.IssueID)
 	if err != nil {
+		return
+	}
+	if m.store.belongsToCancelledTask(issue) {
+		_ = m.store.db.Model(&w).Updates(map[string]any{"status": "cancelled", "error": "所属任务已取消", "completed_at": time.Now()}).Error
+		m.store.notify()
 		return
 	}
 	agent, err := m.store.executionAgent(w.AgentID)

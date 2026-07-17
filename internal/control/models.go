@@ -125,7 +125,14 @@ type ExecutionEvent struct {
 	Type        string    `json:"type"`
 	Title       string    `json:"title"`
 	Detail      string    `json:"detail"`
+	ToolCallID  string    `json:"toolCallId,omitempty" gorm:"index"`
+	ToolName    string    `json:"toolName,omitempty" gorm:"index"`
+	Status      string    `json:"status,omitempty"`
+	InputJSON   string    `json:"inputJson,omitempty" gorm:"type:text"`
+	OutputJSON  string    `json:"outputJson,omitempty" gorm:"type:text"`
+	IsError     bool      `json:"isError,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 type Message struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
@@ -319,7 +326,6 @@ type CreateIssueInput struct {
 	Workspace          string   `json:"workspace"`
 	Context            string   `json:"context"`
 	Constraints        string   `json:"constraints"`
-	Plan               bool     `json:"plan"`
 	BlockedBy          []string `json:"blockedBy"`
 }
 type UpdateIssueInput struct {
@@ -331,6 +337,20 @@ type UpdateIssueInput struct {
 	AssigneeAgentID    *string `json:"assigneeAgentId"`
 	ParentID           *string `json:"parentId"`
 }
+
+type CancelTaskInput struct {
+	Reason string `json:"reason"`
+}
+
+type TaskCancellationResult struct {
+	Task                Issue `json:"task"`
+	TotalIssues         int   `json:"totalIssues"`
+	CancelledIssues     int64 `json:"cancelledIssues"`
+	CancelledExecutions int64 `json:"cancelledExecutions"`
+	ExpiredApprovals    int64 `json:"expiredApprovals"`
+	CancelledWakeups    int64 `json:"cancelledWakeups"`
+}
+
 type CheckoutIssueInput struct {
 	AgentID          string   `json:"agentId"`
 	ExecutionID      string   `json:"executionId"`

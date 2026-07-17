@@ -42,13 +42,20 @@ const SessionsPage = React.lazy(() =>
     default: module.SessionsPage,
   }))
 )
+const SessionDetailPage = React.lazy(() =>
+  import("@/pages/session-detail").then((module) => ({
+    default: module.SessionDetailPage,
+  }))
+)
 const FindingsPage = React.lazy(() =>
   import("@/pages/findings").then((module) => ({
     default: module.FindingsPage,
   }))
 )
 const SecurityPage = React.lazy(() =>
-  import("@/pages/security").then((module) => ({ default: module.SecurityPage }))
+  import("@/pages/security").then((module) => ({
+    default: module.SecurityPage,
+  }))
 )
 const SkillsPage = React.lazy(() =>
   import("@/pages/skills").then((module) => ({ default: module.SkillsPage }))
@@ -104,6 +111,7 @@ export function App() {
           <Route path="agents" element={<AgentsPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="sessions" element={<SessionsPage />} />
+          <Route path="sessions/:executionId" element={<SessionDetailPage />} />
           <Route path="approvals" element={<ApprovalsPage />} />
           <Route path="security/findings" element={<FindingsPage />} />
           <Route path="security" element={<SecurityPage />} />

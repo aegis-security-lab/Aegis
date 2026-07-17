@@ -189,7 +189,7 @@ func TestIssueAPI(t *testing.T) {
 	}
 	defer m.Close()
 	router := buildRouter(s, m, t.TempDir())
-	body, _ := json.Marshal(control.CreateIssueInput{Title: "API Issue", Priority: "high", WorkMode: "guided", Plan: false})
+	body, _ := json.Marshal(control.CreateIssueInput{Title: "API Issue", Priority: "high", WorkMode: "guided"})
 	req := httptest.NewRequest(http.MethodPost, "/api/issues", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	res := httptest.NewRecorder()
@@ -210,5 +210,20 @@ func TestIssueAPI(t *testing.T) {
 	var detail control.IssueDetail
 	if err = json.Unmarshal(res.Body.Bytes(), &detail); err != nil || detail.Issue.Identifier == "" {
 		t.Fatalf("bad detail: %v %+v", err, detail)
+	}
+	cancelBody, _ := json.Marshal(control.CancelTaskInput{Reason: "API cancellation test"})
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/"+issue.ID+"/cancel", bytes.NewReader(cancelBody))
+	req.Header.Set("Content-Type", "application/json")
+	res = httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("cancel status=%d body=%s", res.Code, res.Body.String())
+	}
+	var cancellation control.TaskCancellationResult
+	if err = json.Unmarshal(res.Body.Bytes(), &cancellation); err != nil {
+		t.Fatal(err)
+	}
+	if cancellation.Task.Status != "cancelled" || cancellation.TotalIssues != 1 {
+		t.Fatalf("bad cancellation: %+v", cancellation)
 	}
 }

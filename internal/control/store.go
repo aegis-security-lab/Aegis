@@ -308,9 +308,6 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	if !slices.Contains([]string{"guided", "autonomous"}, input.WorkMode) {
 		return Issue{}, errors.New("invalid work mode")
 	}
-	if input.Plan {
-		input.AssigneeAgentID = "aegis-orchestrator"
-	}
 	if input.AssigneeAgentID != "" {
 		if _, err := s.executionAgent(input.AssigneeAgentID); err != nil {
 			return Issue{}, err
@@ -320,6 +317,15 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	defer s.mu.Unlock()
 	if !s.config.Configured {
 		return Issue{}, errors.New("请先完成初始化配置")
+	}
+	if input.ParentID != "" {
+		var parent Issue
+		if err := s.db.First(&parent, "id = ?", input.ParentID).Error; err != nil {
+			return Issue{}, errors.New("parent issue not found")
+		}
+		if s.belongsToCancelledTask(parent) {
+			return Issue{}, errors.New("所属任务已取消，不能创建新的子 Issue")
+		}
 	}
 	var project Project
 	if input.ProjectID != "" {
@@ -447,6 +453,9 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if err != nil {
 		return Issue{}, err
 	}
+	if input.Status != nil && *input.Status != "cancelled" && s.belongsToCancelledTask(issue) {
+		return Issue{}, errors.New("所属任务已取消，不能重新打开 Issue")
+	}
 	updates := map[string]any{"updated_at": time.Now()}
 	if input.Title != nil {
 		v := strings.TrimSpace(*input.Title)
@@ -552,6 +561,9 @@ func (s *Store) CheckoutIssue(id string, input CheckoutIssueInput) (Issue, error
 	issue, err := s.GetIssue(id)
 	if err != nil {
 		return Issue{}, err
+	}
+	if s.belongsToCancelledTask(issue) {
+		return Issue{}, errors.New("所属任务已取消，不能 checkout")
 	}
 	blockers, err := s.unresolvedBlockers(issue.ID)
 	if err != nil {
@@ -794,7 +806,11 @@ func (s *Store) createExecution(issue Issue, agentID, kind string) (Execution, e
 }
 func (s *Store) updateExecution(id string, updates map[string]any) error {
 	updates["updated_at"] = time.Now()
-	return s.db.Model(&Execution{}).Where("id = ?", id).Updates(updates).Error
+	query := s.db.Model(&Execution{}).Where("id = ?", id)
+	if status, ok := updates["status"]; ok && status != "cancelled" {
+		query = query.Where("status <> ?", "cancelled")
+	}
+	return query.Updates(updates).Error
 }
 func (s *Store) addEvent(executionID, issueID, kind, title, detail string) {
 	_ = s.db.Create(&ExecutionEvent{ID: nextID("event"), ExecutionID: executionID, IssueID: issueID, Type: kind, Title: title, Detail: detail, CreatedAt: time.Now()}).Error

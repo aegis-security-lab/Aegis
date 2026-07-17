@@ -9,13 +9,27 @@ import {
   RotateCcw,
   Send,
   TerminalSquare,
+  XCircle,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
+import { ExecutionEvents } from "@/components/execution-events"
 import { IssueTree } from "@/components/issue-tree"
+import { MarkdownContent } from "@/components/markdown-content"
 import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -36,6 +50,7 @@ import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  cancelTask,
   createIssueComment,
   dispatchIssue,
   fetchIssue,
@@ -46,12 +61,13 @@ import { useAppState } from "@/lib/state"
 import type { IssueDetail } from "@/types"
 export function IssueDetailPage() {
   const { issueId } = useParams()
-  const { state } = useAppState()
+  const { state, refresh } = useAppState()
   const [detail, setDetail] = React.useState<IssueDetail | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [body, setBody] = React.useState("")
   const [chat, setChat] = React.useState("")
   const [busy, setBusy] = React.useState(false)
+  const [cancelOpen, setCancelOpen] = React.useState(false)
   const load = React.useCallback(async () => {
     if (!issueId) return
     try {
@@ -105,6 +121,21 @@ export function IssueDetailPage() {
       setBusy(false)
     }
   }
+  const cancel = async () => {
+    setBusy(true)
+    try {
+      const result = await cancelTask(issue.id, "操作员从任务详情取消")
+      setCancelOpen(false)
+      toast.success("任务树已取消", {
+        description: `${result.cancelledIssues} 个 Issues、${result.cancelledExecutions} 个运行被取消`,
+      })
+      await Promise.all([refresh(), load()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "取消任务失败")
+    } finally {
+      setBusy(false)
+    }
+  }
   const comment = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!body.trim()) return
@@ -152,8 +183,9 @@ export function IssueDetailPage() {
                   to={issue.parentId ? `/issues/${issue.parentId}` : "/tasks"}
                 />
               }
+              nativeButton={false}
             >
-              <ArrowLeft />
+              <ArrowLeft data-icon="inline-start" />
               返回
             </Button>
             {["todo", "backlog"].includes(issue.status) && (
@@ -162,9 +194,50 @@ export function IssueDetailPage() {
                 执行
               </Button>
             )}
+            {!issue.parentId &&
+              !["done", "cancelled"].includes(issue.status) && (
+                <Button
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => setCancelOpen(true)}
+                >
+                  <XCircle data-icon="inline-start" />
+                  取消任务
+                </Button>
+              )}
           </>
         }
       />
+      <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <XCircle />
+            </AlertDialogMedia>
+            <AlertDialogTitle>取消整个任务树？</AlertDialogTitle>
+            <AlertDialogDescription>
+              所有未完成的子 Issues、运行中的 Pi Sessions、排队执行、待审批和
+              Agent Wakeups
+              都会被取消。已经完成的历史记录会保留，此操作不能直接撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>返回</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void cancel()}
+            >
+              {busy ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <XCircle data-icon="inline-start" />
+              )}
+              确认取消
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="flex flex-wrap gap-2">
         <StatusBadge status={issue.status} />
         <Badge variant="outline">{issue.priority}</Badge>
@@ -287,9 +360,9 @@ export function IssueDetailPage() {
                           {formatTime(c.createdAt)}
                         </span>
                       </div>
-                      <p className="mt-2 text-sm leading-6 whitespace-pre-wrap">
+                      <MarkdownContent className="mt-2 text-sm">
                         {c.body}
-                      </p>
+                      </MarkdownContent>
                     </div>
                   ))}
                   <form onSubmit={comment} className="space-y-3">
@@ -305,20 +378,11 @@ export function IssueDetailPage() {
                     </Button>
                   </form>
                 </TabsContent>
-                <TabsContent value="events" className="space-y-2 pt-3">
-                  {detail.events.map((e) => (
-                    <div key={e.id} className="rounded-lg bg-muted/45 p-3">
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium">{e.title}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatTime(e.createdAt)}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground">
-                        {e.detail}
-                      </p>
-                    </div>
-                  ))}
+                <TabsContent value="events" className="pt-3">
+                  <ExecutionEvents
+                    events={detail.events}
+                    issues={state?.issues ?? []}
+                  />
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -351,7 +415,7 @@ export function IssueDetailPage() {
               {detail.executions.map((e) => (
                 <Link
                   key={e.id}
-                  to="/sessions"
+                  to={`/sessions/${e.id}`}
                   className="block rounded-lg border p-3 hover:bg-muted/40"
                 >
                   <div className="flex justify-between gap-2">
@@ -412,7 +476,7 @@ function Block({ label, value }: { label: string; value: string }) {
       <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
         {label}
       </h3>
-      <p className="leading-6 whitespace-pre-wrap">{value}</p>
+      <MarkdownContent>{value}</MarkdownContent>
     </div>
   )
 }

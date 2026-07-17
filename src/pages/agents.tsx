@@ -85,6 +85,7 @@ const allTools = [
   "write",
   "aegis_create_subissues",
 ]
+const requiredAgentTools = new Set(["aegis_create_subissues"])
 
 const categoryLabels: Record<string, string> = {
   orchestrator: "调度",
@@ -326,13 +327,15 @@ function AgentDialog({
     }
   }
 
-  const toggleTool = (tool: string, checked: boolean) =>
+  const toggleTool = (tool: string, checked: boolean) => {
+    if (requiredAgentTools.has(tool)) return
     set(
       "tools",
       checked
         ? [...new Set([...form.tools, tool])]
         : form.tools.filter((item) => item !== tool)
     )
+  }
 
   const toggleSkill = (skillId: string, checked: boolean) =>
     set(
@@ -544,8 +547,8 @@ function AgentDialog({
                 <FieldSet>
                   <FieldLegend>工具集</FieldLegend>
                   <FieldDescription>
-                    每个 Agent 保存独立工具数组；当前三个工程 Agent
-                    默认内容相同。
+                    每个 Agent 保存独立工具数组；Issue
+                    拆分是所有 Agent 必备的控制面能力。
                   </FieldDescription>
                   <div
                     data-slot="checkbox-group"
@@ -555,11 +558,16 @@ function AgentDialog({
                       <Field
                         key={tool}
                         orientation="horizontal"
+                        data-disabled={requiredAgentTools.has(tool) || undefined}
                         className="rounded-lg border p-3"
                       >
                         <Checkbox
                           id={`agent-tool-${tool}`}
-                          checked={form.tools.includes(tool)}
+                          checked={
+                            requiredAgentTools.has(tool) ||
+                            form.tools.includes(tool)
+                          }
+                          disabled={requiredAgentTools.has(tool)}
                           onCheckedChange={(checked) =>
                             toggleTool(tool, checked)
                           }
@@ -569,6 +577,7 @@ function AgentDialog({
                           className="font-mono font-normal"
                         >
                           {tool}
+                          {requiredAgentTools.has(tool) ? "（必备）" : ""}
                         </FieldLabel>
                       </Field>
                     ))}
