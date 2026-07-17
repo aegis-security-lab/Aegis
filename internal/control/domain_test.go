@@ -453,10 +453,10 @@ func TestFindingPersistence(t *testing.T) {
 
 func TestDefaultRegistry(t *testing.T) {
 	s := configuredStore(t)
-	if len(s.Agents()) < 4 {
+	if len(s.Agents()) < 5 {
 		t.Fatal("default agents missing")
 	}
-	for _, id := range []string{"aegis-orchestrator", "backend-engineer", "frontend-engineer", "red-team-engineer"} {
+	for _, id := range []string{"aegis-orchestrator", "backend-engineer", "frontend-engineer", "red-team-lead", "red-team-engineer"} {
 		a, err := s.GetAgent(id)
 		if err != nil {
 			t.Fatal(err)
@@ -464,5 +464,42 @@ func TestDefaultRegistry(t *testing.T) {
 		if a.SystemPrompt == "" || len(a.Tools) == 0 || len(a.SkillIDs) == 0 {
 			t.Fatalf("incomplete agent %s", id)
 		}
+	}
+}
+
+func TestSecurityAgentRoutingUsesLeadForTopLevelAndWorkerForChildren(t *testing.T) {
+	s := configuredStore(t)
+	parent, err := s.CreateIssue(CreateIssueInput{
+		Title: "评估目标的安全风险", Priority: "high", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := s.chooseAgent(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lead.ID != "red-team-lead" {
+		t.Fatalf("top-level security task agent=%s, want red-team-lead", lead.ID)
+	}
+	if !lead.Permissions.AllowNetwork || lead.Permissions.AllowWrite {
+		t.Fatalf("unexpected red-team lead permissions: %+v", lead.Permissions)
+	}
+	if !slices.Contains(lead.Tools, "aegis_create_subissues") {
+		t.Fatalf("red-team lead cannot decompose: %v", lead.Tools)
+	}
+
+	child, err := s.CreateIssue(CreateIssueInput{
+		ParentID: parent.ID, Title: "验证认证与越权漏洞", Priority: "high", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := s.chooseAgent(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.ID != "red-team-engineer" {
+		t.Fatalf("child security issue agent=%s, want red-team-engineer", worker.ID)
 	}
 }

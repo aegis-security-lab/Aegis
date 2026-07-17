@@ -138,11 +138,25 @@ func defaultAgents(now time.Time) []AgentDefinition {
 			Permissions: sharedPermissions, CreatedAt: now, UpdatedAt: now,
 		},
 		{
+			ID: "red-team-lead", Name: "红队负责人", Description: "评估安全任务复杂度与工作量，规划测试范围，拆分 Issues 并协调红队执行。",
+			Avatar: "route", Category: "security", Enabled: true, Builtin: true,
+			SystemPrompt: `You are Aegis's red-team lead. Your primary responsibility is to make the whole security task succeed as completely as possible. Begin by investigating enough of the authorized target and context to understand the real scope. Assess complexity, likely workload, meaningful testing areas, dependencies, opportunities for parallel work, and the risk of incomplete coverage. Then choose the best execution strategy.
+
+For a simple, bounded task that you can complete thoroughly and reliably in one execution, perform the work yourself and report concrete evidence. Do not create unnecessary coordination overhead.
+
+For a broad task, especially when it contains more than three meaningful testing areas, would benefit from parallel investigation, or is unlikely to be completed thoroughly in one execution, plan the work and call aegis_create_subissues. Create independently verifiable child Issues with clear scope, useful context from your initial investigation, acceptance criteria, dependencies, and appropriate Agent assignments. Assign security testing children to red-team-engineer unless another enabled specialist is clearly more suitable. After the tool succeeds, stop working on the parent; the scheduler will execute the children and later resume the parent for consolidation.
+
+On continuation, review all child results, identify duplication and coverage gaps, perform any bounded integration or validation still needed, and create another small wave of child Issues only when material work remains. Always respect the task's explicit authorization, target boundaries, testing mode, and safety constraints. Do not claim coverage or findings that were not actually verified. Your output format is flexible; prioritize sound judgment, complete coverage, actionable delegation, and an evidence-based final result.`,
+			Tools: append([]string{}, defaultAgentTools...), SkillIDs: []string{"decompose-issues", "threat-model-workflows", "security-validation"},
+			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
+			CreatedAt:   now, UpdatedAt: now,
+		},
+		{
 			ID: "red-team-engineer", Name: "红队攻防工程师", Description: "负责威胁建模、应用安全审查与非破坏性安全验证。",
 			Avatar: "shield", Category: "security", Enabled: true, Builtin: true,
 			SystemPrompt: `You are Aegis's red-team application security engineer. Review authorized code and runtime boundaries adversarially, produce reproducible non-destructive evidence, distinguish confirmed vulnerabilities from hypotheses, and recommend scoped fixes. Never access resources outside the task workspace, exfiltrate data, or perform destructive actions.`,
 			Tools:        append([]string{}, defaultAgentTools...), SkillIDs: []string{"threat-model-workflows", "appsec-code-review", "security-validation"},
-			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: false, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
+			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
 		},
 	}
@@ -582,7 +596,11 @@ func (s *Store) chooseAgent(issue Issue) (AgentDefinition, error) {
 		text := strings.ToLower(strings.Join([]string{issue.Title, issue.Description, issue.AcceptanceCriteria}, " "))
 		switch {
 		case containsAny(text, "security", "secure", "threat", "attack", "vulnerability", "auth", "安全", "攻防", "漏洞", "权限", "注入"):
-			wanted = "red-team-engineer"
+			if issue.ParentID == "" {
+				wanted = "red-team-lead"
+			} else {
+				wanted = "red-team-engineer"
+			}
 		case containsAny(text, "frontend", "react", "tailwind", "css", "browser", "ui", "ux", "前端", "页面", "交互", "界面"):
 			wanted = "frontend-engineer"
 		default:
