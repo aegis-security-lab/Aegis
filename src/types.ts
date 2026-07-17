@@ -101,6 +101,8 @@ export interface Execution {
   sessionId: string
   pid?: number
   currentTool?: string
+  initialPrompt?: string
+  systemPrompt?: string
   result?: string
   error?: string
   cost: number

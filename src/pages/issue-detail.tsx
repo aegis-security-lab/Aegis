@@ -3,6 +3,7 @@ import * as React from "react"
 import {
   ArrowLeft,
   Clock3,
+  Copy,
   GitBranch,
   MessageSquare,
   Play,
@@ -47,6 +48,7 @@ import {
 } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { Progress } from "@/components/ui/progress"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -148,6 +150,14 @@ export function IssueDetailPage() {
       toast.error(x instanceof Error ? x.message : "评论失败")
     } finally {
       setBusy(false)
+    }
+  }
+  const copyComment = async (value: string) => {
+    try {
+      await copyText(value)
+      toast.success("评论已复制")
+    } catch {
+      toast.error("复制失败，请检查浏览器的剪贴板权限")
     }
   }
   const steer = async (e: React.FormEvent) => {
@@ -289,28 +299,35 @@ export function IssueDetailPage() {
       )}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0 space-y-5">
-          <Card>
-            <CardHeader>
+          <Card className="h-[360px] gap-0 overflow-hidden py-0 sm:h-[420px]">
+            <CardHeader className="shrink-0 border-b py-4">
               <CardTitle>Issue 定义</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-5 text-sm">
-              <Block
-                label="描述"
-                value={issue.description || issue.context || "未填写"}
-              />
-              <Block
-                label="验收标准"
-                value={issue.acceptanceCriteria || "未填写"}
-              />
-              <Block label="执行边界" value={issue.constraints || "未填写"} />
-              {issue.result && (
-                <Block label="最新结果" value={issue.result} />
-              )}{" "}
-              {issue.error && (
-                <p className="rounded-lg bg-destructive/10 p-3 text-destructive">
-                  {issue.error}
-                </p>
-              )}
+            <CardContent className="min-h-0 flex-1 p-0">
+              <ScrollArea className="h-full">
+                <div className="flex flex-col gap-5 p-6 text-sm">
+                  <Block
+                    label="描述"
+                    value={issue.description || issue.context || "未填写"}
+                  />
+                  <Block
+                    label="验收标准"
+                    value={issue.acceptanceCriteria || "未填写"}
+                  />
+                  <Block
+                    label="执行边界"
+                    value={issue.constraints || "未填写"}
+                  />
+                  {issue.result && (
+                    <Block label="最新结果" value={issue.result} />
+                  )}
+                  {issue.error && (
+                    <p className="rounded-lg bg-destructive/10 p-3 text-destructive">
+                      {issue.error}
+                    </p>
+                  )}
+                </div>
+              </ScrollArea>
             </CardContent>
           </Card>
           {detail.children.length > 0 && (
@@ -349,40 +366,69 @@ export function IssueDetailPage() {
                     事件 {detail.events.length}
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="comments" className="space-y-3 pt-3">
-                  {detail.comments.map((c) => (
-                    <div key={c.id} className="rounded-xl border p-4">
-                      <div className="flex justify-between gap-3">
-                        <span className="text-xs font-medium">
-                          {c.authorId}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatTime(c.createdAt)}
-                        </span>
+                <TabsContent value="comments" className="pt-3">
+                  <div className="flex h-[520px] flex-col gap-3 sm:h-[560px]">
+                    <ScrollArea className="min-h-0 flex-1 rounded-xl border">
+                      <div className="flex flex-col gap-3 p-3">
+                        {detail.comments.length ? (
+                          detail.comments.map((c) => (
+                            <div key={c.id} className="rounded-xl border p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-xs font-medium">
+                                  {c.authorId}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatTime(c.createdAt)}
+                                  </span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    title="复制评论"
+                                    aria-label={`复制 ${c.authorId} 的评论`}
+                                    onClick={() => void copyComment(c.body)}
+                                  >
+                                    <Copy data-icon="inline-start" />
+                                  </Button>
+                                </div>
+                              </div>
+                              <MarkdownContent className="mt-2 text-sm">
+                                {c.body}
+                              </MarkdownContent>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
+                            还没有评论
+                          </div>
+                        )}
                       </div>
-                      <MarkdownContent className="mt-2 text-sm">
-                        {c.body}
-                      </MarkdownContent>
-                    </div>
-                  ))}
-                  <form onSubmit={comment} className="space-y-3">
-                    <Textarea
-                      value={body}
-                      onChange={(e) => setBody(e.target.value)}
-                      rows={4}
-                      placeholder="评论；例如 [@后端工程师](agent://backend-engineer) 请复核 API…"
-                    />
-                    <Button type="submit" disabled={busy || !body.trim()}>
-                      <Send />
-                      发表评论
-                    </Button>
-                  </form>
+                    </ScrollArea>
+                    <form
+                      onSubmit={comment}
+                      className="flex shrink-0 flex-col gap-3"
+                    >
+                      <Textarea
+                        value={body}
+                        onChange={(e) => setBody(e.target.value)}
+                        rows={4}
+                        placeholder="评论；例如 [@后端工程师](agent://backend-engineer) 请复核 API…"
+                      />
+                      <Button type="submit" disabled={busy || !body.trim()}>
+                        <Send />
+                        发表评论
+                      </Button>
+                    </form>
+                  </div>
                 </TabsContent>
                 <TabsContent value="events" className="pt-3">
-                  <ExecutionEvents
-                    events={detail.events}
-                    issues={state?.issues ?? []}
-                  />
+                  <ScrollArea className="h-[520px] pr-3 sm:h-[560px]">
+                    <ExecutionEvents
+                      events={detail.events}
+                      issues={state?.issues ?? []}
+                    />
+                  </ScrollArea>
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -469,6 +515,27 @@ export function IssueDetailPage() {
       </div>
     </div>
   )
+}
+async function copyText(value: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch {
+      // Fall back for browsers or embedded webviews that deny Clipboard API.
+    }
+  }
+
+  const textarea = document.createElement("textarea")
+  textarea.value = value
+  textarea.setAttribute("readonly", "")
+  textarea.style.position = "fixed"
+  textarea.style.left = "-9999px"
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand("copy")
+  textarea.remove()
+  if (!copied) throw new Error("copy command was rejected")
 }
 function Block({ label, value }: { label: string; value: string }) {
   return (

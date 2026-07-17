@@ -97,25 +97,27 @@ type IssueRelation struct {
 }
 
 type Execution struct {
-	ID           string     `json:"id" gorm:"primaryKey"`
-	IssueID      string     `json:"issueId" gorm:"index"`
-	AgentID      string     `json:"agentId" gorm:"index"`
-	Kind         string     `json:"kind"`
-	Status       string     `json:"status" gorm:"index"`
-	Provider     string     `json:"provider"`
-	Model        string     `json:"model"`
-	Thinking     string     `json:"thinking"`
-	SessionID    string     `json:"sessionId" gorm:"uniqueIndex"`
-	PID          int        `json:"pid,omitempty" gorm:"column:pid"`
-	CurrentTool  string     `json:"currentTool,omitempty"`
-	Result       string     `json:"result,omitempty"`
-	Error        string     `json:"error,omitempty"`
-	Cost         float64    `json:"cost"`
-	Tokens       int64      `json:"tokens"`
-	MessageCount int        `json:"messageCount"`
-	StartedAt    time.Time  `json:"startedAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
-	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+	ID            string     `json:"id" gorm:"primaryKey"`
+	IssueID       string     `json:"issueId" gorm:"index"`
+	AgentID       string     `json:"agentId" gorm:"index"`
+	Kind          string     `json:"kind"`
+	Status        string     `json:"status" gorm:"index"`
+	Provider      string     `json:"provider"`
+	Model         string     `json:"model"`
+	Thinking      string     `json:"thinking"`
+	SessionID     string     `json:"sessionId" gorm:"uniqueIndex"`
+	PID           int        `json:"pid,omitempty" gorm:"column:pid"`
+	CurrentTool   string     `json:"currentTool,omitempty"`
+	InitialPrompt string     `json:"initialPrompt,omitempty" gorm:"type:text"`
+	SystemPrompt  string     `json:"systemPrompt,omitempty" gorm:"type:text"`
+	Result        string     `json:"result,omitempty"`
+	Error         string     `json:"error,omitempty"`
+	Cost          float64    `json:"cost"`
+	Tokens        int64      `json:"tokens"`
+	MessageCount  int        `json:"messageCount"`
+	StartedAt     time.Time  `json:"startedAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
 }
 
 type ExecutionEvent struct {

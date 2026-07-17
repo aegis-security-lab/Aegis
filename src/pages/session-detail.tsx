@@ -6,12 +6,15 @@ import {
   Clock3,
   Coins,
   ExternalLink,
+  FileText,
   MessagesSquare,
+  ScrollText,
   SquareTerminal,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 
 import { ExecutionEvents } from "@/components/execution-events"
+import { MarkdownContent } from "@/components/markdown-content"
 import { PageHeader } from "@/components/page-header"
 import { SessionConversation } from "@/components/session-conversation"
 import { StatusBadge } from "@/components/status-badge"
@@ -88,6 +91,8 @@ export function SessionDetailPage() {
   }
 
   const { execution } = detail.session
+  const initialPrompt = execution.initialPrompt ?? ""
+  const systemPrompt = execution.systemPrompt ?? ""
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -136,6 +141,10 @@ export function SessionDetailPage() {
             <SquareTerminal />
             事件 {detail.events.length}
           </TabsTrigger>
+          <TabsTrigger value="prompts">
+            <ScrollText />
+            提示词
+          </TabsTrigger>
           <TabsTrigger value="metadata">运行信息</TabsTrigger>
         </TabsList>
 
@@ -155,6 +164,7 @@ export function SessionDetailPage() {
                 messages={detail.messages}
                 agentName={detail.session.agentName}
                 issueIdentifier={detail.session.issueIdentifier}
+                initialPrompt={initialPrompt}
               />
             </CardContent>
           </Card>
@@ -165,6 +175,23 @@ export function SessionDetailPage() {
             events={detail.events}
             issues={state?.issues ?? []}
           />
+        </TabsContent>
+
+        <TabsContent value="prompts" className="pt-4">
+          <div className="grid gap-4 xl:grid-cols-2">
+            <PromptCard
+              icon={FileText}
+              title="启动任务提示词"
+              description="创建 Session 时发送给 Pi 的第一条任务 Prompt。"
+              content={initialPrompt}
+            />
+            <PromptCard
+              icon={ScrollText}
+              title="Agent 系统提示词"
+              description="该 Execution 启动时冻结的 Agent System Prompt 快照。"
+              content={systemPrompt}
+            />
+          </div>
         </TabsContent>
 
         <TabsContent value="metadata" className="pt-4">
@@ -215,6 +242,44 @@ export function SessionDetailPage() {
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+function PromptCard({
+  icon: Icon,
+  title,
+  description,
+  content,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  description: string
+  content: string
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Icon className="size-4" />
+          {title}
+        </CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {content ? (
+          <MarkdownContent className="text-sm">{content}</MarkdownContent>
+        ) : (
+          <Empty className="min-h-64 border-0">
+            <EmptyHeader>
+              <EmptyTitle>历史 Session 没有提示词快照</EmptyTitle>
+              <EmptyDescription>
+                该 Session 创建时尚未启用 Prompt 持久化，无法准确还原原始内容。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

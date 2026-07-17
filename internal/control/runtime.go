@@ -239,6 +239,12 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	if err := os.MkdirAll(filepath.Join(m.store.DataDir(), "sessions"), 0o700); err != nil {
 		return nil, err
 	}
+	if err := m.store.updateExecution(e.ID, map[string]any{
+		"initial_prompt": prompt,
+		"system_prompt":  agent.SystemPrompt,
+	}); err != nil {
+		return nil, err
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

@@ -33,10 +33,12 @@ export function SessionConversation({
   messages,
   agentName,
   issueIdentifier,
+  initialPrompt,
 }: {
   messages: SessionMessage[]
   agentName: string
   issueIdentifier: string
+  initialPrompt?: string
 }) {
   if (messages.length === 0) {
     return (
@@ -54,12 +56,18 @@ export function SessionConversation({
     )
   }
 
-  const hasUserMessage = messages.some((message) => message.role === "user")
+  const initialPromptMessageId = initialPrompt
+    ? messages.find(
+        (message) =>
+          message.role === "user" && message.content === initialPrompt
+      )?.id
+    : undefined
+  const hasInitialPrompt = Boolean(initialPrompt)
   const isStreaming = messages.some((message) => message.streaming)
 
   return (
     <MessageScrollerProvider
-      defaultScrollPosition={hasUserMessage ? "last-anchor" : "start"}
+      defaultScrollPosition={hasInitialPrompt ? "last-anchor" : "start"}
       autoScroll={isStreaming}
     >
       <MessageScroller>
@@ -73,7 +81,7 @@ export function SessionConversation({
                 <MarkerContent>{issueIdentifier} · Session 开始</MarkerContent>
               </Marker>
             </MessageScrollerItem>
-            {!hasUserMessage ? (
+            {!hasInitialPrompt ? (
               <MessageScrollerItem messageId="legacy-transcript-note">
                 <Marker variant="border">
                   <MarkerIcon>
@@ -102,6 +110,7 @@ export function SessionConversation({
                   <ConversationMessage
                     message={message}
                     agentName={agentName}
+                    isInitialPrompt={message.id === initialPromptMessageId}
                   />
                 )}
               </MessageScrollerItem>
@@ -117,9 +126,11 @@ export function SessionConversation({
 function ConversationMessage({
   message,
   agentName,
+  isInitialPrompt,
 }: {
   message: SessionMessage
   agentName: string
+  isInitialPrompt: boolean
 }) {
   const isUser = message.role === "user"
   return (
@@ -130,7 +141,9 @@ function ConversationMessage({
         </Avatar>
       </MessageAvatar>
       <MessageContent>
-        <MessageHeader>{isUser ? "你" : agentName}</MessageHeader>
+        <MessageHeader>
+          {isInitialPrompt ? "启动提示词" : isUser ? "你" : agentName}
+        </MessageHeader>
         <Bubble
           align={isUser ? "end" : "start"}
           variant={isUser ? "default" : "ghost"}

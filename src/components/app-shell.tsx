@@ -147,16 +147,6 @@ export function AppShell() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-          <div className="flex items-center gap-2 px-2 group-data-[collapsible=icon]:hidden">
-            <span
-              className={`size-1.5 rounded-full ${state?.runtime.ready ? "bg-emerald-500" : "bg-destructive"}`}
-            />
-            <span className="truncate text-xs text-muted-foreground">
-              {state?.runtime.ready
-                ? `Pi ${state.runtime.piVersion}`
-                : "Pi runtime 未就绪"}
-            </span>
-          </div>
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>

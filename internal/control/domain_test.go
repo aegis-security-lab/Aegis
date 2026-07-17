@@ -111,6 +111,38 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	}
 }
 
+func TestSessionDetailIncludesPromptSnapshots(t *testing.T) {
+	s := configuredStore(t)
+	issue, err := s.CreateIssue(CreateIssueInput{
+		Title: "Prompt snapshot task", Priority: "medium", WorkMode: "autonomous",
+		AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := s.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.updateExecution(execution.ID, map[string]any{
+		"initial_prompt": "Complete **this task**.",
+		"system_prompt":  "You are a backend engineer.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := s.GetSession(execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Session.Execution.InitialPrompt != "Complete **this task**." {
+		t.Fatalf("initial prompt=%q", detail.Session.Execution.InitialPrompt)
+	}
+	if detail.Session.Execution.SystemPrompt != "You are a backend engineer." {
+		t.Fatalf("system prompt=%q", detail.Session.Execution.SystemPrompt)
+	}
+}
+
 func TestRelationCycleRejectedAndPersistence(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir)
