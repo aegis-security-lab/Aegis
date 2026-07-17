@@ -14,6 +14,7 @@ import {
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
+import { ModelPricingFields } from "@/components/model-pricing-fields"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -70,6 +71,7 @@ export function SetupPage() {
     piPath: state?.runtime.piPath ?? "",
     provider: "anthropic",
     model: modelDefaults.anthropic,
+    pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     baseUrl: "",
     thinking: "medium",
     authMode: state?.runtime.authFound ? "pi_auth" : "api_key",
@@ -436,6 +438,11 @@ function ModelStep({
             endpoint。
           </FieldDescription>
         </Field>
+        <ModelPricingFields
+          idPrefix="setup-price"
+          value={form.pricing}
+          onChange={(pricing) => update("pricing", pricing)}
+        />
         <div className="grid gap-5 sm:grid-cols-2">
           <Field>
             <FieldLabel>思考强度</FieldLabel>

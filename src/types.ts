@@ -4,6 +4,7 @@ export interface ConfigView {
   piPath: string
   provider: string
   model: string
+  pricing: ModelPricing
   baseUrl: string
   thinking: string
   authMode: "api_key" | "environment" | "pi_auth" | ""
@@ -97,20 +98,41 @@ export interface Execution {
   status: ExecutionStatus
   provider: string
   model: string
+  pricing: ModelPricing
   thinking: string
   sessionId: string
   pid?: number
   currentTool?: string
   initialPrompt?: string
   systemPrompt?: string
+  toolsSnapshot: ToolSnapshot[]
   result?: string
   error?: string
   cost: number
   tokens: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
   messageCount: number
   startedAt: string
   updatedAt: string
   finishedAt?: string
+}
+export interface ToolSnapshot {
+  name: string
+  label: string
+  description: string
+  source: "pi_builtin" | "aegis_extension" | "unknown"
+  parameters: ToolParameterSnapshot[]
+}
+export interface ToolParameterSnapshot {
+  name: string
+  type: string
+  description: string
+  required: boolean
+  enum?: string[]
+  children?: ToolParameterSnapshot[]
 }
 export interface ExecutionEvent {
   id: string
@@ -155,6 +177,19 @@ export interface IssueComment {
   authorId: string
   body: string
   mentions: string[]
+  attachments: IssueAttachment[]
+  createdAt: string
+}
+export interface IssueAttachment {
+  id: string
+  issueId: string
+  commentId?: string
+  executionId: string
+  name: string
+  description?: string
+  sourcePath: string
+  mimeType: string
+  size: number
   createdAt: string
 }
 export interface AgentWakeup {
@@ -205,6 +240,13 @@ export interface AgentModelConfig {
   model: string
   baseUrl: string
   thinking: string
+  pricing: ModelPricing | null
+}
+export interface ModelPricing {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
 }
 export interface PermissionBoundary {
   workspaceScope: "run_workspace"
@@ -272,6 +314,7 @@ export interface SaveConfigInput {
   piPath: string
   provider: string
   model: string
+  pricing: ModelPricing
   baseUrl: string
   thinking: string
   authMode: "api_key" | "environment" | "pi_auth"

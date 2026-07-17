@@ -7,7 +7,8 @@ const createSubissuesTool = defineTool({
   label: "Create child Issues",
   description:
     "Atomically decompose the checked-out Issue into 2-8 durable child Issues. Use this when the current Issue is too broad or contains independently verifiable work. After the tool succeeds, stop working and end the turn so Aegis can schedule the children.",
-  promptSnippet: "Create durable child Issues and hand control back to the Aegis scheduler",
+  promptSnippet:
+    "Create durable child Issues and hand control back to the Aegis scheduler",
   promptGuidelines: [
     "Use aegis_create_subissues for genuinely broad or parallel work; never emulate delegation in prose.",
     "Dependencies use 1-based indexes and may reference only earlier children.",
@@ -15,15 +16,22 @@ const createSubissuesTool = defineTool({
   ],
   parameters: Type.Object({
     requestKey: Type.String({
-      description: "Stable idempotency key unique within this parent Issue, such as implementation-v1",
+      description:
+        "Stable idempotency key unique within this parent Issue, such as implementation-v1",
       maxLength: 120,
     }),
-    summary: Type.String({ description: "Short explanation of why decomposition is required" }),
+    summary: Type.String({
+      description: "Short explanation of why decomposition is required",
+    }),
     children: Type.Array(
       Type.Object({
         title: Type.String({ description: "Concrete child Issue title" }),
-        description: Type.String({ description: "Scoped implementation context" }),
-        acceptanceCriteria: Type.String({ description: "Observable completion criteria" }),
+        description: Type.String({
+          description: "Scoped implementation context",
+        }),
+        acceptanceCriteria: Type.String({
+          description: "Observable completion criteria",
+        }),
         priority: Type.Union([
           Type.Literal("critical"),
           Type.Literal("high"),
@@ -31,10 +39,12 @@ const createSubissuesTool = defineTool({
           Type.Literal("low"),
         ]),
         agentId: Type.String({
-          description: "Enabled Aegis Agent id; use an empty string to let the scheduler choose",
+          description:
+            "Enabled Aegis Agent id; use an empty string to let the scheduler choose",
         }),
         dependsOn: Type.Array(Type.Integer({ minimum: 1 }), {
-          description: "1-based indexes of earlier children that block this child",
+          description:
+            "1-based indexes of earlier children that block this child",
         }),
       }),
       { minItems: 2, maxItems: 8 }
@@ -65,7 +75,9 @@ const createSubissuesTool = defineTool({
       children?: Array<{ identifier: string; title: string }>
     }
     if (!response.ok) {
-      throw new Error(payload.error || `Aegis control API returned HTTP ${response.status}`)
+      throw new Error(
+        payload.error || `Aegis control API returned HTTP ${response.status}`
+      )
     }
     const children = payload.children ?? []
     return {
@@ -73,6 +85,73 @@ const createSubissuesTool = defineTool({
         {
           type: "text",
           text: `${payload.reused ? "Reused" : "Created"} ${children.length} child Issues: ${children.map((child) => `${child.identifier} ${child.title}`).join(", ")}. End this turn now; Aegis will schedule the child tree and resume this parent later.`,
+        },
+      ],
+      details: payload,
+    }
+  },
+})
+
+const publishAttachmentTool = defineTool({
+  name: "aegis_publish_attachment",
+  label: "Publish attachment",
+  description:
+    "Publish a generated workspace file as a durable Issue comment attachment. Use this for reports, archives, images, documents, datasets, or other user-facing deliverables. The file must already exist inside the Issue workspace. Call once per deliverable before ending the turn.",
+  promptSnippet: "Attach generated deliverable files to the completion comment",
+  promptGuidelines: [
+    "Publish user-facing deliverable files with aegis_publish_attachment before completing the Issue.",
+    "Do not publish source files merely because they were edited; publish only files useful as downloadable deliverables.",
+    "The attachment path must stay inside the current Issue workspace.",
+  ],
+  parameters: Type.Object({
+    path: Type.String({
+      description:
+        "Absolute path or workspace-relative path of the generated file",
+    }),
+    name: Type.Optional(
+      Type.String({ description: "Optional download filename" })
+    ),
+    description: Type.Optional(
+      Type.String({
+        description: "Optional short description of the deliverable",
+      })
+    ),
+  }),
+  async execute(_toolCallId, params, signal) {
+    const controlURL = process.env.AEGIS_CONTROL_URL
+    const executionID = process.env.AEGIS_EXECUTION_ID
+    const token = process.env.AEGIS_CONTROL_TOKEN
+    if (!controlURL || !executionID || !token) {
+      throw new Error("Aegis execution control context is unavailable")
+    }
+    const response = await fetch(
+      `${controlURL.replace(/\/$/, "")}/api/internal/executions/${encodeURIComponent(executionID)}/attachments`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params),
+        signal,
+      }
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string
+      id?: string
+      name?: string
+      size?: number
+    }
+    if (!response.ok) {
+      throw new Error(
+        payload.error || `Aegis control API returned HTTP ${response.status}`
+      )
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Published attachment ${payload.name ?? params.path} (${payload.size ?? 0} bytes). It will be mounted on the completion comment.`,
         },
       ],
       details: payload,
@@ -113,7 +192,11 @@ function pathEscapesWorkspace(input: Record<string, unknown>) {
   if (typeof candidate !== "string" || candidate.trim() === "") return false
   const resolved = path.resolve(workspace, candidate)
   const relative = path.relative(workspace, resolved)
-  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+  return (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
 }
 
 function summarize(toolName: string, input: Record<string, unknown>) {
@@ -124,6 +207,7 @@ function summarize(toolName: string, input: Record<string, unknown>) {
 
 export default function aegisGuard(pi: ExtensionAPI) {
   pi.registerTool(createSubissuesTool)
+  pi.registerTool(publishAttachmentTool)
 
   const provider = process.env.AEGIS_PROVIDER
   const baseUrl = process.env.AEGIS_BASE_URL
@@ -133,7 +217,9 @@ export default function aegisGuard(pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     if (pathEscapesWorkspace(event.input)) {
-      return denied("Agent permission boundary: path escapes the task workspace")
+      return denied(
+        "Agent permission boundary: path escapes the task workspace"
+      )
     }
 
     if (event.toolName === "bash") {
@@ -151,7 +237,9 @@ export default function aegisGuard(pi: ExtensionAPI) {
         process.env.AEGIS_ALLOW_WRITE === "false" &&
         mutatingShellPatterns.some((pattern) => pattern.test(command))
       ) {
-        return denied("Agent permission boundary: workspace writes are disabled")
+        return denied(
+          "Agent permission boundary: workspace writes are disabled"
+        )
       }
     }
 

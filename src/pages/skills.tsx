@@ -141,7 +141,7 @@ export function SkillsPage() {
       <PageHeader
         eyebrow="Capability library"
         title="Skills"
-        description="管理兼容 SKILL.md 的能力与知识包。可创建、编辑、导入、导出或从本地目录安装。"
+        description="管理 SKILL.md 能力与知识包。可创建、编辑、导入、导出或从本地目录安装。"
         actions={
           <>
             <input
@@ -156,7 +156,11 @@ export function SkillsPage() {
               disabled={importing}
               onClick={() => fileRef.current?.click()}
             >
-              {importing ? <Spinner data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
+              {importing ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Upload data-icon="inline-start" />
+              )}
               导入
             </Button>
             <Button variant="outline" onClick={() => setInstallOpen(true)}>
@@ -185,7 +189,8 @@ export function SkillsPage() {
         <CardHeader>
           <CardTitle>能力目录</CardTitle>
           <CardDescription>
-            导出包包含 SKILL.md 与 Aegis 元数据；安装来源当前支持本地文件或目录。
+            导出包包含 SKILL.md 与 Aegis
+            元数据；安装来源当前支持本地文件或目录。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -223,8 +228,12 @@ export function SkillsPage() {
                       <TableCell className="min-w-64 whitespace-normal">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{skill.displayName}</span>
-                            {skill.builtin ? <Badge variant="outline">内置</Badge> : null}
+                            <span className="font-medium">
+                              {skill.displayName}
+                            </span>
+                            {skill.builtin ? (
+                              <Badge variant="outline">内置</Badge>
+                            ) : null}
                           </div>
                           <span className="line-clamp-2 text-xs text-muted-foreground">
                             {skill.description}
@@ -235,9 +244,13 @@ export function SkillsPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{sourceLabel(skill.source)}</Badge>
+                        <Badge variant="secondary">
+                          {sourceLabel(skill.source)}
+                        </Badge>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{skill.version}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {skill.version}
+                      </TableCell>
                       <TableCell>
                         <span className="text-sm">{usedBy.length}</span>
                       </TableCell>
@@ -305,7 +318,10 @@ export function SkillsPage() {
           await refresh()
         }}
       />
-      <AlertDialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
+      <AlertDialog
+        open={deleting !== null}
+        onOpenChange={(open) => !open && setDeleting(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogMedia>
@@ -313,12 +329,16 @@ export function SkillsPage() {
             </AlertDialogMedia>
             <AlertDialogTitle>删除 {deleting?.displayName}？</AlertDialogTitle>
             <AlertDialogDescription>
-              SKILL.md 及本地物化目录都会删除。正在被 Agent 使用的 Skill 无法删除。
+              SKILL.md 及本地物化目录都会删除。正在被 Agent 使用的 Skill
+              无法删除。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void remove()}>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => void remove()}
+            >
               删除
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -368,9 +388,12 @@ function SkillDialog({
       <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-3xl">
         <form onSubmit={submit} className="contents">
           <DialogHeader>
-            <DialogTitle>{skill === "new" ? "新增 Skill" : `编辑 ${form.displayName}`}</DialogTitle>
+            <DialogTitle>
+              {skill === "new" ? "新增 Skill" : `编辑 ${form.displayName}`}
+            </DialogTitle>
             <DialogDescription>
-              使用标准 SKILL.md frontmatter：只包含 name 与 description，正文保持简洁、可执行。
+              使用标准 SKILL.md frontmatter：只包含 name 与
+              description，正文保持简洁、可执行。
             </DialogDescription>
           </DialogHeader>
           <FieldGroup>
@@ -414,7 +437,9 @@ function SkillDialog({
                 value={form.description}
                 onChange={(event) => set("description", event.target.value)}
               />
-              <FieldDescription>用于 Agent 判断何时加载这个 Skill。</FieldDescription>
+              <FieldDescription>
+                用于 Agent 判断何时加载这个 Skill。
+              </FieldDescription>
             </Field>
             <Field>
               <FieldLabel htmlFor="skill-content">SKILL.md</FieldLabel>
@@ -428,10 +453,17 @@ function SkillDialog({
             </Field>
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               取消
             </Button>
-            <Button type="submit" disabled={saving || !form.name.trim() || !form.description.trim()}>
+            <Button
+              type="submit"
+              disabled={saving || !form.name.trim() || !form.description.trim()}
+            >
               {saving ? <Spinner data-icon="inline-start" /> : null}
               {saving ? "保存中…" : "保存 Skill"}
             </Button>
@@ -475,7 +507,8 @@ function InstallDialog({
           <DialogHeader>
             <DialogTitle>从本地安装 Skill</DialogTitle>
             <DialogDescription>
-              填写包含 SKILL.md 的目录，或一个 .md / .zip 文件路径。安装时会复制到 Aegis 数据目录。
+              填写包含 SKILL.md 的目录，或一个 .md / .zip
+              文件路径。安装时会复制到 Aegis 数据目录。
             </DialogDescription>
           </DialogHeader>
           <FieldGroup>
@@ -490,11 +523,19 @@ function InstallDialog({
             </Field>
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               取消
             </Button>
             <Button type="submit" disabled={!source.trim() || installing}>
-              {installing ? <Spinner data-icon="inline-start" /> : <FolderDown data-icon="inline-start" />}
+              {installing ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <FolderDown data-icon="inline-start" />
+              )}
               {installing ? "安装中…" : "安装"}
             </Button>
           </DialogFooter>
@@ -504,7 +545,15 @@ function InstallDialog({
   )
 }
 
-function Summary({ icon: Icon, label, value }: { icon: typeof Wrench; label: string; value: number }) {
+function Summary({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Wrench
+  label: string
+  value: number
+}) {
   return (
     <Card>
       <CardContent className="flex items-center gap-4 p-5">

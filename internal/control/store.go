@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -65,19 +66,8 @@ func NewStore(dataDir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &Project{}, &Issue{}, &IssueRelation{}, &Execution{}, &ExecutionEvent{}, &Message{}, &Approval{}, &IssueComment{}, &AgentWakeup{}, &IssueDecomposition{}, &Finding{}); err != nil {
+	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &Project{}, &Issue{}, &IssueRelation{}, &Execution{}, &ExecutionEvent{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &Finding{}); err != nil {
 		return nil, fmt.Errorf("migrate sqlite: %w", err)
-	}
-	// The pre-Paperclip JSON snapshot store is intentionally not supported.
-	if db.Migrator().HasTable("run_records") {
-		if err := db.Migrator().DropTable("run_records"); err != nil {
-			return nil, fmt.Errorf("drop legacy run snapshots: %w", err)
-		}
-	}
-	if db.Migrator().HasColumn("executions", "p_id") {
-		if err := db.Migrator().DropColumn("executions", "p_id"); err != nil {
-			return nil, fmt.Errorf("drop legacy execution pid column: %w", err)
-		}
 	}
 	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), updatedAt: time.Now()}
 	var settings configRecord
@@ -198,6 +188,9 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	if input.Provider == "" || input.Model == "" {
 		return ConfigView{}, errors.New("Provider 和模型不能为空")
 	}
+	if err := validateModelPricing(input.Pricing); err != nil {
+		return ConfigView{}, err
+	}
 	info, err := os.Stat(input.Workspace)
 	if err != nil || !info.IsDir() {
 		return ConfigView{}, errors.New("工作目录不存在或不是目录")
@@ -230,7 +223,7 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 		return ConfigView{}, errors.New("API Key 认证需要填写密钥")
 	}
 	now := time.Now()
-	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, UpdatedAt: now}
+	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, UpdatedAt: now}
 	if err := s.db.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
 		return ConfigView{}, err
 	}
@@ -240,7 +233,7 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 }
 
 func configView(c Config) ConfigView {
-	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, UpdatedAt: c.UpdatedAt}
+	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, UpdatedAt: c.UpdatedAt}
 }
 func (s *Store) SetRuntimeProbe(p RuntimeProbe) {
 	s.mu.Lock()
@@ -433,6 +426,18 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	}
 	s.db.Where("issue_id = ?", issue.ID).Order("started_at desc").Find(&d.Executions)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at asc").Find(&d.Comments)
+	var attachments []IssueAttachment
+	s.db.Where("issue_id = ? AND comment_id <> ''", issue.ID).Order("created_at asc").Find(&attachments)
+	attachmentsByComment := make(map[string][]IssueAttachment)
+	for _, attachment := range attachments {
+		attachmentsByComment[attachment.CommentID] = append(attachmentsByComment[attachment.CommentID], attachment)
+	}
+	for index := range d.Comments {
+		d.Comments[index].Attachments = attachmentsByComment[d.Comments[index].ID]
+		if d.Comments[index].Attachments == nil {
+			d.Comments[index].Attachments = []IssueAttachment{}
+		}
+	}
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at asc").Find(&d.Messages)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Events)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Approvals)
@@ -800,11 +805,18 @@ func (s *Store) createExecution(issue Issue, agentID, kind string) (Execution, e
 	}
 	cfg := s.effectiveAgentConfig(agent)
 	now := time.Now()
-	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agentID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Thinking: cfg.Thinking, SessionID: nextID("pi-session"), StartedAt: now, UpdatedAt: now}
+	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agentID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: nextID("pi-session"), SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
 	err = s.db.Create(&e).Error
 	return e, err
 }
 func (s *Store) updateExecution(id string, updates map[string]any) error {
+	if snapshot, ok := updates["tools_snapshot"].([]ToolSnapshot); ok {
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			return fmt.Errorf("encode execution tools snapshot: %w", err)
+		}
+		updates["tools_snapshot"] = string(encoded)
+	}
 	updates["updated_at"] = time.Now()
 	query := s.db.Model(&Execution{}).Where("id = ?", id)
 	if status, ok := updates["status"]; ok && status != "cancelled" {

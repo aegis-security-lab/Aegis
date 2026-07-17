@@ -3,6 +3,8 @@ import * as React from "react"
 import {
   ArrowLeft,
   Bot,
+  ChevronDown,
+  ChevronUp,
   Clock3,
   Coins,
   ExternalLink,
@@ -10,6 +12,7 @@ import {
   MessagesSquare,
   ScrollText,
   SquareTerminal,
+  Wrench,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 
@@ -28,6 +31,11 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -35,11 +43,21 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { fetchSessionDetail } from "@/lib/api"
-import { formatDuration, formatTime, formatTokens } from "@/lib/format"
+import {
+  formatCost,
+  formatDuration,
+  formatTime,
+  formatTokens,
+} from "@/lib/format"
 import { useAppState } from "@/lib/state"
-import type { SessionDetail } from "@/types"
+import type {
+  SessionDetail,
+  ToolParameterSnapshot,
+  ToolSnapshot,
+} from "@/types"
 
 export function SessionDetailPage() {
   const { executionId } = useParams()
@@ -93,6 +111,7 @@ export function SessionDetailPage() {
   const { execution } = detail.session
   const initialPrompt = execution.initialPrompt ?? ""
   const systemPrompt = execution.systemPrompt ?? ""
+  const pricing = execution.pricing
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -128,7 +147,7 @@ export function SessionDetailPage() {
           {execution.provider} / {execution.model}
         </Badge>
         <Badge variant="outline">{formatTokens(execution.tokens)} tokens</Badge>
-        <Badge variant="outline">${execution.cost.toFixed(4)}</Badge>
+        <Badge variant="outline">{formatCost(execution.cost)}</Badge>
       </div>
 
       <Tabs defaultValue="conversation" className="min-h-0">
@@ -144,6 +163,10 @@ export function SessionDetailPage() {
           <TabsTrigger value="prompts">
             <ScrollText />
             提示词
+          </TabsTrigger>
+          <TabsTrigger value="tools">
+            <Wrench />
+            工具 {execution.toolsSnapshot?.length ?? 0}
           </TabsTrigger>
           <TabsTrigger value="metadata">运行信息</TabsTrigger>
         </TabsList>
@@ -194,6 +217,10 @@ export function SessionDetailPage() {
           </div>
         </TabsContent>
 
+        <TabsContent value="tools" className="pt-4">
+          <ToolSnapshotPanel tools={execution.toolsSnapshot} />
+        </TabsContent>
+
         <TabsContent value="metadata" className="pt-4">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <MetaCard
@@ -220,9 +247,23 @@ export function SessionDetailPage() {
               title="资源用量"
               items={[
                 ["Tokens", formatTokens(execution.tokens)],
-                ["Cost", `$${execution.cost.toFixed(4)}`],
+                ["Input", formatTokens(execution.inputTokens)],
+                ["Output", formatTokens(execution.outputTokens)],
+                ["Cache read", formatTokens(execution.cacheReadTokens)],
+                ["Cache write", formatTokens(execution.cacheWriteTokens)],
+                ["Cost", formatCost(execution.cost)],
                 ["Messages", String(detail.messages.length)],
                 ["Approvals", String(detail.approvals.length)],
+              ]}
+            />
+            <MetaCard
+              icon={Coins}
+              title="价格快照（USD / 1M）"
+              items={[
+                ["Input", String(pricing.input)],
+                ["Output", String(pricing.output)],
+                ["Cache read", String(pricing.cacheRead)],
+                ["Cache write", String(pricing.cacheWrite)],
               ]}
             />
             <MetaCard
@@ -243,6 +284,148 @@ export function SessionDetailPage() {
       </Tabs>
     </div>
   )
+}
+
+function ToolSnapshotPanel({ tools }: { tools: ToolSnapshot[] }) {
+  return (
+    <Card className="h-[calc(100svh-17rem)] min-h-[520px] gap-0 py-0">
+      <CardHeader className="shrink-0 border-b py-4">
+        <CardTitle className="flex items-center gap-2">
+          <Wrench className="size-4" />
+          工具快照
+        </CardTitle>
+        <CardDescription>
+          Session 创建时实际启用的工具定义；后续修改 Agent 不会影响这里。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 p-0">
+        {tools.length === 0 ? (
+          <Empty className="h-full border-0">
+            <EmptyHeader>
+              <EmptyTitle>该 Session 没有启用工具</EmptyTitle>
+              <EmptyDescription>
+                创建 Session 时使用了无工具运行模式。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <ScrollArea className="h-full">
+            <div className="flex flex-col gap-3 p-4">
+              {tools.map((tool) => (
+                <ToolDefinitionItem key={tool.name} tool={tool} />
+              ))}
+            </div>
+          </ScrollArea>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ToolDefinitionItem({ tool }: { tool: ToolSnapshot }) {
+  const [open, setOpen] = React.useState(false)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Card size="sm">
+        <CollapsibleTrigger
+          className="w-full text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          aria-label={`${open ? "收起" : "展开"}工具 ${tool.name}`}
+        >
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-col gap-1">
+                <CardTitle className="font-mono">{tool.name}</CardTitle>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge variant="secondary">
+                    {toolSourceLabel(tool.source)}
+                  </Badge>
+                  <Badge variant="outline">
+                    {tool.parameters.length} 个参数
+                  </Badge>
+                </div>
+              </div>
+              {open ? (
+                <ChevronUp className="size-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+              )}
+            </div>
+          </CardHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium text-muted-foreground">
+                工具描述
+              </p>
+              <p className="text-sm leading-relaxed">{tool.description}</p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                参数 Schema
+              </p>
+              {tool.parameters.length > 0 ? (
+                <ToolParameterList parameters={tool.parameters} />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  没有可用的参数元数据。
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  )
+}
+
+function ToolParameterList({
+  parameters,
+}: {
+  parameters: ToolParameterSnapshot[]
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {parameters.map((parameter) => (
+        <div
+          key={parameter.name}
+          className="flex flex-col gap-2 rounded-lg bg-muted/40 p-3"
+        >
+          <div className="flex flex-wrap items-center gap-1.5">
+            <code className="font-mono text-xs">{parameter.name}</code>
+            <Badge variant="outline">{parameter.type}</Badge>
+            <Badge variant={parameter.required ? "secondary" : "ghost"}>
+              {parameter.required ? "必填" : "可选"}
+            </Badge>
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {parameter.description || "没有参数说明。"}
+          </p>
+          {parameter.enum && parameter.enum.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">可选值</span>
+              {parameter.enum.map((value) => (
+                <Badge key={value} variant="outline">
+                  {value}
+                </Badge>
+              ))}
+            </div>
+          )}
+          {parameter.children && parameter.children.length > 0 && (
+            <div className="ml-2 border-l pl-3">
+              <ToolParameterList parameters={parameter.children} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function toolSourceLabel(source: ToolSnapshot["source"]) {
+  if (source === "pi_builtin") return "Pi 内置"
+  if (source === "aegis_extension") return "Aegis 扩展"
+  return "未知来源"
 }
 
 function PromptCard({
@@ -271,9 +454,9 @@ function PromptCard({
         ) : (
           <Empty className="min-h-64 border-0">
             <EmptyHeader>
-              <EmptyTitle>历史 Session 没有提示词快照</EmptyTitle>
+              <EmptyTitle>提示词尚未生成</EmptyTitle>
               <EmptyDescription>
-                该 Session 创建时尚未启用 Prompt 持久化，无法准确还原原始内容。
+                Session 启动后会在这里保存完整的提示词快照。
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

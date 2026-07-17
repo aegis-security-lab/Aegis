@@ -242,6 +242,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	if err := m.store.updateExecution(e.ID, map[string]any{
 		"initial_prompt": prompt,
 		"system_prompt":  agent.SystemPrompt,
+		"tools_snapshot": snapshotTools(activeTools),
 	}); err != nil {
 		return nil, err
 	}
@@ -441,13 +442,14 @@ func (m *Manager) handleSettled(s *PiSession) {
 		return
 	}
 	_ = m.store.updateExecution(s.executionID, map[string]any{"status": "completed", "result": result, "current_tool": "", "finished_at": now, "pid": 0})
+	m.collectExecutionAttachments(issue, s.executionID)
 	if s.kind == "mention" {
 		m.completeWakeup(s, result)
 		return
 	}
 	issue, _ = m.store.GetIssue(s.issueID)
 	if issue.ExecutionPhase == "waiting_children" {
-		m.addAgentComment(issue.ID, s.agentID, fallback(result, "已拆分子 Issues，等待调度器完成子树。"))
+		m.addAgentComment(issue.ID, s.agentID, fallback(result, "已拆分子 Issues，等待调度器完成子树。"), s.executionID)
 		m.store.addEvent(s.executionID, issue.ID, "delegation", "父 Issue 正在等待子树", "当前 Execution 已结束；所有直属子 Issues 完成后将创建 continuation Execution。")
 		m.store.notify()
 		go m.scheduleChildren(issue.ID)
@@ -463,7 +465,7 @@ func (m *Manager) handleSettled(s *PiSession) {
 		}
 		return nil
 	}(), "updated_at": now}).Error
-	m.addAgentComment(issue.ID, s.agentID, result)
+	m.addAgentComment(issue.ID, s.agentID, result, s.executionID)
 	m.store.addEvent(s.executionID, issue.ID, "worker", "Issue 执行完成", "结果已写入 Issue")
 	m.store.notify()
 	if issue.ParentID != "" {
@@ -648,15 +650,49 @@ func (m *Manager) updateStats(s *PiSession, data any) {
 	if !ok {
 		return
 	}
-	cost, _ := stats["cost"].(float64)
-	var tokens int64
-	if x, ok := stats["tokens"].(map[string]any); ok {
-		if v, ok := x["total"].(float64); ok {
-			tokens = int64(v)
-		}
+	var execution Execution
+	if err := m.store.db.First(&execution, "id = ?", s.executionID).Error; err != nil {
+		return
 	}
-	_ = m.store.updateExecution(s.executionID, map[string]any{"cost": cost, "tokens": tokens})
+	input, output, cacheRead, cacheWrite, total := int64(0), int64(0), int64(0), int64(0), int64(0)
+	if tokens, ok := stats["tokens"].(map[string]any); ok {
+		input = tokenCount(tokens["input"])
+		output = tokenCount(tokens["output"])
+		cacheRead = tokenCount(tokens["cacheRead"])
+		cacheWrite = tokenCount(tokens["cacheWrite"])
+		total = tokenCount(tokens["total"])
+	}
+	if total == 0 {
+		total = input + output + cacheRead + cacheWrite
+	}
+	cost := calculateModelCost(execution.Pricing, input, output, cacheRead, cacheWrite)
+	_ = m.store.updateExecution(s.executionID, map[string]any{
+		"cost":               cost,
+		"tokens":             total,
+		"input_tokens":       input,
+		"output_tokens":      output,
+		"cache_read_tokens":  cacheRead,
+		"cache_write_tokens": cacheWrite,
+	})
 	m.store.notify()
+}
+
+func tokenCount(value any) int64 {
+	switch number := value.(type) {
+	case float64:
+		return int64(number)
+	case float32:
+		return int64(number)
+	case int:
+		return int64(number)
+	case int64:
+		return number
+	case json.Number:
+		parsed, _ := number.Int64()
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func (m *Manager) SendChat(issueID, executionID, message string) (Message, error) {
@@ -768,7 +804,7 @@ func (m *Manager) AddIssueComment(issueID, body string) (IssueComment, error) {
 		return IssueComment{}, err
 	}
 	mentions := m.validMentions(body, "")
-	c := IssueComment{ID: nextID("comment"), IssueID: issueID, AuthorType: "operator", AuthorID: "operator", Body: body, Mentions: mentions, CreatedAt: time.Now()}
+	c := IssueComment{ID: nextID("comment"), IssueID: issueID, AuthorType: "operator", AuthorID: "operator", Body: body, Mentions: mentions, Attachments: []IssueAttachment{}, CreatedAt: time.Now()}
 	if err := m.store.db.Create(&c).Error; err != nil {
 		return IssueComment{}, err
 	}
@@ -833,17 +869,31 @@ func (m *Manager) dispatchWakeup(id string) {
 func (m *Manager) completeWakeup(s *PiSession, result string) {
 	now := time.Now()
 	_ = m.store.db.Model(&AgentWakeup{}).Where("id = ?", s.wakeupID).Updates(map[string]any{"status": "completed", "completed_at": now}).Error
-	m.addAgentComment(s.issueID, s.agentID, result)
+	m.addAgentComment(s.issueID, s.agentID, result, s.executionID)
 	m.store.notify()
 }
-func (m *Manager) addAgentComment(issueID, agentID, body string) {
+func (m *Manager) addAgentComment(issueID, agentID, body, executionID string) {
 	body = strings.TrimSpace(body)
 	if body == "" {
-		return
+		var attachmentCount int64
+		if executionID != "" {
+			_ = m.store.db.Model(&IssueAttachment{}).Where("execution_id = ? AND comment_id = ''", executionID).Count(&attachmentCount).Error
+		}
+		if attachmentCount == 0 {
+			return
+		}
+		body = "已生成并附上交付物。"
 	}
 	mentions := m.validMentions(body, agentID)
 	c := IssueComment{ID: nextID("comment"), IssueID: issueID, AuthorType: "agent", AuthorID: agentID, Body: body, Mentions: mentions, CreatedAt: time.Now()}
-	_ = m.store.db.Create(&c).Error
+	if err := m.store.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&c).Error; err != nil {
+			return err
+		}
+		return m.store.bindExecutionAttachments(tx, &c, executionID)
+	}); err != nil {
+		return
+	}
 	for _, id := range mentions {
 		w := AgentWakeup{ID: nextID("wakeup"), IssueID: issueID, CommentID: c.ID, AgentID: id, Reason: "issue_comment_mentioned", Status: "queued", CreatedAt: time.Now()}
 		_ = m.store.db.Create(&w).Error
@@ -956,6 +1006,7 @@ Acceptance criteria: %s
 Constraints: %s
 Workspace: %s
 Use tools to inspect and modify the project, run relevant validation, fix in-scope failures, and finish with a concise evidence-based report.
+For every user-facing deliverable file you generate (reports, archives, images, documents, or datasets), call aegis_publish_attachment before ending the turn so Aegis can mount it on your completion comment. Source-code edits are collected separately and should not be published merely as attachments.
 
 If this Issue is too broad for one reliable execution, call aegis_create_subissues once with 2-8 independently verifiable child Issues and explicit earlier-index dependencies. After the tool succeeds, stop implementation on the parent and end your turn. The scheduler will execute the children and later resume this Issue in a fresh continuation session. Do not create children for work you can safely complete yourself.`, i.Identifier, i.Title, i.Description, i.AcceptanceCriteria, i.Constraints, i.Workspace)
 }
@@ -974,7 +1025,7 @@ Workspace: %s
 
 Direct child results:
 %s
-Inspect the actual workspace state, integrate or correct child work where needed, and run the parent-level validation. If material work is still too complex, you may call aegis_create_subissues again for a new bounded decomposition. Otherwise finish with a concise parent-level report covering integration, validation, and remaining risk.`, parent.Identifier, parent.Title, parent.Description, parent.AcceptanceCriteria, parent.Workspace, summaries.String())
+Inspect the actual workspace state, integrate or correct child work where needed, and run the parent-level validation. Publish every generated user-facing deliverable with aegis_publish_attachment before ending the turn. If material work is still too complex, you may call aegis_create_subissues again for a new bounded decomposition. Otherwise finish with a concise parent-level report covering integration, validation, and remaining risk.`, parent.Identifier, parent.Title, parent.Description, parent.AcceptanceCriteria, parent.Workspace, summaries.String())
 }
 func mentionPrompt(i Issue, w AgentWakeup, agents []AgentDefinition, db any) string {
 	return fmt.Sprintf("You were mentioned on Issue %s: %s. Inspect the Issue context and provide a concrete response. You may perform scoped work using your tools. Finish with a response suitable for the Issue comment thread. Available agent IDs: %v", i.Identifier, i.Title, func() []string {

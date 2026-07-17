@@ -36,11 +36,6 @@ import type { ExecutionEvent, Issue } from "@/types"
 
 type JsonRecord = Record<string, unknown>
 
-interface TimelineItem {
-  event: ExecutionEvent
-  result?: ExecutionEvent
-}
-
 type EventIconName =
   | "completed"
   | "edit"
@@ -60,7 +55,10 @@ export function ExecutionEvents({
   events: ExecutionEvent[]
   issues?: Issue[]
 }) {
-  const items = React.useMemo(() => groupLegacyToolEvents(events), [events])
+  const items = React.useMemo(
+    () => [...events].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [events]
+  )
   if (items.length === 0) {
     return (
       <Empty>
@@ -75,17 +73,22 @@ export function ExecutionEvents({
   }
   return (
     <div className="flex flex-col gap-2">
-      {items.map((item) => (
-        <EventCard key={item.event.id} item={item} issues={issues} />
+      {items.map((event) => (
+        <EventCard key={event.id} event={event} issues={issues} />
       ))}
     </div>
   )
 }
 
-function EventCard({ item, issues }: { item: TimelineItem; issues: Issue[] }) {
+function EventCard({
+  event,
+  issues,
+}: {
+  event: ExecutionEvent
+  issues: Issue[]
+}) {
   const [open, setOpen] = React.useState(false)
-  const { event } = item
-  const tool = toolData(item)
+  const tool = toolData(event)
   const summary = tool ? summarizeTool(tool) : null
   const icon = summary?.icon ?? eventIcon(event)
   const status = tool?.status || event.status
@@ -138,45 +141,19 @@ interface ToolData {
   status: string
   input: JsonRecord
   output: JsonRecord
-  legacyInput: string
-  legacyOutput: string
   isError: boolean
 }
 
-function toolData(item: TimelineItem): ToolData | null {
-  if (item.event.type !== "tool" && item.event.type !== "tool_result")
-    return null
-  const event =
-    item.event.type === "tool" ? item.event : (item.result ?? item.event)
-  const result = item.result
-  const name =
-    event.toolName ||
-    toolNameFromTitle(event.title) ||
-    toolNameFromTitle(result?.title ?? "") ||
-    "tool"
+function toolData(event: ExecutionEvent): ToolData | null {
+  if (event.type !== "tool") return null
   const input = asRecord(parseJSON(event.inputJson))
-  const output = asRecord(parseJSON(event.outputJson || result?.outputJson))
-  const legacyOutput =
-    result?.detail ||
-    (item.event.type === "tool_result" ? item.event.detail : "")
-  const legacyIsError =
-    /Validation failed for tool|Tool execution failed|Error executing tool/i.test(
-      legacyOutput
-    )
+  const output = asRecord(parseJSON(event.outputJson))
   return {
-    name,
-    status:
-      event.status ||
-      (result
-        ? result.isError || legacyIsError
-          ? "failed"
-          : "completed"
-        : "completed"),
+    name: event.toolName || "tool",
+    status: event.status || "running",
     input,
     output,
-    legacyInput: event.detail || "",
-    legacyOutput,
-    isError: Boolean(event.isError || result?.isError || legacyIsError),
+    isError: event.isError === true,
   }
 }
 
@@ -226,7 +203,7 @@ function summarizeTool(tool: ToolData) {
     }
     case "grep":
       return {
-        title: `搜索 · ${stringValue(tool.input.pattern) || legacyField(tool.legacyInput, "pattern")}`,
+        title: `搜索 · ${stringValue(tool.input.pattern) || "内容"}`,
         meta: path,
         icon: "search" as const,
       }
@@ -282,16 +259,8 @@ function ToolDetails({ tool, issues }: { tool: ToolData; issues: Issue[] }) {
     default:
       return (
         <div className="flex flex-col gap-4">
-          <JSONSection
-            label="参数"
-            value={tool.input}
-            fallback={tool.legacyInput}
-          />
-          <JSONSection
-            label="结果"
-            value={tool.output}
-            fallback={tool.legacyOutput}
-          />
+          <JSONSection label="参数" value={tool.input} />
+          <JSONSection label="结果" value={tool.output} />
         </div>
       )
   }
@@ -442,17 +411,9 @@ function CodeSection({
   )
 }
 
-function JSONSection({
-  label,
-  value,
-  fallback,
-}: {
-  label: string
-  value: JsonRecord
-  fallback: string
-}) {
+function JSONSection({ label, value }: { label: string; value: JsonRecord }) {
   const content =
-    Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : fallback
+    Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : ""
   return <CodeSection label={label} value={content} />
 }
 
@@ -463,57 +424,6 @@ function PathLine({ action, path }: { action: string; path: string }) {
       <code className="min-w-0 truncate text-xs">{path || "未知路径"}</code>
     </div>
   )
-}
-
-function groupLegacyToolEvents(events: ExecutionEvent[]): TimelineItem[] {
-  const ordered = [...events].sort((a, b) =>
-    a.createdAt.localeCompare(b.createdAt)
-  )
-  const items: TimelineItem[] = []
-  const pending = new Map<string, TimelineItem[]>()
-  for (const event of ordered) {
-    if (event.type === "tool") {
-      const item: TimelineItem = { event }
-      items.push(item)
-      if (!event.toolCallId && !event.outputJson) {
-        const name = event.toolName || toolNameFromTitle(event.title) || "tool"
-        const queue = pending.get(name) ?? []
-        queue.push(item)
-        pending.set(name, queue)
-      }
-      continue
-    }
-    if (event.type === "tool_result") {
-      const name = event.toolName || toolNameFromTitle(event.title) || "tool"
-      const queue = pending.get(name) ?? []
-      const matchedIndex =
-        name === "read"
-          ? queue.findIndex((item) => legacyReadResultMatches(item, event))
-          : -1
-      const target = queue.splice(matchedIndex >= 0 ? matchedIndex : 0, 1)[0]
-      if (target) {
-        target.result = event
-      } else {
-        items.push({ event })
-      }
-      continue
-    }
-    items.push({ event })
-  }
-  return items.sort((a, b) =>
-    b.event.createdAt.localeCompare(a.event.createdAt)
-  )
-}
-
-function legacyReadResultMatches(item: TimelineItem, result: ExecutionEvent) {
-  const tool = toolData(item)
-  const path = tool ? toolPath(tool).toLowerCase() : ""
-  const output = legacyTextOutput(result.detail).trimStart()
-  if (path.endsWith(".json"))
-    return output.startsWith("{") || output.startsWith("[")
-  if (path.endsWith("go.mod")) return /^module\s+/i.test(output)
-  if (path.endsWith(".md")) return /^#{1,6}\s/.test(output)
-  return false
 }
 
 function eventIcon(event: ExecutionEvent): EventIconName {
@@ -549,27 +459,12 @@ function EventIcon({ name }: { name: EventIconName }) {
   }
 }
 
-function toolNameFromTitle(title: string) {
-  const start = title.match(/^调用\s+(.+)$/)
-  if (start) return start[1]
-  const end = title.match(/^(.+?)\s+执行完成$/)
-  return end?.[1] ?? ""
-}
-
 function toolPath(tool: ToolData) {
-  return (
-    stringValue(
-      tool.input.path || tool.input.filePath || tool.input.file_path
-    ) ||
-    legacyField(tool.legacyInput, "path") ||
-    legacyField(tool.legacyInput, "filePath")
-  )
+  return stringValue(tool.input.path)
 }
 
 function toolCommand(tool: ToolData) {
-  return (
-    stringValue(tool.input.command) || legacyField(tool.legacyInput, "command")
-  )
+  return stringValue(tool.input.command)
 }
 
 function toolOutput(tool: ToolData) {
@@ -577,46 +472,14 @@ function toolOutput(tool: ToolData) {
     .map((part) => stringValue(asRecord(part).text))
     .filter(Boolean)
     .join("\n")
-  return content || legacyTextOutput(tool.legacyOutput)
+  return content || stringValue(tool.output.text)
 }
 
 function createdChildren(tool: ToolData): JsonRecord[] {
   const structured = asArray(asRecord(tool.output.details).children).map(
     asRecord
   )
-  if (structured.length > 0) return structured
-  const text = legacyTextOutput(tool.legacyOutput)
-  const created = text.match(
-    /(?:Created|Reused)\s+\d+\s+child Issues:\s*([\s\S]*?)\.\s*End this turn/i
-  )?.[1]
-  if (!created) return []
-  return created.split(/,\s*/).map<JsonRecord>((entry) => {
-    const match = entry.trim().match(/^(\S+)\s+([\s\S]+)$/)
-    return match ? { identifier: match[1], title: match[2] } : { title: entry }
-  })
-}
-
-function legacyField(detail: string, key: string) {
-  if (!detail) return ""
-  if (key === "command") {
-    return (
-      detail
-        .match(/command:([\s\S]*?)(?:\s+timeout:[^\]]+)?\]$/)?.[1]
-        ?.trim() ?? ""
-    )
-  }
-  const fieldPattern = new RegExp(
-    `${key}:([\\s\\S]*?)(?=\\s+(?:path|filePath|file_path|offset|limit|pattern|glob|timeout):|\\]$)`
-  )
-  return detail.match(fieldPattern)?.[1]?.trim() ?? ""
-}
-
-function legacyTextOutput(detail: string) {
-  const start = detail.indexOf("text:")
-  if (start < 0) return detail
-  const content = detail.slice(start + "text:".length)
-  const end = content.lastIndexOf(" type:text")
-  return end >= 0 ? content.slice(0, end) : content
+  return structured
 }
 
 function parseJSON(value?: string): unknown {

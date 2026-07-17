@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   Clock3,
   Copy,
+  Download,
+  FileText,
   GitBranch,
   MessageSquare,
   Play,
@@ -32,7 +34,16 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import {
+  Attachment,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -58,7 +69,7 @@ import {
   fetchIssue,
   sendChat,
 } from "@/lib/api"
-import { formatTime, formatTokens } from "@/lib/format"
+import { formatBytes, formatTime, formatTokens } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import type { IssueDetail } from "@/types"
 export function IssueDetailPage() {
@@ -396,6 +407,53 @@ export function IssueDetailPage() {
                               <MarkdownContent className="mt-2 text-sm">
                                 {c.body}
                               </MarkdownContent>
+                              {c.attachments?.length > 0 && (
+                                <AttachmentGroup className="mt-3">
+                                  {c.attachments.map((attachment) => (
+                                    <Attachment
+                                      key={attachment.id}
+                                      size="sm"
+                                      className="w-72"
+                                    >
+                                      <AttachmentMedia>
+                                        <FileText />
+                                      </AttachmentMedia>
+                                      <AttachmentContent>
+                                        <AttachmentTitle
+                                          title={attachment.name}
+                                        >
+                                          {attachment.name}
+                                        </AttachmentTitle>
+                                        <AttachmentDescription
+                                          title={
+                                            attachment.description ||
+                                            attachment.sourcePath
+                                          }
+                                        >
+                                          {attachment.description ||
+                                            attachment.sourcePath}
+                                          {" · "}
+                                          {formatBytes(attachment.size)}
+                                        </AttachmentDescription>
+                                      </AttachmentContent>
+                                      <AttachmentActions>
+                                        <a
+                                          className={buttonVariants({
+                                            variant: "ghost",
+                                            size: "icon-xs",
+                                          })}
+                                          aria-label={`下载 ${attachment.name}`}
+                                          title="下载附件"
+                                          href={`/api/attachments/${encodeURIComponent(attachment.id)}`}
+                                          download={attachment.name}
+                                        >
+                                          <Download data-icon="inline-start" />
+                                        </a>
+                                      </AttachmentActions>
+                                    </Attachment>
+                                  ))}
+                                </AttachmentGroup>
+                              )}
                             </div>
                           ))
                         ) : (

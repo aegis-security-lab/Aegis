@@ -3,35 +3,37 @@ package control
 import "time"
 
 type Config struct {
-	Configured   bool      `json:"configured"`
-	NodePath     string    `json:"nodePath"`
-	PiPath       string    `json:"piPath"`
-	Provider     string    `json:"provider"`
-	Model        string    `json:"model"`
-	BaseURL      string    `json:"baseUrl"`
-	Thinking     string    `json:"thinking"`
-	AuthMode     string    `json:"authMode"`
-	APIKey       string    `json:"apiKey,omitempty"`
-	Workspace    string    `json:"workspace"`
-	Concurrency  int       `json:"concurrency"`
-	ApprovalMode string    `json:"approvalMode"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	Configured   bool         `json:"configured"`
+	NodePath     string       `json:"nodePath"`
+	PiPath       string       `json:"piPath"`
+	Provider     string       `json:"provider"`
+	Model        string       `json:"model"`
+	Pricing      ModelPricing `json:"pricing"`
+	BaseURL      string       `json:"baseUrl"`
+	Thinking     string       `json:"thinking"`
+	AuthMode     string       `json:"authMode"`
+	APIKey       string       `json:"apiKey,omitempty"`
+	Workspace    string       `json:"workspace"`
+	Concurrency  int          `json:"concurrency"`
+	ApprovalMode string       `json:"approvalMode"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
 }
 
 type ConfigView struct {
-	Configured   bool      `json:"configured"`
-	NodePath     string    `json:"nodePath"`
-	PiPath       string    `json:"piPath"`
-	Provider     string    `json:"provider"`
-	Model        string    `json:"model"`
-	BaseURL      string    `json:"baseUrl"`
-	Thinking     string    `json:"thinking"`
-	AuthMode     string    `json:"authMode"`
-	HasAPIKey    bool      `json:"hasApiKey"`
-	Workspace    string    `json:"workspace"`
-	Concurrency  int       `json:"concurrency"`
-	ApprovalMode string    `json:"approvalMode"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	Configured   bool         `json:"configured"`
+	NodePath     string       `json:"nodePath"`
+	PiPath       string       `json:"piPath"`
+	Provider     string       `json:"provider"`
+	Model        string       `json:"model"`
+	Pricing      ModelPricing `json:"pricing"`
+	BaseURL      string       `json:"baseUrl"`
+	Thinking     string       `json:"thinking"`
+	AuthMode     string       `json:"authMode"`
+	HasAPIKey    bool         `json:"hasApiKey"`
+	Workspace    string       `json:"workspace"`
+	Concurrency  int          `json:"concurrency"`
+	ApprovalMode string       `json:"approvalMode"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
 }
 
 type RuntimeProbe struct {
@@ -97,27 +99,50 @@ type IssueRelation struct {
 }
 
 type Execution struct {
-	ID            string     `json:"id" gorm:"primaryKey"`
-	IssueID       string     `json:"issueId" gorm:"index"`
-	AgentID       string     `json:"agentId" gorm:"index"`
-	Kind          string     `json:"kind"`
-	Status        string     `json:"status" gorm:"index"`
-	Provider      string     `json:"provider"`
-	Model         string     `json:"model"`
-	Thinking      string     `json:"thinking"`
-	SessionID     string     `json:"sessionId" gorm:"uniqueIndex"`
-	PID           int        `json:"pid,omitempty" gorm:"column:pid"`
-	CurrentTool   string     `json:"currentTool,omitempty"`
-	InitialPrompt string     `json:"initialPrompt,omitempty" gorm:"type:text"`
-	SystemPrompt  string     `json:"systemPrompt,omitempty" gorm:"type:text"`
-	Result        string     `json:"result,omitempty"`
-	Error         string     `json:"error,omitempty"`
-	Cost          float64    `json:"cost"`
-	Tokens        int64      `json:"tokens"`
-	MessageCount  int        `json:"messageCount"`
-	StartedAt     time.Time  `json:"startedAt"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
-	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
+	ID               string         `json:"id" gorm:"primaryKey"`
+	IssueID          string         `json:"issueId" gorm:"index"`
+	AgentID          string         `json:"agentId" gorm:"index"`
+	Kind             string         `json:"kind"`
+	Status           string         `json:"status" gorm:"index"`
+	Provider         string         `json:"provider"`
+	Model            string         `json:"model"`
+	Pricing          ModelPricing   `json:"pricing" gorm:"serializer:json;type:text"`
+	Thinking         string         `json:"thinking"`
+	SessionID        string         `json:"sessionId" gorm:"uniqueIndex"`
+	PID              int            `json:"pid,omitempty" gorm:"column:pid"`
+	CurrentTool      string         `json:"currentTool,omitempty"`
+	InitialPrompt    string         `json:"initialPrompt,omitempty" gorm:"type:text"`
+	SystemPrompt     string         `json:"systemPrompt,omitempty" gorm:"type:text"`
+	ToolsSnapshot    []ToolSnapshot `json:"toolsSnapshot" gorm:"serializer:json;type:text"`
+	Result           string         `json:"result,omitempty"`
+	Error            string         `json:"error,omitempty"`
+	Cost             float64        `json:"cost"`
+	Tokens           int64          `json:"tokens"`
+	InputTokens      int64          `json:"inputTokens"`
+	OutputTokens     int64          `json:"outputTokens"`
+	CacheReadTokens  int64          `json:"cacheReadTokens"`
+	CacheWriteTokens int64          `json:"cacheWriteTokens"`
+	MessageCount     int            `json:"messageCount"`
+	StartedAt        time.Time      `json:"startedAt"`
+	UpdatedAt        time.Time      `json:"updatedAt"`
+	FinishedAt       *time.Time     `json:"finishedAt,omitempty"`
+}
+
+type ToolSnapshot struct {
+	Name        string                  `json:"name"`
+	Label       string                  `json:"label"`
+	Description string                  `json:"description"`
+	Source      string                  `json:"source"`
+	Parameters  []ToolParameterSnapshot `json:"parameters"`
+}
+
+type ToolParameterSnapshot struct {
+	Name        string                  `json:"name"`
+	Type        string                  `json:"type"`
+	Description string                  `json:"description"`
+	Required    bool                    `json:"required"`
+	Enum        []string                `json:"enum,omitempty"`
+	Children    []ToolParameterSnapshot `json:"children,omitempty"`
 }
 
 type ExecutionEvent struct {
@@ -158,13 +183,34 @@ type Approval struct {
 	ResolvedAt  *time.Time `json:"resolvedAt,omitempty"`
 }
 type IssueComment struct {
-	ID         string    `json:"id" gorm:"primaryKey"`
-	IssueID    string    `json:"issueId" gorm:"index"`
-	AuthorType string    `json:"authorType"`
-	AuthorID   string    `json:"authorId"`
-	Body       string    `json:"body" gorm:"type:text"`
-	Mentions   []string  `json:"mentions" gorm:"serializer:json;type:text"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID          string            `json:"id" gorm:"primaryKey"`
+	IssueID     string            `json:"issueId" gorm:"index"`
+	AuthorType  string            `json:"authorType"`
+	AuthorID    string            `json:"authorId"`
+	Body        string            `json:"body" gorm:"type:text"`
+	Mentions    []string          `json:"mentions" gorm:"serializer:json;type:text"`
+	Attachments []IssueAttachment `json:"attachments" gorm:"-"`
+	CreatedAt   time.Time         `json:"createdAt"`
+}
+
+type IssueAttachment struct {
+	ID          string    `json:"id" gorm:"primaryKey"`
+	IssueID     string    `json:"issueId" gorm:"index"`
+	CommentID   string    `json:"commentId,omitempty" gorm:"index"`
+	ExecutionID string    `json:"executionId" gorm:"index;uniqueIndex:idx_execution_source"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	SourcePath  string    `json:"sourcePath" gorm:"uniqueIndex:idx_execution_source"`
+	StoragePath string    `json:"-"`
+	MimeType    string    `json:"mimeType"`
+	Size        int64     `json:"size"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type PublishAttachmentInput struct {
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 type AgentWakeup struct {
 	ID          string     `json:"id" gorm:"primaryKey"`
@@ -212,10 +258,19 @@ type DecompositionResult struct {
 }
 
 type AgentModelConfig struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"baseUrl"`
-	Thinking string `json:"thinking"`
+	Provider string        `json:"provider"`
+	Model    string        `json:"model"`
+	BaseURL  string        `json:"baseUrl"`
+	Thinking string        `json:"thinking"`
+	Pricing  *ModelPricing `json:"pricing"`
+}
+
+// ModelPricing stores USD prices per one million tokens.
+type ModelPricing struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
 }
 type PermissionBoundary struct {
 	WorkspaceScope string `json:"workspaceScope"`
@@ -364,17 +419,18 @@ type CreateRelationInput struct {
 }
 
 type SaveConfigInput struct {
-	NodePath     string `json:"nodePath"`
-	PiPath       string `json:"piPath"`
-	Provider     string `json:"provider"`
-	Model        string `json:"model"`
-	BaseURL      string `json:"baseUrl"`
-	Thinking     string `json:"thinking"`
-	AuthMode     string `json:"authMode"`
-	APIKey       string `json:"apiKey"`
-	Workspace    string `json:"workspace"`
-	Concurrency  int    `json:"concurrency"`
-	ApprovalMode string `json:"approvalMode"`
+	NodePath     string       `json:"nodePath"`
+	PiPath       string       `json:"piPath"`
+	Provider     string       `json:"provider"`
+	Model        string       `json:"model"`
+	Pricing      ModelPricing `json:"pricing"`
+	BaseURL      string       `json:"baseUrl"`
+	Thinking     string       `json:"thinking"`
+	AuthMode     string       `json:"authMode"`
+	APIKey       string       `json:"apiKey"`
+	Workspace    string       `json:"workspace"`
+	Concurrency  int          `json:"concurrency"`
+	ApprovalMode string       `json:"approvalMode"`
 }
 
 // Finding represents a security finding discovered during reconnaissance or vulnerability analysis.

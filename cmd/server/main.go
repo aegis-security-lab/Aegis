@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/signal"
@@ -104,6 +105,41 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.JSON(http.StatusCreated, result)
+	})
+	api.POST("/internal/executions/:id/attachments", func(c *gin.Context) {
+		var in control.PublishAttachmentInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.PublishExecutionAttachment(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
+	api.GET("/attachments/:id", func(c *gin.Context) {
+		attachment, file, err := store.AttachmentFile(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name})
+		c.DataFromReader(http.StatusOK, info.Size(), attachment.MimeType, file, map[string]string{
+			"Content-Disposition":    disposition,
+			"X-Content-Type-Options": "nosniff",
+		})
 	})
 	api.POST("/issues/:id/checkout", func(c *gin.Context) {
 		var in control.CheckoutIssueInput

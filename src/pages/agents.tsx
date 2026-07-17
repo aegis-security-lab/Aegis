@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
+import { ModelPricingFields } from "@/components/model-pricing-fields"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -73,7 +74,14 @@ import {
   type SaveAgentInput,
 } from "@/lib/api"
 import { useAppState } from "@/lib/state"
-import type { AgentDefinition, PermissionBoundary } from "@/types"
+import type { AgentDefinition, ModelPricing, PermissionBoundary } from "@/types"
+
+const zeroPricing: ModelPricing = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+}
 
 const allTools = [
   "read",
@@ -84,8 +92,12 @@ const allTools = [
   "edit",
   "write",
   "aegis_create_subissues",
+  "aegis_publish_attachment",
 ]
-const requiredAgentTools = new Set(["aegis_create_subissues"])
+const requiredAgentTools = new Set([
+  "aegis_create_subissues",
+  "aegis_publish_attachment",
+])
 
 const categoryLabels: Record<string, string> = {
   orchestrator: "调度",
@@ -172,6 +184,7 @@ export function AgentsPage() {
           skills={skills}
           globalProvider={state?.config.provider ?? ""}
           globalModel={state?.config.model ?? ""}
+          globalPricing={state?.config.pricing ?? zeroPricing}
           onOpenChange={(open) => {
             if (!open) setEditing(null)
           }}
@@ -276,6 +289,7 @@ function AgentDialog({
   skills,
   globalProvider,
   globalModel,
+  globalPricing,
   onOpenChange,
   onSaved,
 }: {
@@ -283,6 +297,7 @@ function AgentDialog({
   skills: { id: string; displayName: string; description: string }[]
   globalProvider: string
   globalModel: string
+  globalPricing: ModelPricing
   onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void>
 }) {
@@ -517,6 +532,46 @@ function AgentDialog({
                     </Field>
                   </div>
                 </FieldSet>
+                <FieldSet>
+                  <FieldLegend>价格覆盖</FieldLegend>
+                  <FieldDescription>
+                    默认继承全局模型价格；启用后，该 Agent 的新 Session
+                    使用独立价格。
+                  </FieldDescription>
+                  <Field
+                    orientation="horizontal"
+                    className="rounded-lg border p-3"
+                  >
+                    <FieldLabel
+                      htmlFor="agent-pricing-override"
+                      className="flex-1"
+                    >
+                      <span>使用独立价格</span>
+                      <FieldDescription>
+                        关闭时使用当前全局模型的四类 token 单价。
+                      </FieldDescription>
+                    </FieldLabel>
+                    <Switch
+                      id="agent-pricing-override"
+                      checked={form.model.pricing !== null}
+                      onCheckedChange={(checked) =>
+                        set("model", {
+                          ...form.model,
+                          pricing: checked ? { ...globalPricing } : null,
+                        })
+                      }
+                    />
+                  </Field>
+                </FieldSet>
+                {form.model.pricing ? (
+                  <ModelPricingFields
+                    idPrefix="agent-price"
+                    value={form.model.pricing}
+                    onChange={(pricing) =>
+                      set("model", { ...form.model, pricing })
+                    }
+                  />
+                ) : null}
               </FieldGroup>
             </TabsContent>
 
@@ -547,8 +602,8 @@ function AgentDialog({
                 <FieldSet>
                   <FieldLegend>工具集</FieldLegend>
                   <FieldDescription>
-                    每个 Agent 保存独立工具数组；Issue
-                    拆分是所有 Agent 必备的控制面能力。
+                    每个 Agent 保存独立工具数组；Issue 拆分是所有 Agent
+                    必备的控制面能力。
                   </FieldDescription>
                   <div
                     data-slot="checkbox-group"
@@ -558,7 +613,9 @@ function AgentDialog({
                       <Field
                         key={tool}
                         orientation="horizontal"
-                        data-disabled={requiredAgentTools.has(tool) || undefined}
+                        data-disabled={
+                          requiredAgentTools.has(tool) || undefined
+                        }
                         className="rounded-lg border p-3"
                       >
                         <Checkbox
@@ -826,7 +883,13 @@ function blankAgent(): SaveAgentInput {
     avatar: "bot",
     category: "general",
     enabled: true,
-    model: { provider: "", model: "", baseUrl: "", thinking: "" },
+    model: {
+      provider: "",
+      model: "",
+      baseUrl: "",
+      thinking: "",
+      pricing: null,
+    },
     systemPrompt: "",
     tools: [...allTools],
     skillIds: [],

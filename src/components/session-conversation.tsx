@@ -38,7 +38,7 @@ export function SessionConversation({
   messages: SessionMessage[]
   agentName: string
   issueIdentifier: string
-  initialPrompt?: string
+  initialPrompt: string
 }) {
   if (messages.length === 0) {
     return (
@@ -62,12 +62,11 @@ export function SessionConversation({
           message.role === "user" && message.content === initialPrompt
       )?.id
     : undefined
-  const hasInitialPrompt = Boolean(initialPrompt)
   const isStreaming = messages.some((message) => message.streaming)
 
   return (
     <MessageScrollerProvider
-      defaultScrollPosition={hasInitialPrompt ? "last-anchor" : "start"}
+      defaultScrollPosition="last-anchor"
       autoScroll={isStreaming}
     >
       <MessageScroller>
@@ -81,18 +80,6 @@ export function SessionConversation({
                 <MarkerContent>{issueIdentifier} · Session 开始</MarkerContent>
               </Marker>
             </MessageScrollerItem>
-            {!hasInitialPrompt ? (
-              <MessageScrollerItem messageId="legacy-transcript-note">
-                <Marker variant="border">
-                  <MarkerIcon>
-                    <MessageSquareText />
-                  </MarkerIcon>
-                  <MarkerContent>
-                    这是升级前创建的历史 Session，首次任务 Prompt 未持久化。
-                  </MarkerContent>
-                </Marker>
-              </MessageScrollerItem>
-            ) : null}
             {messages.map((message) => (
               <MessageScrollerItem
                 key={message.id}

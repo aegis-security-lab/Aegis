@@ -18,7 +18,7 @@ func configuredStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	workspace := t.TempDir()
-	_, err = s.SaveConfig(SaveConfigInput{NodePath: executable, PiPath: executable, Provider: "test", Model: "test-model", Thinking: "medium", AuthMode: "environment", Workspace: workspace, Concurrency: 2, ApprovalMode: "risky"})
+	_, err = s.SaveConfig(SaveConfigInput{NodePath: executable, PiPath: executable, Provider: "test", Model: "test-model", Pricing: ModelPricing{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 3}, Thinking: "medium", AuthMode: "environment", Workspace: workspace, Concurrency: 2, ApprovalMode: "risky"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +97,9 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	if !slices.Contains(custom.Tools, "aegis_create_subissues") {
 		t.Fatalf("custom agent tools=%v, missing decomposition capability", custom.Tools)
 	}
+	if !slices.Contains(custom.Tools, "aegis_publish_attachment") {
+		t.Fatalf("custom agent tools=%v, missing attachment capability", custom.Tools)
+	}
 
 	custom.Tools = []string{"read"}
 	updated, err := s.UpdateAgent(custom.ID, SaveAgentInput{
@@ -108,6 +111,9 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	}
 	if !slices.Contains(updated.Tools, "aegis_create_subissues") {
 		t.Fatalf("updated agent tools=%v, required capability was removed", updated.Tools)
+	}
+	if !slices.Contains(updated.Tools, "aegis_publish_attachment") {
+		t.Fatalf("updated agent tools=%v, attachment capability was removed", updated.Tools)
 	}
 }
 
@@ -127,6 +133,7 @@ func TestSessionDetailIncludesPromptSnapshots(t *testing.T) {
 	if err = s.updateExecution(execution.ID, map[string]any{
 		"initial_prompt": "Complete **this task**.",
 		"system_prompt":  "You are a backend engineer.",
+		"tools_snapshot": snapshotTools([]string{"read", "aegis_create_subissues"}),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +147,16 @@ func TestSessionDetailIncludesPromptSnapshots(t *testing.T) {
 	}
 	if detail.Session.Execution.SystemPrompt != "You are a backend engineer." {
 		t.Fatalf("system prompt=%q", detail.Session.Execution.SystemPrompt)
+	}
+	if len(detail.Session.Execution.ToolsSnapshot) != 2 {
+		t.Fatalf("tools snapshot=%+v", detail.Session.Execution.ToolsSnapshot)
+	}
+	if detail.Session.Execution.ToolsSnapshot[0].Name != "read" || len(detail.Session.Execution.ToolsSnapshot[0].Parameters) != 3 {
+		t.Fatalf("read snapshot=%+v", detail.Session.Execution.ToolsSnapshot[0])
+	}
+	children := detail.Session.Execution.ToolsSnapshot[1].Parameters[2].Children
+	if len(children) != 6 || children[3].Name != "priority" || len(children[3].Enum) != 4 {
+		t.Fatalf("nested tool parameters=%+v", children)
 	}
 }
 

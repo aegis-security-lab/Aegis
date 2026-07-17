@@ -19,7 +19,7 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-var requiredAgentTools = []string{"aegis_create_subissues"}
+var requiredAgentTools = []string{"aegis_create_subissues", "aegis_publish_attachment"}
 var defaultAgentTools = ensureRequiredAgentTools([]string{"read", "grep", "find", "ls", "bash", "edit", "write"})
 
 func defaultSkills(now time.Time) []SkillDefinition {
@@ -71,7 +71,7 @@ func defaultSkills(now time.Time) []SkillDefinition {
 		{"frontend-state-contracts", "前端状态契约", "维护 React 状态、SSE 更新和后端 JSON 契约的一致性。", `# Frontend state contracts
 
 - Update TypeScript domain types before consuming new API fields.
-- Keep SSE snapshots and mutation responses merge-compatible.
+- Keep SSE snapshots and mutation responses on one canonical schema.
 - Fail visibly on invalid new data instead of hiding contract errors.
 - Avoid duplicated derived state when it can be computed from the snapshot.
 - Verify deep routes after a production build.`},
@@ -194,11 +194,18 @@ func (s *Store) seedRegistry() error {
 		}
 		s.agents = append(s.agents, agent)
 	}
-	// Issue decomposition is a control-plane capability available to every
-	// Agent. Persist it explicitly so the saved definition matches runtime.
+	// Control-plane tools are available to every Agent. Persist them explicitly
+	// so saved definitions and the runtime tool list stay in sync.
 	for index := range s.agents {
 		agent := &s.agents[index]
-		if slices.Contains(agent.Tools, "aegis_create_subissues") {
+		missingRequiredTool := false
+		for _, required := range requiredAgentTools {
+			if !slices.Contains(agent.Tools, required) {
+				missingRequiredTool = true
+				break
+			}
+		}
+		if !missingRequiredTool {
 			continue
 		}
 		agent.Tools = ensureRequiredAgentTools(agent.Tools)
@@ -319,7 +326,7 @@ func (s *Store) DeleteAgent(id string) error {
 		return err
 	}
 	if references > 0 {
-		return errors.New("Agent 已被历史 session 引用，不能删除")
+		return errors.New("Agent 已被 Session 引用，不能删除")
 	}
 	if err := s.db.Delete(&agentRecord{}, "id = ?", id).Error; err != nil {
 		return err
@@ -551,6 +558,9 @@ func (s *Store) effectiveAgentConfig(agent AgentDefinition) Config {
 	if strings.TrimSpace(agent.Model.Thinking) != "" {
 		config.Thinking = strings.TrimSpace(agent.Model.Thinking)
 	}
+	if agent.Model.Pricing != nil {
+		config.Pricing = *agent.Model.Pricing
+	}
 	return config
 }
 
@@ -615,6 +625,11 @@ func validateAgentInput(input SaveAgentInput, skills []SkillDefinition) error {
 	}
 	if !slices.Contains([]string{"", "all", "risky", "none"}, input.Permissions.ApprovalMode) {
 		return errors.New("无效的审批策略")
+	}
+	if input.Model.Pricing != nil {
+		if err := validateModelPricing(*input.Model.Pricing); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -745,6 +760,10 @@ func skillIndex(items []SkillDefinition, id string) (int, bool) {
 
 func cloneAgent(source AgentDefinition) AgentDefinition {
 	result := source
+	if source.Model.Pricing != nil {
+		pricing := *source.Model.Pricing
+		result.Model.Pricing = &pricing
+	}
 	result.Tools = append([]string{}, source.Tools...)
 	result.SkillIDs = append([]string{}, source.SkillIDs...)
 	return result

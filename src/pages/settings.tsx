@@ -3,6 +3,7 @@ import { Bot, Database, KeyRound, Radar, Save, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
+import { ModelPricingFields } from "@/components/model-pricing-fields"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -207,6 +208,11 @@ export function SettingsPage() {
                     placeholder="留空使用 Pi 内置 endpoint"
                   />
                 </Field>
+                <ModelPricingFields
+                  idPrefix="settings-price"
+                  value={form.pricing}
+                  onChange={(pricing) => update("pricing", pricing)}
+                />
                 <div className="grid gap-5 sm:grid-cols-2">
                   <Field>
                     <FieldLabel>思考强度</FieldLabel>
@@ -392,6 +398,7 @@ function fromConfig(
     piPath: config.piPath,
     provider: config.provider,
     model: config.model,
+    pricing: config.pricing,
     baseUrl: config.baseUrl,
     thinking: config.thinking,
     authMode: config.authMode || "api_key",
