@@ -1006,7 +1006,12 @@ func parsePlan(text string) (planPayload, error) {
 		return p, fmt.Errorf("plan must contain 2 to %d issues", maxChildrenPerRequest)
 	}
 	for i, x := range p.Issues {
-		if strings.TrimSpace(x.Title) == "" || strings.TrimSpace(x.AcceptanceCriteria) == "" {
+		title, err := normalizeIssueTitle(x.Title)
+		if err != nil {
+			return p, fmt.Errorf("issue %d: %w", i+1, err)
+		}
+		p.Issues[i].Title = title
+		if strings.TrimSpace(x.AcceptanceCriteria) == "" {
 			return p, fmt.Errorf("issue %d is incomplete", i+1)
 		}
 	}
@@ -1026,7 +1031,7 @@ Constraints: %s
 Workspace: %s
 Enabled agents:
 %s
-Return only JSON: {"issues":[{"title":"...","description":"...","acceptanceCriteria":"...","priority":"critical|high|medium|low","dependsOn":[1],"agentId":"backend-engineer"}]}. Dependencies use earlier 1-based indexes. Produce 2-8 independently verifiable implementation/test issues.`, i.Title, fallback(i.Context, i.Description), i.Constraints, i.Workspace, roster.String())
+Return only JSON: {"issues":[{"title":"...","description":"...","acceptanceCriteria":"...","priority":"critical|high|medium|low","dependsOn":[1],"agentId":"backend-engineer"}]}. Each title must be at most 120 characters. Dependencies use earlier 1-based indexes. Produce 2-8 independently verifiable implementation/test issues.`, i.Title, fallback(i.Context, i.Description), i.Constraints, i.Workspace, roster.String())
 }
 func workerPrompt(i Issue) string {
 	return fmt.Sprintf(`Complete this Issue in the real workspace.

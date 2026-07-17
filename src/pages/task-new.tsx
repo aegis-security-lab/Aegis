@@ -33,6 +33,11 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { createIssue } from "@/lib/api"
+import {
+  ISSUE_TITLE_MAX_LENGTH,
+  issueTitleLength,
+  limitIssueTitle,
+} from "@/lib/issue-title"
 import { useAppState } from "@/lib/state"
 import type { CreateIssueInput } from "@/types"
 
@@ -161,11 +166,18 @@ export function TaskNewPage() {
                   required
                   rows={4}
                   value={form.title}
-                  onChange={(event) => update("title", event.target.value)}
+                  onChange={(event) =>
+                    update("title", limitIssueTitle(event.target.value))
+                  }
                   placeholder="描述要交付的最终结果…"
                 />
-                <FieldDescription>
-                  这是顶层 Issue 的标题，也是所选 Agent 的执行目标。
+                <FieldDescription className="flex justify-between gap-4">
+                  <span>
+                    这是顶层 Issue 的标题，也是所选 Agent 的执行目标。
+                  </span>
+                  <span className="shrink-0 tabular-nums">
+                    {issueTitleLength(form.title)} / {ISSUE_TITLE_MAX_LENGTH}
+                  </span>
                 </FieldDescription>
               </Field>
               <Field>

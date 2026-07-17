@@ -286,9 +286,10 @@ func (s *Store) broadcastLocked() {
 func (s *Store) changedLocked() { s.updatedAt = time.Now(); s.broadcastLocked() }
 
 func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
-	input.Title = strings.TrimSpace(input.Title)
-	if input.Title == "" {
-		return Issue{}, errors.New("Issue 标题不能为空")
+	var err error
+	input.Title, err = normalizeIssueTitle(input.Title)
+	if err != nil {
+		return Issue{}, err
 	}
 	if input.Priority == "" {
 		input.Priority = "medium"
@@ -464,9 +465,9 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	}
 	updates := map[string]any{"updated_at": time.Now()}
 	if input.Title != nil {
-		v := strings.TrimSpace(*input.Title)
-		if v == "" {
-			return Issue{}, errors.New("标题不能为空")
+		v, err := normalizeIssueTitle(*input.Title)
+		if err != nil {
+			return Issue{}, err
 		}
 		updates["title"] = v
 	}

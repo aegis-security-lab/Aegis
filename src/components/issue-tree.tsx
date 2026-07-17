@@ -163,7 +163,8 @@ function TreeNode({
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <Link
               to={`/issues/${issue.id}`}
-              className="truncate text-sm font-medium hover:underline"
+              className="min-w-0 flex-1 basis-48 truncate text-sm font-medium hover:underline"
+              title={issue.title}
             >
               {issue.title}
             </Link>

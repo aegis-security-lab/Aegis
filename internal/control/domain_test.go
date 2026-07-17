@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +24,22 @@ func configuredStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func TestIssueTitleLengthLimit(t *testing.T) {
+	s := configuredStore(t)
+	validTitle := strings.Repeat("任", IssueTitleMaxLength)
+	issue, err := s.CreateIssue(CreateIssueInput{Title: validTitle, Priority: "medium", WorkMode: "guided"})
+	if err != nil {
+		t.Fatalf("create title at limit: %v", err)
+	}
+	tooLong := validTitle + "务"
+	if _, err = s.CreateIssue(CreateIssueInput{Title: tooLong, Priority: "medium", WorkMode: "guided"}); err == nil {
+		t.Fatal("create should reject an Issue title over the limit")
+	}
+	if _, err = s.UpdateIssue(issue.ID, UpdateIssueInput{Title: &tooLong}); err == nil {
+		t.Fatal("update should reject an Issue title over the limit")
+	}
 }
 
 func TestIssueHierarchyRelationsAndCheckout(t *testing.T) {

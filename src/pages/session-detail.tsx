@@ -174,9 +174,11 @@ export function SessionDetailPage() {
         <TabsContent value="conversation" className="pt-4">
           <Card className="h-[calc(100svh-17rem)] min-h-[520px] gap-0 py-0">
             <CardHeader className="border-b py-4">
-              <CardTitle className="flex items-center gap-2">
-                <Bot className="size-4" />
-                {detail.session.issueTitle}
+              <CardTitle className="flex min-w-0 items-center gap-2">
+                <Bot className="size-4 shrink-0" />
+                <span className="truncate" title={detail.session.issueTitle}>
+                  {detail.session.issueTitle}
+                </span>
               </CardTitle>
               <CardDescription>
                 这里展示该 Pi Session 中实际持久化的用户与 AI 消息。

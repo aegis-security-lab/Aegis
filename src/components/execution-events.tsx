@@ -341,12 +341,18 @@ function SubIssueDetails({
             {id ? (
               <Link
                 to={`/issues/${id}`}
-                className="text-sm font-medium hover:underline"
+                className="line-clamp-2 text-sm font-medium break-all hover:underline"
+                title={title}
               >
                 {title || "未命名 Issue"}
               </Link>
             ) : (
-              <p className="text-sm font-medium">{title || "未命名 Issue"}</p>
+              <p
+                className="line-clamp-2 text-sm font-medium break-all"
+                title={title}
+              >
+                {title || "未命名 Issue"}
+              </p>
             )}
             {stringValue(spec.acceptanceCriteria) ? (
               <MarkdownContent className="text-xs leading-5 text-muted-foreground">

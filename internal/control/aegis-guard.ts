@@ -25,7 +25,10 @@ const createSubissuesTool = defineTool({
     }),
     children: Type.Array(
       Type.Object({
-        title: Type.String({ description: "Concrete child Issue title" }),
+        title: Type.String({
+          description: "Concrete child Issue title, at most 120 characters",
+          maxLength: 120,
+        }),
         description: Type.String({
           description: "Scoped implementation context",
         }),

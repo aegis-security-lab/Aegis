@@ -101,7 +101,10 @@ export function TasksPage() {
                       </span>
                       <StatusBadge status={task.status} />
                     </div>
-                    <CardTitle className="line-clamp-2 leading-6">
+                    <CardTitle
+                      className="line-clamp-2 leading-6 break-all"
+                      title={task.title}
+                    >
                       {task.title}
                     </CardTitle>
                   </div>

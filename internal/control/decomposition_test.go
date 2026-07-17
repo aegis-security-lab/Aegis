@@ -3,6 +3,7 @@ package control
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -35,6 +36,13 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 			{Title: "Implement API", Description: "Add the API contract.", AcceptanceCriteria: "API tests pass.", Priority: "high", AgentID: "backend-engineer", DependsOn: []int{}},
 			{Title: "Integrate UI", Description: "Consume the API.", AcceptanceCriteria: "UI build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
 		},
+	}
+	tooLong := input
+	tooLong.RequestKey = "feature-title-too-long"
+	tooLong.Children = slices.Clone(input.Children)
+	tooLong.Children[0].Title = strings.Repeat("子", IssueTitleMaxLength+1)
+	if _, err = s.CreateSubIssues(parent.ID, execution.ID, "backend-engineer", tooLong); err == nil {
+		t.Fatal("decomposition should reject a child Issue title over the limit")
 	}
 	result, err := s.CreateSubIssues(parent.ID, execution.ID, "backend-engineer", input)
 	if err != nil {

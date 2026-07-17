@@ -101,7 +101,7 @@ func toolCatalog() map[string]ToolSnapshot {
 					Name: "children", Type: "array<object>", Required: true,
 					Description: "需要创建的 2–8 个可独立验证的子 Issues。",
 					Children: []ToolParameterSnapshot{
-						parameter("title", "string", "子 Issue 标题。", true),
+						parameter("title", "string", "子 Issue 标题，最多 120 个字符。", true),
 						parameter("description", "string", "子 Issue 的执行范围与上下文。", true),
 						parameter("acceptanceCriteria", "string", "可观察、可验证的完成标准。", true),
 						{Name: "priority", Type: "enum", Description: "子 Issue 优先级。", Required: true, Enum: []string{"critical", "high", "medium", "low"}},

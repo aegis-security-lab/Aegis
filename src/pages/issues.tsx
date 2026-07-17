@@ -155,7 +155,7 @@ export function IssuesPage() {
                   )
                   return (
                     <TableRow key={issue.id}>
-                      <TableCell className="max-w-md">
+                      <TableCell className="w-[28rem] max-w-md">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs text-muted-foreground">
                             {issue.identifier}
@@ -164,7 +164,8 @@ export function IssuesPage() {
                         </div>
                         <Link
                           to={`/issues/${issue.id}`}
-                          className="mt-1.5 block font-medium hover:underline"
+                          className="mt-1.5 line-clamp-2 font-medium break-all hover:underline"
+                          title={issue.title}
                         >
                           {issue.title}
                         </Link>

@@ -29,12 +29,16 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 	}
 	for index := range input.Children {
 		item := &input.Children[index]
-		item.Title = strings.TrimSpace(item.Title)
+		var err error
+		item.Title, err = normalizeIssueTitle(item.Title)
+		if err != nil {
+			return DecompositionResult{}, fmt.Errorf("子 Issue %d: %w", index+1, err)
+		}
 		item.Description = strings.TrimSpace(item.Description)
 		item.AcceptanceCriteria = strings.TrimSpace(item.AcceptanceCriteria)
 		item.AgentID = strings.TrimSpace(item.AgentID)
-		if item.Title == "" || item.AcceptanceCriteria == "" {
-			return DecompositionResult{}, fmt.Errorf("子 Issue %d 缺少标题或验收标准", index+1)
+		if item.AcceptanceCriteria == "" {
+			return DecompositionResult{}, fmt.Errorf("子 Issue %d 缺少验收标准", index+1)
 		}
 		if !slices.Contains([]string{"critical", "high", "medium", "low"}, item.Priority) {
 			item.Priority = "medium"
