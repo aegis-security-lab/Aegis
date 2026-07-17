@@ -94,7 +94,7 @@ export interface Execution {
   id: string
   issueId: string
   agentId: string
-  kind: "planning" | "work" | "continuation" | "mention"
+  kind: "planning" | "work" | "continuation" | "wakeup"
   status: ExecutionStatus
   provider: string
   model: string

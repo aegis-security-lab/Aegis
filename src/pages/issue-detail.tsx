@@ -364,7 +364,8 @@ export function IssueDetailPage() {
             <CardHeader>
               <CardTitle>协作记录</CardTitle>
               <CardDescription>
-                评论中的结构化 Agent mention 会创建真实 Wakeup Execution。
+                发表评论会唤醒当前负责人；结构化 Agent mention
+                会同时唤醒其他协作者。
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -471,7 +472,7 @@ export function IssueDetailPage() {
                         value={body}
                         onChange={(e) => setBody(e.target.value)}
                         rows={4}
-                        placeholder="评论；例如 [@后端工程师](agent://backend-engineer) 请复核 API…"
+                        placeholder="评论会通知当前负责人；也可使用 [@后端工程师](agent://backend-engineer) 邀请其他 Agent…"
                       />
                       <Button type="submit" disabled={busy || !body.trim()}>
                         <Send />

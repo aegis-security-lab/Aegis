@@ -460,7 +460,7 @@ func (m *Manager) handleSettled(s *PiSession) {
 	}
 	_ = m.store.updateExecution(s.executionID, map[string]any{"status": "completed", "result": result, "current_tool": "", "finished_at": now, "pid": 0})
 	m.collectExecutionAttachments(issue, s.executionID)
-	if s.kind == "mention" {
+	if s.kind == "wakeup" {
 		m.completeWakeup(s, result)
 		return
 	}
@@ -822,6 +822,11 @@ func randomControlToken() (string, error) {
 
 var mentionPattern = regexp.MustCompile(`\[@[^\]]+\]\(agent://([A-Za-z0-9._:-]+)\)`)
 
+type commentWakeupTarget struct {
+	AgentID string
+	Reason  string
+}
+
 func (m *Manager) AddIssueComment(issueID, body string) (IssueComment, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -830,26 +835,61 @@ func (m *Manager) AddIssueComment(issueID, body string) (IssueComment, error) {
 	if utf8.RuneCountInString(body) > 10000 {
 		return IssueComment{}, errors.New("评论内容不能超过 10000 个字符")
 	}
-	if _, err := m.store.GetIssue(issueID); err != nil {
+	issue, err := m.store.GetIssue(issueID)
+	if err != nil {
 		return IssueComment{}, err
 	}
 	mentions := m.validMentions(body, "")
-	c := IssueComment{ID: nextID("comment"), IssueID: issueID, AuthorType: "operator", AuthorID: "operator", Body: body, Mentions: mentions, Attachments: []IssueAttachment{}, CreatedAt: time.Now()}
-	if err := m.store.db.Create(&c).Error; err != nil {
+	comment := IssueComment{ID: nextID("comment"), IssueID: issueID, AuthorType: "operator", AuthorID: "operator", Body: body, Mentions: mentions, Attachments: []IssueAttachment{}, CreatedAt: time.Now()}
+	targets := m.operatorCommentWakeupTargets(issue, mentions)
+	var wakeups []AgentWakeup
+	if err = m.store.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&comment).Error; err != nil {
+			return err
+		}
+		wakeups, err = createCommentWakeups(tx, comment, targets)
+		return err
+	}); err != nil {
 		return IssueComment{}, err
 	}
-	for _, agent := range mentions {
-		w := AgentWakeup{ID: nextID("wakeup"), IssueID: issueID, CommentID: c.ID, AgentID: agent, Reason: "issue_comment_mentioned", Status: "queued", CreatedAt: time.Now()}
-		_ = m.store.db.Create(&w).Error
-		go m.dispatchWakeup(w.ID)
+	for _, wakeup := range wakeups {
+		go m.dispatchWakeup(wakeup.ID)
 	}
 	m.store.notify()
-	return c, nil
+	return comment, nil
+}
+func (m *Manager) operatorCommentWakeupTargets(issue Issue, mentions []string) []commentWakeupTarget {
+	seen := make(map[string]bool, len(mentions)+1)
+	targets := make([]commentWakeupTarget, 0, len(mentions)+1)
+	if issue.AssigneeAgentID != "" {
+		if _, err := m.store.executionAgent(issue.AssigneeAgentID); err == nil {
+			seen[issue.AssigneeAgentID] = true
+			targets = append(targets, commentWakeupTarget{AgentID: issue.AssigneeAgentID, Reason: "issue_comment_assignee"})
+		}
+	}
+	for _, agentID := range mentions {
+		if !seen[agentID] {
+			seen[agentID] = true
+			targets = append(targets, commentWakeupTarget{AgentID: agentID, Reason: "issue_comment_mentioned"})
+		}
+	}
+	return targets
+}
+func createCommentWakeups(tx *gorm.DB, comment IssueComment, targets []commentWakeupTarget) ([]AgentWakeup, error) {
+	wakeups := make([]AgentWakeup, 0, len(targets))
+	for _, target := range targets {
+		wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: comment.IssueID, CommentID: comment.ID, AgentID: target.AgentID, Reason: target.Reason, Status: "queued", CreatedAt: comment.CreatedAt}
+		if err := tx.Create(&wakeup).Error; err != nil {
+			return nil, err
+		}
+		wakeups = append(wakeups, wakeup)
+	}
+	return wakeups, nil
 }
 func (m *Manager) validMentions(body, exclude string) []string {
 	available := map[string]bool{}
 	for _, a := range m.store.Agents() {
-		available[a.ID] = a.Enabled
+		available[a.ID] = a.Enabled && !a.Internal
 	}
 	seen := map[string]bool{}
 	var out []string
@@ -880,21 +920,32 @@ func (m *Manager) dispatchWakeup(id string) {
 	}
 	agent, err := m.store.executionAgent(w.AgentID)
 	if err != nil {
+		m.failWakeup(w, err)
 		return
 	}
-	e, err := m.store.createExecution(issue, agent.ID, "mention")
+	prompt, err := wakeupPrompt(issue, w, m.store.Agents(), m.store.db)
 	if err != nil {
+		m.failWakeup(w, err)
+		return
+	}
+	e, err := m.store.createExecution(issue, agent.ID, "wakeup")
+	if err != nil {
+		m.failWakeup(w, err)
 		return
 	}
 	now := time.Now()
 	_ = m.store.db.Model(&w).Updates(map[string]any{"status": "delivered", "execution_id": e.ID, "delivered_at": now}).Error
-	prompt := mentionPrompt(issue, w, m.store.Agents(), m.store.db)
 	s, err := m.startSession(issue, e, agent, prompt)
 	if err != nil {
-		_ = m.store.db.Model(&w).Updates(map[string]any{"status": "failed", "error": err.Error()}).Error
+		m.failWakeup(w, err)
 		return
 	}
 	s.wakeupID = w.ID
+}
+func (m *Manager) failWakeup(w AgentWakeup, err error) {
+	now := time.Now()
+	_ = m.store.db.Model(&w).Updates(map[string]any{"status": "failed", "error": err.Error(), "completed_at": now}).Error
+	m.store.notify()
 }
 func (m *Manager) completeWakeup(s *PiSession, result string) {
 	now := time.Now()
@@ -916,18 +967,26 @@ func (m *Manager) addAgentComment(issueID, agentID, body, executionID string) {
 	}
 	mentions := m.validMentions(body, agentID)
 	c := IssueComment{ID: nextID("comment"), IssueID: issueID, AuthorType: "agent", AuthorID: agentID, Body: body, Mentions: mentions, CreatedAt: time.Now()}
+	var wakeups []AgentWakeup
 	if err := m.store.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&c).Error; err != nil {
 			return err
 		}
-		return m.store.bindExecutionAttachments(tx, &c, executionID)
+		if err := m.store.bindExecutionAttachments(tx, &c, executionID); err != nil {
+			return err
+		}
+		targets := make([]commentWakeupTarget, len(mentions))
+		for index, id := range mentions {
+			targets[index] = commentWakeupTarget{AgentID: id, Reason: "issue_comment_mentioned"}
+		}
+		var err error
+		wakeups, err = createCommentWakeups(tx, c, targets)
+		return err
 	}); err != nil {
 		return
 	}
-	for _, id := range mentions {
-		w := AgentWakeup{ID: nextID("wakeup"), IssueID: issueID, CommentID: c.ID, AgentID: id, Reason: "issue_comment_mentioned", Status: "queued", CreatedAt: time.Now()}
-		_ = m.store.db.Create(&w).Error
-		go m.dispatchWakeup(w.ID)
+	for _, wakeup := range wakeups {
+		go m.dispatchWakeup(wakeup.ID)
 	}
 }
 func (m *Manager) resumeWork() {
@@ -1062,8 +1121,28 @@ Direct child results:
 %s
 Inspect the actual workspace state, integrate or correct child work where needed, and run the parent-level validation. Publish every generated user-facing deliverable with aegis_publish_attachment before ending the turn. If material work is still too complex, you may call aegis_create_subissues again for a new bounded decomposition. Otherwise finish with a concise parent-level report covering integration, validation, and remaining risk.`, parent.Identifier, parent.Title, parent.Description, parent.AcceptanceCriteria, parent.Workspace, summaries.String())
 }
-func mentionPrompt(i Issue, w AgentWakeup, agents []AgentDefinition, db any) string {
-	return fmt.Sprintf("You were mentioned on Issue %s: %s. Inspect the Issue context and provide a concrete response. You may perform scoped work using your tools. Finish with a response suitable for the Issue comment thread. Available agent IDs: %v", i.Identifier, i.Title, func() []string {
+func wakeupPrompt(i Issue, w AgentWakeup, agents []AgentDefinition, db *gorm.DB) (string, error) {
+	var comment IssueComment
+	if err := db.First(&comment, "id = ? AND issue_id = ?", w.CommentID, i.ID).Error; err != nil {
+		return "", fmt.Errorf("load wakeup comment: %w", err)
+	}
+	trigger := "The operator added a comment to an Issue assigned to you."
+	if w.Reason == "issue_comment_mentioned" {
+		trigger = "You were explicitly mentioned in an Issue comment."
+	}
+	return fmt.Sprintf(`%s
+
+Issue %s: %s
+Description: %s
+Acceptance criteria: %s
+Workspace: %s
+
+Comment from %s:
+<comment>
+%s
+</comment>
+
+Respond to the comment concretely. You may inspect the workspace and perform scoped work using your tools when needed. Finish with a response suitable for the Issue comment thread. Available agent IDs: %v`, trigger, i.Identifier, i.Title, i.Description, i.AcceptanceCriteria, i.Workspace, comment.AuthorID, comment.Body, func() []string {
 		var out []string
 		for _, a := range agents {
 			if a.Enabled && !a.Internal {
@@ -1071,7 +1150,7 @@ func mentionPrompt(i Issue, w AgentWakeup, agents []AgentDefinition, db any) str
 			}
 		}
 		return out
-	}())
+	}()), nil
 }
 
 func (m *Manager) TestConnection(ctx context.Context, input SaveConfigInput) ConnectionTestResult {
