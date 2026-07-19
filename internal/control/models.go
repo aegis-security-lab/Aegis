@@ -609,7 +609,7 @@ type TaskCancellationResult struct {
 	TotalIssues         int   `json:"totalIssues"`
 	CancelledIssues     int64 `json:"cancelledIssues"`
 	CancelledExecutions int64 `json:"cancelledExecutions"`
-	ExpiredApprovals    int64 `json:"expiredApprovals"`
+	RemovedApprovals    int64 `json:"removedApprovals"`
 	CancelledWakeups    int64 `json:"cancelledWakeups"`
 }
 

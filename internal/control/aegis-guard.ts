@@ -86,11 +86,12 @@ const createSubissuesTool = defineTool({
   name: "aegis_create_subissues",
   label: "Create child Issues",
   description:
-    "Atomically decompose the checked-out Issue into 2-8 durable child Issues. Use this when the current Issue is too broad or contains independently verifiable work. After the tool succeeds, stop working and end the turn so Aegis can schedule the children.",
+    "Atomically decompose the current Issue into 2-8 durable child Issues. A successful call from a comment-awakened Session automatically reopens a completed Issue. Use this when the work is too broad or contains independently verifiable parts. After the tool succeeds, stop working and end the turn so Aegis can schedule the children.",
   promptSnippet:
     "Create durable child Issues and hand control back to the Aegis scheduler",
   promptGuidelines: [
     "Use aegis_create_subissues for genuinely broad or parallel work; never emulate delegation in prose.",
+    "When a new operator comment adds substantial work to a completed Issue, call aegis_create_subissues to reopen it and schedule the new child tree.",
     "Dependencies use 1-based indexes and may reference only earlier children.",
     "After a successful decomposition, end the turn immediately; the parent will resume after its children finish.",
   ],

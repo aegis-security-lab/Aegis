@@ -82,15 +82,17 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		if parent.RequestDepth >= maxIssueDepth {
 			return fmt.Errorf("Issue 已达到最大拆解深度 %d", maxIssueDepth)
 		}
-		if parent.Status != "in_progress" || parent.AssigneeAgentID != actorAgentID || parent.CheckoutExecutionID != executionID {
-			return errors.New("当前 Execution 不持有该 Issue 的 checkout")
-		}
 		var execution Execution
 		if err := tx.First(&execution, "id = ? AND issue_id = ? AND agent_id = ?", executionID, parent.ID, actorAgentID).Error; err != nil {
 			return errors.New("execution ownership mismatch")
 		}
 		if !slices.Contains([]string{"starting", "running", "waiting_approval"}, execution.Status) {
 			return errors.New("execution is no longer active")
+		}
+		ownsCheckout := parent.Status == "in_progress" && parent.AssigneeAgentID == actorAgentID && parent.CheckoutExecutionID == executionID
+		canReopenCompleted := slices.Contains([]string{"done", "in_review"}, parent.Status) && parent.AssigneeAgentID == actorAgentID
+		if !ownsCheckout && !canReopenCompleted {
+			return errors.New("当前 Execution 既不持有 Issue checkout，也不能重新打开这个已完成 Issue")
 		}
 		var existingCount int64
 		if err := tx.Model(&Issue{}).Where("parent_id = ?", parent.ID).Count(&existingCount).Error; err != nil {
@@ -109,6 +111,7 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		}
 		now := time.Now()
 		validationMode, maxValidationAttempts := normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
+		validationDisabled := parent.ValidationDisabled || strings.TrimSpace(parent.Objective) == ""
 		children := make([]Issue, 0, len(input.Children))
 		for _, item := range input.Children {
 			maxNumber++
@@ -117,7 +120,7 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 				ProjectID: parent.ProjectID, ParentID: parent.ID, Title: item.Title, Description: item.Description,
 				Objective: item.Objective, Status: "todo", Priority: item.Priority,
 				WorkMode: parent.WorkMode, ExecutionPhase: "active", RequestDepth: parent.RequestDepth + 1,
-				ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts,
+				ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, ValidationDisabled: validationDisabled,
 				AssigneeAgentID: item.AgentID, Workspace: parent.Workspace, Context: parent.Context,
 				Constraints: parent.Constraints, CreatedBy: actorAgentID, CreatedAt: now, UpdatedAt: now,
 			}
@@ -149,7 +152,8 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		}
 		if err := tx.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{
 			"status": "in_progress", "execution_phase": "waiting_children", "checkout_execution_id": "",
-			"current_execution_id": executionID, "updated_at": now,
+			"current_execution_id": executionID, "completed_at": nil, "cancelled_at": nil,
+			"error": "", "updated_at": now,
 		}).Error; err != nil {
 			return err
 		}

@@ -547,6 +547,8 @@ func (m *Manager) ResolveApproval(id string, approved bool) (Approval, error) {
 	}
 	s := m.getSession(a.ExecutionID)
 	if s == nil {
+		_ = m.store.db.Delete(&a).Error
+		m.store.notify()
 		return Approval{}, errors.New("对应 Pi session 已断开")
 	}
 	if err := s.Send(map[string]any{"type": "extension_ui_response", "id": a.RequestID, "confirmed": approved}); err != nil {
@@ -591,6 +593,7 @@ func (m *Manager) handleSettled(s *PiSession) {
 	}
 	var deliveredWakeups []AgentWakeup
 	_ = m.store.db.Where("execution_id = ? AND status = ?", s.executionID, "delivered").Find(&deliveredWakeups).Error
+	settledFromCommentWakeup := len(deliveredWakeups) > 0
 	if len(deliveredWakeups) > 0 {
 		ids := make([]string, len(deliveredWakeups))
 		for index := range deliveredWakeups {
@@ -617,7 +620,11 @@ func (m *Manager) handleSettled(s *PiSession) {
 		return
 	}
 	m.addAgentComment(issue.ID, s.agentID, result, s.executionID)
-	if issue.ValidationDisabled {
+	if settledFromCommentWakeup && slices.Contains([]string{"done", "in_review"}, issue.Status) {
+		m.store.notify()
+		return
+	}
+	if issue.ValidationDisabled || strings.TrimSpace(issue.Objective) == "" {
 		m.completeIssueWithoutValidation(issue, s.executionID, result, now)
 		return
 	}
@@ -1009,11 +1016,22 @@ func (m *Manager) DecomposeExecution(executionID, token string, input DecomposeI
 	if session == nil || token == "" || len(token) != len(session.controlToken) || subtle.ConstantTimeCompare([]byte(token), []byte(session.controlToken)) != 1 {
 		return DecompositionResult{}, errors.New("invalid execution control token")
 	}
+	issue, err := m.store.GetIssue(session.issueID)
+	if err != nil {
+		return DecompositionResult{}, err
+	}
+	reopeningCompleted := slices.Contains([]string{"done", "in_review"}, issue.Status)
 	result, err := m.store.CreateSubIssues(session.issueID, session.executionID, session.agentID, input)
 	if err != nil {
 		return DecompositionResult{}, err
 	}
-	m.store.addEvent(session.executionID, session.issueID, "delegation", "Agent 已拆分子 Issues", fmt.Sprintf("%d 个子 Issues 已进入调度器。", len(result.Children)))
+	title := "Agent 已拆分子 Issues"
+	detail := fmt.Sprintf("%d 个子 Issues 已进入调度器。", len(result.Children))
+	if reopeningCompleted {
+		title = "Agent 已重新打开并拆分子 Issues"
+		detail = fmt.Sprintf("已完成的 Issue 已自动恢复为处理中；%d 个新子 Issues 已进入调度器。", len(result.Children))
+	}
+	m.store.addEvent(session.executionID, session.issueID, "delegation", title, detail)
 	go m.scheduleChildren(session.issueID)
 	return result, nil
 }
@@ -1232,6 +1250,7 @@ func (m *Manager) sessionExited(s *PiSession, waitErr error) {
 	}
 	now := time.Now()
 	_ = m.store.updateExecution(s.executionID, map[string]any{"status": "disconnected", "error": message, "finished_at": now, "pid": 0})
+	_ = m.store.db.Where("execution_id = ? AND status = ? AND type = ?", s.executionID, "pending", "tool_call").Delete(&Approval{}).Error
 	_ = m.store.db.Model(&Issue{}).Where("id = ? AND checkout_execution_id = ?", s.issueID, s.executionID).Updates(map[string]any{"status": "blocked", "execution_phase": "blocked", "error": message, "checkout_execution_id": "", "updated_at": now}).Error
 	m.store.addEvent(s.executionID, s.issueID, "error", "Pi session 已断开", message)
 	m.store.notify()
@@ -1347,6 +1366,7 @@ func (m *Manager) StopExecution(id string) error {
 	if err := m.store.updateExecution(id, map[string]any{"status": "stopped", "finished_at": now, "pid": 0}); err != nil {
 		return err
 	}
+	_ = m.store.db.Where("execution_id = ? AND status = ? AND type = ?", id, "pending", "tool_call").Delete(&Approval{}).Error
 	_ = m.store.db.Model(&Issue{}).Where("checkout_execution_id = ?", id).Updates(map[string]any{"status": "todo", "execution_phase": "active", "checkout_execution_id": "", "updated_at": now}).Error
 	m.store.notify()
 	return nil
@@ -1678,9 +1698,13 @@ func (m *Manager) resumeSettledIssueLocked(issue Issue) error {
 	}
 	issue, _ = m.store.GetIssue(issue.ID)
 	m.collectExecutionAttachments(issue, execution.ID)
-	if issue.ValidationDisabled {
+	if issue.ValidationDisabled || strings.TrimSpace(issue.Objective) == "" {
 		m.completeIssueWithoutValidation(issue, execution.ID, execution.Result, now)
-		m.store.addEvent(execution.ID, issue.ID, "recovery", "已完成产出在重启后完成收尾", "保留原 Worker 产出并按 Issue 配置跳过验收。")
+		detail := "保留原 Worker 产出并按 Issue 配置跳过验收。"
+		if strings.TrimSpace(issue.Objective) == "" {
+			detail = "保留原 Worker 产出；Issue 未设置目标，因此无需启动验收 Agent。"
+		}
+		m.store.addEvent(execution.ID, issue.ID, "recovery", "已完成产出在重启后完成收尾", detail)
 		return nil
 	}
 	if err := m.beginIssueValidation(issue, execution, execution.Result); err != nil {
@@ -1789,7 +1813,7 @@ func (m *Manager) recoveryPrompt(issue Issue, execution Execution) string {
 
 	var context strings.Builder
 	context.WriteString("The Aegis service restarted while this Execution was active. Resume the SAME Issue and Pi session instead of starting over.\n")
-	context.WriteString("Use the existing conversation and inspect the current workspace before acting. Do not repeat completed work. Any tool approval pending before the restart expired; request it again only if still necessary.\n\n")
+	context.WriteString("Use the existing conversation and inspect the current workspace before acting. Do not repeat completed work. Any tool approval pending before the restart was removed; request it again only if still necessary.\n\n")
 	fmt.Fprintf(&context, "Issue: %s · %s\nObjective: %s\nExecution kind: %s\nPrevious phase: %s\nPersisted checkpoint: %s\n\n", issue.Identifier, issue.Title, issue.Objective, execution.Kind, fallback(issue.RecoveryPhase, "active"), fallback(execution.Checkpoint, "No explicit checkpoint was recorded."))
 	if strings.TrimSpace(execution.InitialPrompt) != "" {
 		context.WriteString("Original execution request:\n")
@@ -1874,7 +1898,7 @@ func (s *Store) GetSession(id string) (SessionDetail, error) {
 	s.db.Where("execution_id = ?", e.ID).Order("created_at asc").Find(&d.Messages)
 	s.db.Where("execution_id = ?", e.ID).Order("created_at desc").Find(&d.Events)
 	s.db.Where("execution_id = ?", e.ID).Order("created_at asc").Find(&d.ProgressUpdates)
-	s.db.Where("execution_id = ?", e.ID).Order("created_at desc").Find(&d.Approvals)
+	s.db.Where("execution_id = ? AND status <> ?", e.ID, "expired").Order("created_at desc").Find(&d.Approvals)
 	return d, nil
 }
 
@@ -1895,6 +1919,10 @@ Enabled agents:
 Create the durable execution plan by calling aegis_create_subissues exactly once. Use a stable requestKey, provide 2-8 independently verifiable implementation/test Issues, and end the turn after the tool succeeds. Each title must be at most 120 characters. Dependencies use earlier 1-based indexes. Every objective must state the concrete outcome and evidence the acceptance Agent can verify. The final response may briefly summarize the created Issues, but it is not the execution plan and must not replace the tool call.`, i.Objective, fallback(i.Context, i.Description), i.Constraints, i.Workspace, roster.String())
 }
 func workerPrompt(i Issue) string {
+	completionInstruction := "Your final response is a candidate result, not an automatic completion. Include concrete evidence for every material part of the objective; the read-only acceptance Agent will evaluate it before Aegis can complete the Issue."
+	if strings.TrimSpace(i.Objective) == "" {
+		completionInstruction = "This Issue has no acceptance objective. No acceptance Agent will run when you finish; submit a concise evidence-based final response and Aegis will complete the Issue directly."
+	}
 	return fmt.Sprintf(`Complete this Issue in the real workspace.
 Issue %s: %s
 Description: %s
@@ -1906,13 +1934,17 @@ For every user-facing deliverable file you generate (reports, archives, images, 
 
 If this Issue is too broad for one reliable execution, call aegis_create_subissues once with 2-8 independently verifiable child Issues and explicit earlier-index dependencies. After the tool succeeds, stop implementation on the parent and end your turn. The scheduler will execute the children and later resume this Issue in a fresh continuation session. Do not create children for work you can safely complete yourself.
 
-Your final response is a candidate result, not an automatic completion. Include concrete evidence for every material part of the objective; the read-only acceptance Agent will evaluate it before Aegis can complete the Issue.`, i.Identifier, i.Title, i.Description, i.Objective, i.Constraints, i.Workspace)
+%s`, i.Identifier, i.Title, i.Description, i.Objective, i.Constraints, i.Workspace, completionInstruction)
 }
 
 func continuationPrompt(parent Issue, children []Issue) string {
 	var summaries strings.Builder
 	for _, child := range children {
 		fmt.Fprintf(&summaries, "- %s [%s] %s\n  Agent: %s\n  Result: %s\n", child.Identifier, child.Status, child.Title, child.AssigneeAgentID, fallback(truncate(strings.TrimSpace(child.Result), 1800), fallback(child.Error, "No result recorded.")))
+	}
+	completionInstruction := "Your final response must contain concrete evidence for every material part of the objective because it will be evaluated by the acceptance Agent."
+	if strings.TrimSpace(parent.Objective) == "" {
+		completionInstruction = "This parent Issue has no acceptance objective, so no acceptance Agent will run; finish with a concise evidence-based integration report."
 	}
 	return fmt.Sprintf(`Resume the parent Issue after all direct child Issues reached a terminal state.
 
@@ -1923,7 +1955,7 @@ Workspace: %s
 
 Direct child results:
 %s
-Inspect the actual workspace state, integrate or correct child work where needed, and run the parent-level validation. Publish every generated user-facing deliverable with aegis_publish_attachment before ending the turn. If material work is still too complex, you may call aegis_create_subissues again for a new bounded decomposition. Otherwise finish with a concise parent-level report covering integration, validation, and remaining risk. Your final response must contain concrete evidence for every material part of the objective because it will be evaluated by the acceptance Agent.`, parent.Identifier, parent.Title, parent.Description, parent.Objective, parent.Workspace, summaries.String())
+Inspect the actual workspace state, integrate or correct child work where needed, and run relevant parent-level checks. Publish every generated user-facing deliverable with aegis_publish_attachment before ending the turn. If material work is still too complex, you may call aegis_create_subissues again for a new bounded decomposition. Otherwise finish with a concise parent-level report covering integration, verification, and remaining risk. %s`, parent.Identifier, parent.Title, parent.Description, parent.Objective, parent.Workspace, summaries.String(), completionInstruction)
 }
 
 func validationPrompt(issue Issue, candidateResult string, attempt int, attachments []ValidationAttachmentInfo, mode string, maxAttempts int, terminalAttempt bool) string {
@@ -2028,6 +2060,10 @@ func wakeupPrompt(i Issue, w AgentWakeup, agents []AgentDefinition, db *gorm.DB)
 	if w.Reason == "issue_comment_mentioned" {
 		trigger = "You were explicitly mentioned in an Issue comment."
 	}
+	validationInstruction := "If you perform new work without splitting, the Issue's objective and validation settings remain authoritative."
+	if strings.TrimSpace(i.Objective) == "" {
+		validationInstruction = "This Issue has no acceptance objective. Your response or scoped work will not start an acceptance-validation flow."
+	}
 	return fmt.Sprintf(`%s
 
 Issue %s: %s
@@ -2040,7 +2076,7 @@ Comment from %s:
 %s
 </comment>
 
-Respond to the comment concretely. You may inspect the workspace and perform scoped work using your tools when needed. Finish with a response suitable for the Issue comment thread. Available agent IDs: %v`, trigger, i.Identifier, i.Title, i.Description, i.Objective, i.Workspace, comment.AuthorID, comment.Body, func() []string {
+Respond to the comment concretely. You may inspect the workspace and perform scoped work using your tools when needed. If the comment requires independently executable child work, call aegis_create_subissues; a successful call automatically reopens a completed Issue and schedules the new child tree. %s Finish with a response suitable for the Issue comment thread. Available agent IDs: %v`, trigger, i.Identifier, i.Title, i.Description, i.Objective, i.Workspace, comment.AuthorID, comment.Body, validationInstruction, func() []string {
 		var out []string
 		for _, a := range agents {
 			if a.Enabled && !a.Internal {

@@ -81,7 +81,7 @@ func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
 		}).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&Approval{}).Where("issue_id IN ? AND status = ?", allIDs, "pending").Updates(map[string]any{"status": "expired", "resolved_at": now}).Error; err != nil {
+		if err := tx.Where("issue_id IN ? AND status = ?", allIDs, "pending").Delete(&Approval{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&AgentWakeup{}).Where("issue_id IN ? AND status IN ?", allIDs, []string{"queued", "delivered"}).Updates(map[string]any{
@@ -209,7 +209,13 @@ func (m *Manager) completeIssueWithoutValidation(issue Issue, sourceExecutionID,
 		updates["completed_at"] = now
 	}
 	_ = m.store.db.Model(&Issue{}).Where("id = ? AND status NOT IN ?", issue.ID, []string{"done", "cancelled"}).Updates(updates).Error
-	m.store.addEvent(sourceExecutionID, issue.ID, "validation", "已跳过目标验收", "操作员已为此 Issue 永久关闭验收，Worker 产出直接进入完成状态。")
+	title := "已跳过目标验收"
+	detail := "此 Issue 已配置为跳过验收，Worker 产出直接进入完成状态。"
+	if strings.TrimSpace(issue.Objective) == "" {
+		title = "无需目标验收"
+		detail = "Issue 未设置目标，Worker 产出直接进入完成状态，未启动验收 Agent。"
+	}
+	m.store.addEvent(sourceExecutionID, issue.ID, "validation", title, detail)
 	m.store.notify()
 	if issue.ParentID != "" {
 		go m.scheduleChildren(issue.ParentID)

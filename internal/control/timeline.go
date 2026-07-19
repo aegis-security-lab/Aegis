@@ -197,7 +197,7 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 	}
 
 	var approvals []Approval
-	if err := s.db.Where("issue_id IN ?", issueIDs).Order("created_at asc").Find(&approvals).Error; err != nil {
+	if err := s.db.Where("issue_id IN ? AND status <> ?", issueIDs, "expired").Order("created_at asc").Find(&approvals).Error; err != nil {
 		return TaskTimeline{}, err
 	}
 	for _, approval := range approvals {

@@ -99,11 +99,11 @@ func (s *Store) cancelTaskTree(taskID, reason string) (TaskCancellationResult, [
 			return executionUpdate.Error
 		}
 
-		approvalUpdate := tx.Model(&Approval{}).
+		approvalDelete := tx.
 			Where("issue_id IN ? AND status = ?", issueIDs, "pending").
-			Updates(map[string]any{"status": "expired", "resolved_at": &now})
-		if approvalUpdate.Error != nil {
-			return approvalUpdate.Error
+			Delete(&Approval{})
+		if approvalDelete.Error != nil {
+			return approvalDelete.Error
 		}
 		wakeupUpdate := tx.Model(&AgentWakeup{}).
 			Where("issue_id IN ? AND status IN ?", issueIDs, []string{"queued", "delivered"}).
@@ -129,7 +129,7 @@ func (s *Store) cancelTaskTree(taskID, reason string) (TaskCancellationResult, [
 		}
 		result = TaskCancellationResult{
 			Task: task, TotalIssues: len(issueIDs), CancelledIssues: issueUpdate.RowsAffected,
-			CancelledExecutions: int64(len(activeExecutions)), ExpiredApprovals: approvalUpdate.RowsAffected,
+			CancelledExecutions: int64(len(activeExecutions)), RemovedApprovals: approvalDelete.RowsAffected,
 			CancelledWakeups: wakeupUpdate.RowsAffected,
 		}
 		return nil

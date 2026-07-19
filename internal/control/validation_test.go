@@ -6,12 +6,16 @@ import (
 	"time"
 )
 
-func TestIssueObjectiveIsRequiredAndPersisted(t *testing.T) {
+func TestIssueObjectiveIsOptionalAndPersistedWhenProvided(t *testing.T) {
 	store := configuredStore(t)
-	if _, err := store.CreateIssue(CreateIssueInput{
-		Title: "Missing objective", Priority: "medium", WorkMode: "autonomous",
-	}); err == nil {
-		t.Fatal("create should reject an Issue without an objective")
+	withoutObjective, err := store.CreateIssue(CreateIssueInput{
+		Title: "No acceptance objective", Priority: "medium", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutObjective.Objective != "" {
+		t.Fatalf("objective=%q, want empty", withoutObjective.Objective)
 	}
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Objective task", Objective: "The API returns 200 and its integration test passes.",
@@ -25,6 +29,54 @@ func TestIssueObjectiveIsRequiredAndPersisted(t *testing.T) {
 	}
 	if issue.ValidationMode != "fixed" || issue.MaxValidationAttempts != 3 {
 		t.Fatalf("validation policy was not snapshotted: %+v", issue)
+	}
+}
+
+func TestIssueWithoutObjectiveCompletesWithoutValidation(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Summarize the workspace", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CheckoutIssue(issue.ID, CheckoutIssueInput{
+		AgentID: execution.AgentID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = store.db.Create(&Message{
+		ID: nextID("message"), ExecutionID: execution.ID, IssueID: issue.ID, Role: "assistant",
+		Content: "Workspace summary is complete.", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.handleSettled(&PiSession{executionID: execution.ID, issueID: issue.ID, agentID: execution.AgentID, kind: "work"})
+
+	completed, err := store.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "done" || completed.ExecutionPhase != "completed" || completed.Result != "Workspace summary is complete." {
+		t.Fatalf("Issue without objective was not completed directly: %+v", completed)
+	}
+	var validationCount int64
+	store.db.Model(&IssueValidation{}).Where("issue_id = ?", issue.ID).Count(&validationCount)
+	if validationCount != 0 {
+		t.Fatalf("validations=%d, want 0", validationCount)
+	}
+	var event ExecutionEvent
+	if err = store.db.Where("execution_id = ? AND title = ?", execution.ID, "无需目标验收").First(&event).Error; err != nil {
+		t.Fatalf("missing no-objective completion event: %v", err)
 	}
 }
 

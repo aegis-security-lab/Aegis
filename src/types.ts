@@ -216,7 +216,7 @@ export interface Approval {
   type: "tool_call" | "issue_rework"
   title: string
   detail: string
-  status: "pending" | "approved" | "rejected" | "expired"
+  status: "pending" | "approved" | "rejected"
   createdAt: string
   resolvedAt?: string
 }
@@ -308,7 +308,7 @@ export interface TaskCancellationResult {
   totalIssues: number
   cancelledIssues: number
   cancelledExecutions: number
-  expiredApprovals: number
+  removedApprovals: number
   cancelledWakeups: number
 }
 export type TaskTimelineEventKind =

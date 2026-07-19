@@ -78,6 +78,9 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := db.Model(&Approval{}).Where("type = '' OR type IS NULL").Update("type", "tool_call").Error; err != nil {
 		return nil, fmt.Errorf("migrate approval types: %w", err)
 	}
+	if err := db.Where("status = ? OR (status = ? AND type = ?)", "expired", "pending", "tool_call").Delete(&Approval{}).Error; err != nil {
+		return nil, fmt.Errorf("remove invalid approvals: %w", err)
+	}
 	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), updatedAt: time.Now()}
 	var settings configRecord
 	if err := db.First(&settings, 1).Error; err == nil {
@@ -116,7 +119,7 @@ func NewStore(dataDir string) (*Store, error) {
 			if err := tx.Model(&Message{}).Where("execution_id IN ? AND streaming = ?", activeIDs, true).Updates(map[string]any{"streaming": false, "updated_at": now}).Error; err != nil {
 				return err
 			}
-			if err := tx.Model(&Approval{}).Where("execution_id IN ? AND status = ?", activeIDs, "pending").Updates(map[string]any{"status": "expired", "resolved_at": now}).Error; err != nil {
+			if err := tx.Where("execution_id IN ? AND status = ?", activeIDs, "pending").Delete(&Approval{}).Error; err != nil {
 				return err
 			}
 			if err := tx.Model(&ExecutionEvent{}).Where("execution_id IN ? AND status = ?", activeIDs, "running").Updates(map[string]any{"status": "interrupted", "updated_at": now}).Error; err != nil {
@@ -386,7 +389,7 @@ func (s *Store) stateViewLocked() StateView {
 	s.db.Order("updated_at desc").Find(&issues)
 	s.db.Order("created_at asc").Find(&relations)
 	s.db.Order("started_at desc").Limit(300).Find(&executions)
-	s.db.Order("created_at desc").Limit(200).Find(&approvals)
+	s.db.Where("status <> ?", "expired").Order("created_at desc").Limit(200).Find(&approvals)
 	for index := range issues {
 		issues[index] = compactIssueForState(issues[index])
 	}
@@ -432,9 +435,6 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, err
 	}
 	input.Objective = strings.TrimSpace(input.Objective)
-	if input.Objective == "" {
-		return Issue{}, errors.New("目标必填")
-	}
 	if input.Priority == "" {
 		input.Priority = "medium"
 	}
@@ -519,6 +519,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			}
 			issue.RequestDepth = parent.RequestDepth + 1
 			issue.ValidationMode, issue.MaxValidationAttempts = normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
+			issue.ValidationDisabled = parent.ValidationDisabled || strings.TrimSpace(parent.Objective) == ""
 		}
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
@@ -593,7 +594,7 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	for index := range d.Events {
 		d.Events[index] = compactExecutionEvent(d.Events[index])
 	}
-	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Approvals)
+	s.db.Where("issue_id = ? AND status <> ?", issue.ID, "expired").Order("created_at desc").Find(&d.Approvals)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Wakeups)
 	s.db.Where("parent_issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Decompositions)
 	s.db.Where("issue_id = ?", issue.ID).Order("attempt desc").Find(&d.Validations)
@@ -643,11 +644,7 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		updates["description"] = strings.TrimSpace(*input.Description)
 	}
 	if input.Objective != nil {
-		objective := strings.TrimSpace(*input.Objective)
-		if objective == "" {
-			return Issue{}, errors.New("目标必填")
-		}
-		updates["objective"] = objective
+		updates["objective"] = strings.TrimSpace(*input.Objective)
 	}
 	if input.Priority != nil {
 		if !slices.Contains([]string{"critical", "high", "medium", "low"}, *input.Priority) {

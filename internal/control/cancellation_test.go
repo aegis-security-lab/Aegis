@@ -120,9 +120,12 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	if preservedExecution.Status != "completed" {
 		t.Fatalf("completed execution changed: %+v", preservedExecution)
 	}
-	_ = store.db.First(&approval, "id = ?", approval.ID).Error
-	if approval.Status != "expired" || approval.ResolvedAt == nil {
-		t.Fatalf("approval not expired: %+v", approval)
+	var approvalCount int64
+	if err = store.db.Model(&Approval{}).Where("id = ?", approval.ID).Count(&approvalCount).Error; err != nil || approvalCount != 0 {
+		t.Fatalf("invalid approval was not removed: err=%v count=%d", err, approvalCount)
+	}
+	if result.RemovedApprovals != 1 {
+		t.Fatalf("removed approval count = %d, want 1", result.RemovedApprovals)
 	}
 	_ = store.db.First(&wakeup, "id = ?", wakeup.ID).Error
 	if wakeup.Status != "cancelled" || wakeup.CompletedAt == nil {

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
@@ -95,6 +96,103 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 	}
 	if len(detail.Decompositions) != 1 || len(detail.Children) != 2 || len(detail.BlockedBy) != 2 {
 		t.Fatalf("incomplete issue detail: %+v", detail)
+	}
+}
+
+func TestCreateSubIssuesReopensCompletedIssueFromActiveSession(t *testing.T) {
+	s := configuredStore(t)
+	parent, err := s.CreateIssue(CreateIssueInput{
+		Title: "Completed task with new requested work", Objective: "Deliver the original task.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := s.createExecution(parent, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CheckoutIssue(parent.ID, CheckoutIssueInput{
+		AgentID: execution.AgentID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = s.db.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{
+		"status": "done", "execution_phase": "completed", "checkout_execution_id": "", "completed_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = s.updateExecution(execution.ID, map[string]any{"status": "running", "finished_at": nil}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.CreateSubIssues(parent.ID, execution.ID, execution.AgentID, DecomposeIssueInput{
+		RequestKey: "comment-follow-up", Summary: "The operator requested two new workstreams.",
+		Children: []SubIssueSpec{
+			{Title: "Investigate the follow-up", Objective: "Investigation evidence is recorded.", Priority: "high", AgentID: "backend-engineer"},
+			{Title: "Deliver the follow-up", Objective: "The requested follow-up is delivered.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Children) != 2 {
+		t.Fatalf("children=%d, want 2", len(result.Children))
+	}
+	reopened, err := s.GetIssue(parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Status != "in_progress" || reopened.ExecutionPhase != "waiting_children" || reopened.CompletedAt != nil || reopened.CurrentExecutionID != execution.ID {
+		t.Fatalf("completed Issue was not reopened by decomposition: %+v", reopened)
+	}
+}
+
+func TestChildIssuesSkipValidationWhenParentHasNoObjective(t *testing.T) {
+	s := configuredStore(t)
+	parent, err := s.CreateIssue(CreateIssueInput{
+		Title: "Task without acceptance flow", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manualChild, err := s.CreateIssue(CreateIssueInput{
+		ParentID: parent.ID, Title: "Manually added work item", Objective: "Record the manual outcome.",
+		Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manualChild.ValidationDisabled {
+		t.Fatalf("manually created child did not inherit no-validation policy: %+v", manualChild)
+	}
+	execution, err := s.createExecution(parent, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CheckoutIssue(parent.ID, CheckoutIssueInput{
+		AgentID: execution.AgentID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.updateExecution(execution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.CreateSubIssues(parent.ID, execution.ID, execution.AgentID, DecomposeIssueInput{
+		RequestKey: "no-validation-tree", Summary: "Split the work without enabling acceptance validation.",
+		Children: []SubIssueSpec{
+			{Title: "First work item", Objective: "Record the first outcome.", Priority: "medium", AgentID: "backend-engineer"},
+			{Title: "Second work item", Objective: "Record the second outcome.", Priority: "medium", AgentID: "frontend-engineer"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, child := range result.Children {
+		if !child.ValidationDisabled {
+			t.Fatalf("child did not inherit no-validation policy: %+v", child)
+		}
 	}
 }
 

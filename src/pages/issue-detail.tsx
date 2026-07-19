@@ -76,7 +76,12 @@ import {
 } from "@/lib/api"
 import { formatBytes, formatTime, formatTokens } from "@/lib/format"
 import { useAppState } from "@/lib/state"
-import type { AgentDefinition, Issue, IssueDetail, TaskBroadcast } from "@/types"
+import type {
+  AgentDefinition,
+  Issue,
+  IssueDetail,
+  TaskBroadcast,
+} from "@/types"
 export function IssueDetailPage() {
   const { issueId } = useParams()
   const { state, refresh } = useAppState()
@@ -108,11 +113,12 @@ export function IssueDetailPage() {
     return new Set(collectTaskIssues(rootID, issues).map((issue) => issue.id))
   }, [detail, state?.issues])
   const hasLiveExecution =
-    (state?.executions ?? detail?.executions ?? []).some((execution) =>
-      taskIssueIDs.has(execution.issueId) &&
-      ["queued", "starting", "running", "waiting_approval"].includes(
-        execution.status
-      )
+    (state?.executions ?? detail?.executions ?? []).some(
+      (execution) =>
+        taskIssueIDs.has(execution.issueId) &&
+        ["queued", "starting", "running", "waiting_approval"].includes(
+          execution.status
+        )
     ) ?? false
   React.useEffect(() => {
     if (!hasLiveExecution) return
@@ -289,20 +295,21 @@ export function IssueDetailPage() {
                   取消任务
                 </Button>
               )}
-            {!["done", "cancelled"].includes(issue.status) && (
-              <Button
-                variant="outline"
-                disabled={busy || issue.abandonRequestedAt != null}
-                onClick={() => setValidationOpen(true)}
-              >
-                {issue.validationDisabled ? (
-                  <ShieldCheck data-icon="inline-start" />
-                ) : (
-                  <ShieldOff data-icon="inline-start" />
-                )}
-                {issue.validationDisabled ? "恢复验收" : "取消验收"}
-              </Button>
-            )}
+            {issue.objective.trim() &&
+              !["done", "cancelled"].includes(issue.status) && (
+                <Button
+                  variant="outline"
+                  disabled={busy || issue.abandonRequestedAt != null}
+                  onClick={() => setValidationOpen(true)}
+                >
+                  {issue.validationDisabled ? (
+                    <ShieldCheck data-icon="inline-start" />
+                  ) : (
+                    <ShieldOff data-icon="inline-start" />
+                  )}
+                  {issue.validationDisabled ? "恢复验收" : "取消验收"}
+                </Button>
+              )}
             {issue.parentId &&
               !["done", "cancelled"].includes(issue.status) && (
                 <Button
@@ -414,12 +421,20 @@ export function IssueDetailPage() {
         <Badge variant="outline">{issue.priority}</Badge>
         <Badge variant="outline">{issue.workMode}</Badge>
         <Badge variant="outline">深度 {issue.requestDepth}</Badge>
-        <Badge variant={issue.validationDisabled ? "secondary" : "outline"}>
-          {issue.validationDisabled
-            ? "验收已关闭"
-            : issue.validationMode === "automatic"
-              ? "自动验收"
-              : `固定验收 · ${detail.validations.length} 轮 / 常规上限 ${issue.maxValidationAttempts}`}
+        <Badge
+          variant={
+            !issue.objective.trim() || issue.validationDisabled
+              ? "secondary"
+              : "outline"
+          }
+        >
+          {!issue.objective.trim()
+            ? "无目标 · 不验收"
+            : issue.validationDisabled
+              ? "验收已关闭"
+              : issue.validationMode === "automatic"
+                ? "自动验收"
+                : `固定验收 · ${detail.validations.length} 轮 / 常规上限 ${issue.maxValidationAttempts}`}
         </Badge>
         {issue.executionPhase === "waiting_children" && (
           <Badge variant="secondary" className="gap-1">

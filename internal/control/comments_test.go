@@ -44,6 +44,67 @@ func TestOperatorCommentWakesIssueAssignee(t *testing.T) {
 	manager.scheduleMu.Unlock()
 }
 
+func TestCommentWakeupWithoutObjectiveDoesNotStartValidation(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Completed discussion task", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "done", "execution_phase": "completed", "completed_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	comment := IssueComment{ID: nextID("comment"), IssueID: issue.ID, AuthorType: "operator", AuthorID: "operator", Body: "Please explain the latest result.", CreatedAt: now}
+	if err = store.db.Create(&comment).Error; err != nil {
+		t.Fatal(err)
+	}
+	wakeup := AgentWakeup{
+		ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID, AgentID: execution.AgentID,
+		ExecutionID: execution.ID, Reason: "issue_comment_assignee", Status: "delivered", CreatedAt: now, DeliveredAt: &now,
+	}
+	if err = store.db.Create(&wakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Create(&Message{
+		ID: nextID("message"), ExecutionID: execution.ID, IssueID: issue.ID, Role: "assistant",
+		Content: "The latest result is unchanged; here is the requested explanation.", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.handleSettled(&PiSession{executionID: execution.ID, issueID: issue.ID, agentID: execution.AgentID, kind: "work"})
+
+	if err = store.db.First(&wakeup, "id = ?", wakeup.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if wakeup.Status != "completed" {
+		t.Fatalf("wakeup status=%s, want completed", wakeup.Status)
+	}
+	completed, err := store.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "done" || completed.ExecutionPhase != "completed" || completed.Error != "" {
+		t.Fatalf("comment wakeup changed completed Issue state: %+v", completed)
+	}
+	var validationCount int64
+	store.db.Model(&IssueValidation{}).Where("issue_id = ?", issue.ID).Count(&validationCount)
+	if validationCount != 0 {
+		t.Fatalf("validations=%d, want 0", validationCount)
+	}
+}
+
 func TestDispatchWakeupReusesExistingLiveSession(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{

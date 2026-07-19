@@ -93,7 +93,7 @@ func toolCatalog() map[string]ToolSnapshot {
 		},
 		"aegis_create_subissues": {
 			Name: "aegis_create_subissues", Label: "Create child Issues", Source: "aegis_extension",
-			Description: "把当前已签出的 Issue 原子拆分为 2–8 个持久化子 Issues，并把执行权交还给调度器。",
+			Description: "把当前 Issue 原子拆分为 2–8 个持久化子 Issues，并把执行权交还给调度器；评论唤醒已完成 Issue 后调用会自动重新打开父 Issue。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("requestKey", "string", "当前父 Issue 内唯一且稳定的幂等键。", true),
 				parameter("summary", "string", "为什么需要拆分的简短说明。", true),

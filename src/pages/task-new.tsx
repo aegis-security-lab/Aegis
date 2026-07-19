@@ -77,8 +77,7 @@ export function TaskNewPage() {
     workMode: "guided",
     workspace: state?.config.workspace ?? "",
     context: "",
-    constraints:
-      "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。",
+    constraints: "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。",
   })
 
   const enabledAgents = (state?.agents ?? []).filter(
@@ -173,7 +172,7 @@ export function TaskNewPage() {
                 />
                 <FieldDescription className="flex justify-between gap-4">
                   <span>
-                    用一句话概括任务，详细完成条件请写在目标中。
+                    用一句话概括任务；需要自动验收时，再填写下方目标。
                   </span>
                   <span className="shrink-0 tabular-nums">
                     {issueTitleLength(form.title)} / {ISSUE_TITLE_MAX_LENGTH}
@@ -191,19 +190,17 @@ export function TaskNewPage() {
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="objective">目标</FieldLabel>
+                <FieldLabel htmlFor="objective">目标（可选）</FieldLabel>
                 <Textarea
                   id="objective"
-                  required
                   rows={5}
                   value={form.objective}
-                  onChange={(event) =>
-                    update("objective", event.target.value)
-                  }
+                  onChange={(event) => update("objective", event.target.value)}
                   placeholder="描述最终需要达成的结果，以及可用于判断完成的证据…"
                 />
                 <FieldDescription>
-                  Worker 每次结束后，验收 Agent 都会把实际产出与此目标对比；未达成会自动反馈并续作。
+                  填写后，Worker 结束时会由验收 Agent
+                  对比实际产出；留空则不启动验收流程，产出会直接完成。
                 </FieldDescription>
               </Field>
               <Field>
@@ -236,7 +233,6 @@ export function TaskNewPage() {
                 busy ||
                 !selectedAgentId ||
                 !form.title.trim() ||
-                !form.objective.trim() ||
                 !form.workspace.trim()
               }
             >
@@ -280,7 +276,8 @@ export function TaskNewPage() {
                       <SelectGroup>
                         {enabledAgents.map((agent) => (
                           <SelectItem key={agent.id} value={agent.id}>
-                            {agent.name} · {categoryLabels[agent.category] ?? agent.category}
+                            {agent.name} ·{" "}
+                            {categoryLabels[agent.category] ?? agent.category}
                           </SelectItem>
                         ))}
                       </SelectGroup>
