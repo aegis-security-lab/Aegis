@@ -48,17 +48,6 @@ type PiSession struct {
 	busy                                                             atomic.Bool
 	closed                                                           atomic.Bool
 }
-type planPayload struct {
-	Issues []struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Objective   string `json:"objective"`
-		Priority    string `json:"priority"`
-		DependsOn   []int  `json:"dependsOn"`
-		AgentID     string `json:"agentId"`
-	} `json:"issues"`
-}
-
 type validationDecision struct {
 	Outcome            string `json:"outcome"`
 	Summary            string `json:"summary"`
@@ -870,25 +859,65 @@ func (m *Manager) prepareValidationRetry(issue Issue, validation IssueValidation
 }
 
 func (m *Manager) handlePlan(parent Issue, s *PiSession, text string) {
-	plan, err := parsePlan(text)
+	decompositions, err := m.planningDecompositions(s.executionID)
 	if err != nil {
-		m.failExecution(parent, Execution{ID: s.executionID}, fmt.Errorf("执行计划无法解析: %w", err))
+		m.failExecution(parent, Execution{ID: s.executionID}, fmt.Errorf("读取执行计划失败: %w", err))
 		return
 	}
-	input := DecomposeIssueInput{RequestKey: "initial-plan:" + s.executionID, Summary: "Orchestrator initial plan", Children: make([]SubIssueSpec, len(plan.Issues))}
-	for index, item := range plan.Issues {
-		input.Children[index] = SubIssueSpec{Title: item.Title, Description: item.Description, Objective: item.Objective, Priority: item.Priority, AgentID: item.AgentID, DependsOn: item.DependsOn}
-	}
-	result, err := m.store.CreateSubIssues(parent.ID, s.executionID, s.agentID, input)
-	if err != nil {
-		m.failExecution(parent, Execution{ID: s.executionID}, err)
+	if len(decompositions) == 0 {
+		m.failExecution(parent, Execution{ID: s.executionID}, errors.New("规划 Agent 未调用 aegis_create_subissues 创建执行计划"))
 		return
+	}
+	if err = m.completePlanningDecomposition(parent, s.executionID, text, decompositions); err != nil {
+		m.failExecution(parent, Execution{ID: s.executionID}, fmt.Errorf("完成执行计划失败: %w", err))
+	}
+}
+
+func (m *Manager) planningDecompositions(executionID string) ([]IssueDecomposition, error) {
+	var decompositions []IssueDecomposition
+	err := m.store.db.Where("source_execution_id = ?", executionID).Order("created_at asc").Find(&decompositions).Error
+	return decompositions, err
+}
+
+func (m *Manager) completePlanningDecomposition(parent Issue, executionID, result string, decompositions []IssueDecomposition) error {
+	childCount := 0
+	for _, decomposition := range decompositions {
+		childCount += len(decomposition.ChildIDs)
+	}
+	if childCount == 0 {
+		return errors.New("执行计划没有创建子 Issues")
 	}
 	now := time.Now()
-	_ = m.store.updateExecution(s.executionID, map[string]any{"status": "completed", "result": text, "finished_at": now, "pid": 0})
-	m.store.addEvent(s.executionID, parent.ID, "plan", "执行计划已生成", fmt.Sprintf("已创建 %d 个子 Issues", len(result.Children)))
+	if err := m.store.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Execution{}).Where("id = ?", executionID).Updates(map[string]any{
+			"status": "completed", "result": result, "error": "", "current_tool": "",
+			"finished_at": now, "pid": 0,
+		}).Error; err != nil {
+			return err
+		}
+		updates := map[string]any{
+			"status": "in_progress", "execution_phase": "waiting_children", "checkout_execution_id": "",
+			"current_execution_id": executionID, "error": "", "updated_at": now,
+		}
+		updated := tx.Model(&Issue{}).Where("id = ? AND status <> ?", parent.ID, "cancelled").Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			return errors.New("父 Issue 已取消，不能继续调度执行计划")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	var eventCount int64
+	_ = m.store.db.Model(&ExecutionEvent{}).Where("execution_id = ? AND type = ? AND title = ?", executionID, "plan", "执行计划已生成").Count(&eventCount).Error
+	if eventCount == 0 {
+		m.store.addEvent(executionID, parent.ID, "plan", "执行计划已生成", fmt.Sprintf("已通过拆分工具创建 %d 个子 Issues", childCount))
+	}
 	m.store.notify()
 	go m.scheduleChildren(parent.ID)
+	return nil
 }
 
 func (m *Manager) scheduleChildren(parentID string) {
@@ -1543,6 +1572,7 @@ func (m *Manager) addAgentComment(issueID, agentID, body, executionID string) {
 	}
 }
 func (m *Manager) resumeWork() {
+	m.reconcileCompletedPlanningTools()
 	var wakeups []AgentWakeup
 	m.store.db.Where("status = ?", "queued").Find(&wakeups)
 	for _, w := range wakeups {
@@ -1554,6 +1584,34 @@ func (m *Manager) resumeWork() {
 		go m.scheduleChildren(p.ID)
 	}
 	m.resumeInterruptedWork()
+}
+
+// reconcileCompletedPlanningTools repairs the narrow crash/failure window where
+// aegis_create_subissues committed a durable plan, but the planning Execution
+// was marked failed before its settled handler completed the parent transition.
+func (m *Manager) reconcileCompletedPlanningTools() {
+	var executions []Execution
+	if err := m.store.db.Where("kind = ? AND status = ?", "planning", "failed").Order("finished_at asc").Find(&executions).Error; err != nil {
+		return
+	}
+	for _, execution := range executions {
+		decompositions, err := m.planningDecompositions(execution.ID)
+		if err != nil || len(decompositions) == 0 {
+			continue
+		}
+		issue, err := m.store.GetIssue(execution.IssueID)
+		if err != nil || issue.Status != "blocked" || issue.ExecutionPhase != "blocked" || issue.CurrentExecutionID != execution.ID {
+			continue
+		}
+		result := strings.TrimSpace(execution.Result)
+		if result == "" {
+			result = m.latestAssistant(execution.ID)
+		}
+		if err = m.completePlanningDecomposition(issue, execution.ID, result, decompositions); err != nil {
+			continue
+		}
+		m.store.addEvent(execution.ID, issue.ID, "recovery", "已恢复成功创建的执行计划", "拆分工具已经创建子 Issues；系统已清除错误的 JSON 解析失败状态并继续调度。")
+	}
 }
 
 func (m *Manager) resumeInterruptedWork() {
@@ -1820,38 +1878,6 @@ func (s *Store) GetSession(id string) (SessionDetail, error) {
 	return d, nil
 }
 
-func parsePlan(text string) (planPayload, error) {
-	var p planPayload
-	c := strings.TrimSpace(text)
-	if start := strings.Index(c, "```json"); start >= 0 {
-		c = c[start+7:]
-		if end := strings.Index(c, "```"); end >= 0 {
-			c = c[:end]
-		}
-	} else {
-		a, b := strings.Index(c, "{"), strings.LastIndex(c, "}")
-		if a >= 0 && b > a {
-			c = c[a : b+1]
-		}
-	}
-	if err := json.Unmarshal([]byte(c), &p); err != nil {
-		return p, err
-	}
-	if len(p.Issues) < 2 || len(p.Issues) > maxChildrenPerRequest {
-		return p, fmt.Errorf("plan must contain 2 to %d issues", maxChildrenPerRequest)
-	}
-	for i, x := range p.Issues {
-		title, err := normalizeIssueTitle(x.Title)
-		if err != nil {
-			return p, fmt.Errorf("issue %d: %w", i+1, err)
-		}
-		p.Issues[i].Title = title
-		if strings.TrimSpace(x.Objective) == "" {
-			return p, fmt.Errorf("issue %d is incomplete", i+1)
-		}
-	}
-	return p, nil
-}
 func planningPrompt(i Issue, agents []AgentDefinition) string {
 	var roster strings.Builder
 	for _, a := range agents {
@@ -1866,7 +1892,7 @@ Constraints: %s
 Workspace: %s
 Enabled agents:
 %s
-Return only JSON: {"issues":[{"title":"...","description":"...","objective":"...","priority":"critical|high|medium|low","dependsOn":[1],"agentId":"backend-engineer"}]}. Each title must be at most 120 characters. Dependencies use earlier 1-based indexes. Produce 2-8 independently verifiable implementation/test issues. Every objective must state the concrete outcome and evidence the acceptance Agent can verify.`, i.Objective, fallback(i.Context, i.Description), i.Constraints, i.Workspace, roster.String())
+Create the durable execution plan by calling aegis_create_subissues exactly once. Use a stable requestKey, provide 2-8 independently verifiable implementation/test Issues, and end the turn after the tool succeeds. Each title must be at most 120 characters. Dependencies use earlier 1-based indexes. Every objective must state the concrete outcome and evidence the acceptance Agent can verify. The final response may briefly summarize the created Issues, but it is not the execution plan and must not replace the tool call.`, i.Objective, fallback(i.Context, i.Description), i.Constraints, i.Workspace, roster.String())
 }
 func workerPrompt(i Issue) string {
 	return fmt.Sprintf(`Complete this Issue in the real workspace.

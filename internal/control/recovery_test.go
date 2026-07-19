@@ -7,6 +7,124 @@ import (
 	"time"
 )
 
+func TestPlanningSessionAcceptsDurableToolPlanWithMarkdownFinalResponse(t *testing.T) {
+	store := configuredStore(t)
+	parent, execution, decomposition := createPlanningToolResult(t, store)
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.scheduleMu.Lock()
+	defer func() {
+		_ = store.db.Model(&Issue{}).Where("id = ?", parent.ID).Update("status", "cancelled").Error
+		manager.scheduleMu.Unlock()
+	}()
+
+	manager.handlePlan(parent, &PiSession{
+		executionID: execution.ID, issueID: parent.ID, agentID: execution.AgentID, kind: "planning",
+	}, "# Planning complete\n\nCreated two independently verifiable child Issues.")
+
+	if err := store.db.First(&execution, "id = ?", execution.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if execution.Status != "completed" || execution.Error != "" || !strings.HasPrefix(execution.Result, "# Planning complete") {
+		t.Fatalf("planning execution was not completed from its durable tool result: %+v", execution)
+	}
+	updated, err := store.GetIssue(parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "in_progress" || updated.ExecutionPhase != "waiting_children" || updated.Error != "" {
+		t.Fatalf("parent did not remain in waiting_children: %+v", updated)
+	}
+	var issueCount int64
+	store.db.Model(&Issue{}).Count(&issueCount)
+	if issueCount != 3 || len(decomposition.ChildIDs) != 2 {
+		t.Fatalf("tool plan was duplicated: issues=%d decomposition=%+v", issueCount, decomposition)
+	}
+}
+
+func TestStartupRepairsFailedPlanningParseAfterToolCreatedChildren(t *testing.T) {
+	store := configuredStore(t)
+	parent, execution, _ := createPlanningToolResult(t, store)
+	now := time.Now()
+	parseError := "执行计划无法解析: invalid character '#' looking for beginning of value"
+	if err := store.updateExecution(execution.ID, map[string]any{"status": "failed", "error": parseError, "finished_at": now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{
+		"status": "blocked", "execution_phase": "blocked", "error": parseError,
+		"current_execution_id": execution.ID, "updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	message := Message{
+		ID: nextID("message"), ExecutionID: execution.ID, IssueID: parent.ID, Role: "assistant",
+		Content: "# Plan created\n\nThe durable child tree is ready.", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.db.Create(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.scheduleMu.Lock()
+	defer func() {
+		_ = store.db.Model(&Issue{}).Where("id = ?", parent.ID).Update("status", "cancelled").Error
+		manager.scheduleMu.Unlock()
+	}()
+	manager.reconcileCompletedPlanningTools()
+
+	if err := store.db.First(&execution, "id = ?", execution.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if execution.Status != "completed" || execution.Error != "" || execution.Result != message.Content {
+		t.Fatalf("failed planning execution was not repaired: %+v", execution)
+	}
+	updated, err := store.GetIssue(parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "in_progress" || updated.ExecutionPhase != "waiting_children" || updated.Error != "" {
+		t.Fatalf("blocked parent was not repaired: %+v", updated)
+	}
+	var recoveryEvents int64
+	store.db.Model(&ExecutionEvent{}).Where("execution_id = ? AND type = ?", execution.ID, "recovery").Count(&recoveryEvents)
+	if recoveryEvents != 1 {
+		t.Fatalf("recovery events=%d, want 1", recoveryEvents)
+	}
+}
+
+func createPlanningToolResult(t *testing.T, store *Store) (Issue, Execution, IssueDecomposition) {
+	t.Helper()
+	parent, err := store.CreateIssue(CreateIssueInput{
+		Title: "Plan a broad implementation", Objective: "Deliver an integrated implementation.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "aegis-orchestrator",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(parent, "aegis-orchestrator", "planning")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CheckoutIssue(parent.ID, CheckoutIssueInput{
+		AgentID: execution.AgentID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.CreateSubIssues(parent.ID, execution.ID, execution.AgentID, DecomposeIssueInput{
+		RequestKey: "initial-plan", Summary: "Split backend and frontend work.",
+		Children: []SubIssueSpec{
+			{Title: "Implement backend", Objective: "Backend tests pass.", Priority: "high", AgentID: "backend-engineer"},
+			{Title: "Implement frontend", Objective: "Frontend build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parent, execution, result.Decomposition
+}
+
 func TestRuntimeRecordsToolCheckpointsForRecovery(t *testing.T) {
 	store := configuredStore(t)
 	issue, _ := store.CreateIssue(CreateIssueInput{
