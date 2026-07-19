@@ -56,6 +56,103 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "time": time.Now()}) })
 	api.GET("/state", func(c *gin.Context) { c.JSON(200, store.State()) })
 	api.GET("/events", func(c *gin.Context) { streamState(c, store) })
+	api.GET("/tools/uncover/status", func(c *gin.Context) {
+		status, err := store.UncoverStatus()
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
+	api.PUT("/tools/uncover/providers/:engine", func(c *gin.Context) {
+		var in control.SaveUncoverProviderInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		engine, err := store.SaveUncoverProvider(c.Param("engine"), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, engine)
+	})
+	api.DELETE("/tools/uncover/providers/:engine", func(c *gin.Context) {
+		if err := store.DeleteUncoverProvider(c.Param("engine")); err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	api.POST("/tools/uncover/search", func(c *gin.Context) {
+		var in control.UncoverSearchInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		result, err := store.RunUncoverSearch(c.Request.Context(), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.GET("/tools/uncover/exports/:id", func(c *gin.Context) {
+		export, file, err := store.UncoverExportFile(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		defer file.Close()
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": export.Name})
+		c.DataFromReader(http.StatusOK, export.Size, export.MimeType, file, map[string]string{
+			"Content-Disposition":    disposition,
+			"X-Content-Type-Options": "nosniff",
+		})
+	})
+	api.GET("/concierge/conversations", func(c *gin.Context) {
+		items, err := store.ListConciergeConversations()
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"conversations": items})
+	})
+	api.POST("/concierge/conversations", func(c *gin.Context) {
+		conversation, err := manager.CreateConciergeConversation()
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, conversation)
+	})
+	api.GET("/concierge/conversations/:id", func(c *gin.Context) {
+		detail, err := store.GetConciergeConversation(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, detail)
+	})
+	api.DELETE("/concierge/conversations/:id", func(c *gin.Context) {
+		if err := manager.DeleteConciergeConversation(c.Param("id")); err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	api.POST("/concierge/conversations/:id/messages", func(c *gin.Context) {
+		var in struct {
+			Message string `json:"message"`
+		}
+		if !bindJSON(c, &in) {
+			return
+		}
+		message, err := manager.SendConciergeMessage(c.Param("id"), in.Message)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, message)
+	})
 	api.GET("/issues/:id", func(c *gin.Context) {
 		v, err := store.GetIssueDetail(c.Param("id"))
 		if err != nil {
@@ -63,6 +160,30 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.JSON(200, v)
+	})
+	api.GET("/issues/:id/comments", func(c *gin.Context) {
+		v, err := store.IssueCommentsPage(c.Param("id"), c.Query("before"), detailLimit(c))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/issues/:id/events", func(c *gin.Context) {
+		v, err := store.IssueEventsPage(c.Param("id"), c.Query("before"), detailLimit(c))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/issues/:id/executions", func(c *gin.Context) {
+		v, err := store.IssueExecutionsPage(c.Param("id"), c.Query("before"), detailLimit(c))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
 	})
 	api.GET("/execution-events/:id", func(c *gin.Context) {
 		v, err := store.GetExecutionEvent(c.Param("id"))
@@ -122,6 +243,23 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusCreated, result)
 	})
+	api.POST("/internal/executions/:id/concierge/tasks", func(c *gin.Context) {
+		var in control.CreateConciergeTaskInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		issue, err := manager.CreateTaskFromConcierge(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.JSON(http.StatusCreated, issue)
+	})
 	api.POST("/internal/executions/:id/attachments", func(c *gin.Context) {
 		var in control.PublishAttachmentInput
 		if !bindJSON(c, &in) {
@@ -138,6 +276,23 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.JSON(http.StatusCreated, result)
+	})
+	api.POST("/internal/executions/:id/uncover", func(c *gin.Context) {
+		var in control.UncoverSearchInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.UncoverExecutionSearch(c.Request.Context(), c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
 	})
 	api.POST("/internal/executions/:id/progress", func(c *gin.Context) {
 		var in control.ReportExecutionProgressInput
@@ -492,6 +647,43 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(200, v)
 	})
+	api.GET("/sessions/:id/messages", func(c *gin.Context) {
+		v, err := store.SessionMessagesPage(c.Param("id"), c.Query("before"), detailLimit(c))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/sessions/:id/events", func(c *gin.Context) {
+		v, err := store.SessionEventsPage(c.Param("id"), c.Query("before"), detailLimit(c))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/sessions/:id/progress", func(c *gin.Context) {
+		v, err := store.SessionProgressPage(c.Param("id"), c.Query("before"), detailLimit(c))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/sessions/:id/delta", func(c *gin.Context) {
+		since, err := time.Parse(time.RFC3339Nano, c.Query("since"))
+		if err != nil {
+			writeError(c, http.StatusBadRequest, errors.New("invalid session delta watermark"))
+			return
+		}
+		v, err := store.SessionDelta(c.Param("id"), since)
+		if err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
 
 	api.GET("/agents", func(c *gin.Context) { c.JSON(200, store.Agents()) })
 	api.POST("/agents", func(c *gin.Context) {
@@ -792,4 +984,15 @@ func parseIntQuery(v string, defaultVal int) (int, error) {
 		return 0, errors.New("invalid integer")
 	}
 	return i, nil
+}
+
+func detailLimit(c *gin.Context) int {
+	limit, err := parseIntQuery(c.Query("limit"), 50)
+	if err != nil {
+		return 50
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
 }

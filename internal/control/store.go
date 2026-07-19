@@ -50,6 +50,10 @@ type skillRecord struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
+type registrySeedMigrationRecord struct {
+	ID        string `gorm:"primaryKey"`
+	AppliedAt time.Time
+}
 
 func NewStore(dataDir string) (*Store, error) {
 	if strings.TrimSpace(dataDir) == "" {
@@ -62,23 +66,22 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, err
 	}
+	if err := os.Chmod(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("secure data directory: %w", err)
+	}
 	dbLog := logger.New(log.New(os.Stderr, "", log.LstdFlags), logger.Config{SlowThreshold: time.Second, LogLevel: logger.Error, IgnoreRecordNotFoundError: true})
-	db, err := gorm.Open(sqlite.Open(filepath.Join(abs, "aegis.db")+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on"), &gorm.Config{Logger: dbLog})
+	dbPath := filepath.Join(abs, "aegis.db")
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on"), &gorm.Config{Logger: dbLog})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	// Validation attempts share one fixed Execution per Issue, so this index is
-	// intentionally non-unique. Recreate it before AutoMigrate applies the new schema.
-	if err := db.Exec("DROP INDEX IF EXISTS idx_issue_validations_validation_execution_id").Error; err != nil {
-		return nil, fmt.Errorf("migrate validation execution index: %w", err)
+	if err := os.Chmod(dbPath, 0o600); err != nil {
+		return nil, fmt.Errorf("secure sqlite database: %w", err)
 	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &Issue{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &Finding{}); err != nil {
-		return nil, fmt.Errorf("migrate sqlite: %w", err)
+	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &Issue{}, &ConciergeConversation{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &Finding{}); err != nil {
+		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
 	}
-	if err := db.Model(&Approval{}).Where("type = '' OR type IS NULL").Update("type", "tool_call").Error; err != nil {
-		return nil, fmt.Errorf("migrate approval types: %w", err)
-	}
-	if err := db.Where("status = ? OR (status = ? AND type = ?)", "expired", "pending", "tool_call").Delete(&Approval{}).Error; err != nil {
+	if err := db.Where("status = ? AND type = ?", "pending", "tool_call").Delete(&Approval{}).Error; err != nil {
 		return nil, fmt.Errorf("remove invalid approvals: %w", err)
 	}
 	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), updatedAt: time.Now()}
@@ -93,9 +96,6 @@ func NewStore(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.seedProject(); err != nil {
-		return nil, err
-	}
-	if err := s.normalizeIssueDepths(); err != nil {
 		return nil, err
 	}
 	now := time.Now()
@@ -136,7 +136,7 @@ func NewStore(dataDir string) (*Store, error) {
 			return err
 		}
 		var interruptedIssues []Issue
-		if err := tx.Where("status = ? AND execution_phase NOT IN ?", "in_progress", []string{"waiting_children", "summarizing"}).Find(&interruptedIssues).Error; err != nil {
+		if err := tx.Where("hidden = ? AND status = ? AND execution_phase NOT IN ?", false, "in_progress", []string{"waiting_children", "summarizing"}).Find(&interruptedIssues).Error; err != nil {
 			return err
 		}
 		for _, issue := range interruptedIssues {
@@ -199,57 +199,6 @@ func NewStore(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
-}
-
-func (s *Store) normalizeIssueDepths() error {
-	var issues []Issue
-	if err := s.db.Find(&issues).Error; err != nil {
-		return fmt.Errorf("load issue hierarchy: %w", err)
-	}
-	byID := make(map[string]Issue, len(issues))
-	for _, issue := range issues {
-		byID[issue.ID] = issue
-	}
-	depths := make(map[string]int, len(issues))
-	visiting := make(map[string]bool, len(issues))
-	var depthFor func(string) (int, error)
-	depthFor = func(id string) (int, error) {
-		if depth, ok := depths[id]; ok {
-			return depth, nil
-		}
-		issue, ok := byID[id]
-		if !ok || issue.ParentID == "" {
-			depths[id] = 0
-			return 0, nil
-		}
-		if visiting[id] {
-			return 0, fmt.Errorf("issue hierarchy contains a cycle at %s", issue.Identifier)
-		}
-		visiting[id] = true
-		parentDepth, err := depthFor(issue.ParentID)
-		delete(visiting, id)
-		if err != nil {
-			return 0, err
-		}
-		depths[id] = parentDepth + 1
-		return parentDepth + 1, nil
-	}
-	for _, issue := range issues {
-		if _, err := depthFor(issue.ID); err != nil {
-			return err
-		}
-	}
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		for _, issue := range issues {
-			if issue.RequestDepth == depths[issue.ID] {
-				continue
-			}
-			if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Update("request_depth", depths[issue.ID]).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 func (s *Store) seedProject() error {
@@ -386,10 +335,10 @@ func (s *Store) stateViewLocked() StateView {
 	var approvals []Approval
 	knowledgeBases, _ := s.listKnowledgeBases()
 	s.db.Order("created_at asc").Find(&projects)
-	s.db.Order("updated_at desc").Find(&issues)
+	s.db.Where("hidden = ?", false).Order("updated_at desc").Find(&issues)
 	s.db.Order("created_at asc").Find(&relations)
-	s.db.Order("started_at desc").Limit(300).Find(&executions)
-	s.db.Where("status <> ?", "expired").Order("created_at desc").Limit(200).Find(&approvals)
+	s.db.Where("issue_id IN (?)", s.db.Model(&Issue{}).Select("id").Where("hidden = ?", false)).Order("started_at desc").Limit(300).Find(&executions)
+	s.db.Order("created_at desc").Limit(200).Find(&approvals)
 	for index := range issues {
 		issues[index] = compactIssueForState(issues[index])
 	}
@@ -544,7 +493,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 
 func (s *Store) GetIssue(id string) (Issue, error) {
 	var issue Issue
-	err := s.db.Where("id = ? OR identifier = ?", id, id).First(&issue).Error
+	err := s.db.First(&issue, "id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return Issue{}, errors.New("issue not found")
 	}
@@ -555,7 +504,7 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Broadcasts: []TaskBroadcast{}}
+	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Broadcasts: []TaskBroadcast{}, Watermark: time.Now()}
 	d.Decompositions = []IssueDecomposition{}
 	s.db.Where("parent_id = ?", issue.ID).Order("number asc").Find(&d.Children)
 	var incoming, outgoing []IssueRelation
@@ -573,31 +522,29 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 			d.Blocks = append(d.Blocks, x)
 		}
 	}
-	s.db.Where("issue_id = ?", issue.ID).Order("started_at desc").Find(&d.Executions)
-	for index := range d.Executions {
-		d.Executions[index] = compactExecution(d.Executions[index])
+	executions, err := s.IssueExecutionsPage(issue.ID, "", detailPageSize)
+	if err != nil {
+		return IssueDetail{}, err
 	}
-	s.db.Where("issue_id = ?", issue.ID).Order("created_at asc").Find(&d.Comments)
-	var attachments []IssueAttachment
-	s.db.Where("issue_id = ? AND comment_id <> ''", issue.ID).Order("created_at asc").Find(&attachments)
-	attachmentsByComment := make(map[string][]IssueAttachment)
-	for _, attachment := range attachments {
-		attachmentsByComment[attachment.CommentID] = append(attachmentsByComment[attachment.CommentID], attachment)
+	d.Executions, d.ExecutionsPage = executions.Items, executions.Page
+	comments, err := s.IssueCommentsPage(issue.ID, "", detailPageSize)
+	if err != nil {
+		return IssueDetail{}, err
 	}
-	for index := range d.Comments {
-		d.Comments[index].Attachments = attachmentsByComment[d.Comments[index].ID]
-		if d.Comments[index].Attachments == nil {
-			d.Comments[index].Attachments = []IssueAttachment{}
-		}
+	d.Comments, d.CommentsPage = comments.Items, comments.Page
+	events, err := s.IssueEventsPage(issue.ID, "", detailPageSize)
+	if err != nil {
+		return IssueDetail{}, err
 	}
-	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Limit(issueDetailEventLimit).Find(&d.Events)
-	for index := range d.Events {
-		d.Events[index] = compactExecutionEvent(d.Events[index])
-	}
-	s.db.Where("issue_id = ? AND status <> ?", issue.ID, "expired").Order("created_at desc").Find(&d.Approvals)
+	d.Events, d.EventsPage = events.Items, events.Page
+	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Approvals)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Wakeups)
 	s.db.Where("parent_issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Decompositions)
 	s.db.Where("issue_id = ?", issue.ID).Order("attempt desc").Find(&d.Validations)
+	for index := range d.Validations {
+		d.Validations[index].Objective = ""
+		d.Validations[index].CandidateResult = ""
+	}
 	root, err := s.taskRoot(issue)
 	if err != nil {
 		return IssueDetail{}, err

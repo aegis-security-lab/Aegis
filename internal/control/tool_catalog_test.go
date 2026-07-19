@@ -61,6 +61,13 @@ func TestEveryCatalogToolRequiresInvocationDescription(t *testing.T) {
 		if purpose.Name != "description" || purpose.Type != "string" || !purpose.Required || purpose.Description == "" {
 			t.Fatalf("tool %s does not require an invocation description: %+v", name, purpose)
 		}
+		seen := map[string]bool{}
+		for _, parameter := range tool.Parameters {
+			if seen[parameter.Name] {
+				t.Fatalf("tool %s has duplicate top-level parameter %q", name, parameter.Name)
+			}
+			seen[parameter.Name] = true
+		}
 	}
 }
 

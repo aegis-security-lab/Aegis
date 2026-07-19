@@ -2,10 +2,8 @@ import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
 import {
   ArrowLeft,
+  ChevronDown,
   Clock3,
-  Copy,
-  Download,
-  FileText,
   GitBranch,
   MessageSquare,
   Play,
@@ -20,6 +18,7 @@ import {
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import { ExecutionEvents } from "@/components/execution-events"
+import { IssueCommentsList } from "@/components/issue-comments-list"
 import { IssueTree } from "@/components/issue-tree"
 import { MarkdownContent } from "@/components/markdown-content"
 import { PageHeader } from "@/components/page-header"
@@ -37,16 +36,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
-import {
-  Attachment,
-  AttachmentActions,
-  AttachmentContent,
-  AttachmentDescription,
-  AttachmentGroup,
-  AttachmentMedia,
-  AttachmentTitle,
-} from "@/components/ui/attachment"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -54,6 +44,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Empty,
   EmptyDescription,
@@ -71,15 +66,25 @@ import {
   createIssueComment,
   dispatchIssue,
   fetchIssue,
+  fetchIssueComments,
+  fetchIssueEvents,
+  fetchIssueExecutions,
   setIssueValidationDisabled,
   sendChat,
 } from "@/lib/api"
-import { formatBytes, formatTime, formatTokens } from "@/lib/format"
+import {
+  chronological,
+  mergeById,
+  reverseChronological,
+} from "@/lib/collections"
+import { formatTime, formatTokens } from "@/lib/format"
 import { useAppState } from "@/lib/state"
+import { cn } from "@/lib/utils"
 import type {
   AgentDefinition,
   Issue,
   IssueDetail,
+  IssueValidation,
   TaskBroadcast,
 } from "@/types"
 export function IssueDetailPage() {
@@ -93,10 +98,36 @@ export function IssueDetailPage() {
   const [cancelOpen, setCancelOpen] = React.useState(false)
   const [abandonOpen, setAbandonOpen] = React.useState(false)
   const [validationOpen, setValidationOpen] = React.useState(false)
+  const [loadingMore, setLoadingMore] = React.useState<
+    "comments" | "events" | "executions" | null
+  >(null)
   const load = React.useCallback(async () => {
     if (!issueId) return
     try {
-      setDetail(await fetchIssue(issueId))
+      const next = await fetchIssue(issueId)
+      setDetail((current) => {
+        if (!current || current.issue.id !== next.issue.id) return next
+        return {
+          ...next,
+          comments: mergeById(current.comments, next.comments, chronological),
+          events: mergeById(current.events, next.events, reverseChronological),
+          executions: mergeById(current.executions, next.executions, (a, b) =>
+            b.startedAt.localeCompare(a.startedAt)
+          ),
+          commentsPage:
+            current.comments.length > next.comments.length
+              ? { ...current.commentsPage, total: next.commentsPage.total }
+              : next.commentsPage,
+          eventsPage:
+            current.events.length > next.events.length
+              ? { ...current.eventsPage, total: next.eventsPage.total }
+              : next.eventsPage,
+          executionsPage:
+            current.executions.length > next.executions.length
+              ? { ...current.executionsPage, total: next.executionsPage.total }
+              : next.executionsPage,
+        }
+      })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "读取失败")
     } finally {
@@ -122,9 +153,75 @@ export function IssueDetailPage() {
     ) ?? false
   React.useEffect(() => {
     if (!hasLiveExecution) return
-    const timer = window.setInterval(() => void load(), 2000)
+    const refreshActivity = async () => {
+      if (!issueId) return
+      try {
+        const [comments, events, executions] = await Promise.all([
+          fetchIssueComments(issueId, undefined, 20),
+          fetchIssueEvents(issueId, undefined, 20),
+          fetchIssueExecutions(issueId, undefined, 20),
+        ])
+        setDetail((current) => {
+          if (!current) return current
+          const mergedComments = mergeById(
+            current.comments,
+            comments.items,
+            chronological
+          )
+          const mergedEvents = mergeById(
+            current.events,
+            events.items,
+            reverseChronological
+          )
+          const mergedExecutions = mergeById(
+            current.executions,
+            executions.items,
+            (a, b) => b.startedAt.localeCompare(a.startedAt)
+          )
+          const commentsMissed =
+            current.comments.length > 0 &&
+            comments.items.length > 0 &&
+            !comments.items.some((item) =>
+              current.comments.some((existing) => existing.id === item.id)
+            ) &&
+            comments.page.total > current.commentsPage.total
+          const eventsMissed =
+            current.events.length > 0 &&
+            events.items.length > 0 &&
+            !events.items.some((item) =>
+              current.events.some((existing) => existing.id === item.id)
+            ) &&
+            events.page.total > current.eventsPage.total
+          const executionsMissed =
+            current.executions.length > 0 &&
+            executions.items.length > 0 &&
+            !executions.items.some((item) =>
+              current.executions.some((existing) => existing.id === item.id)
+            ) &&
+            executions.page.total > current.executionsPage.total
+          return {
+            ...current,
+            comments: commentsMissed ? comments.items : mergedComments,
+            events: eventsMissed ? events.items : mergedEvents,
+            executions: executionsMissed ? executions.items : mergedExecutions,
+            commentsPage: commentsMissed
+              ? comments.page
+              : { ...current.commentsPage, total: comments.page.total },
+            eventsPage: eventsMissed
+              ? events.page
+              : { ...current.eventsPage, total: events.page.total },
+            executionsPage: executionsMissed
+              ? executions.page
+              : { ...current.executionsPage, total: executions.page.total },
+          }
+        })
+      } catch {
+        // The next interval retries; keep the last complete snapshot visible.
+      }
+    }
+    const timer = window.setInterval(() => void refreshActivity(), 2000)
     return () => window.clearInterval(timer)
-  }, [hasLiveExecution, load])
+  }, [hasLiveExecution, issueId])
   if (loading)
     return (
       <div className="flex min-h-64 items-center justify-center">
@@ -140,7 +237,9 @@ export function IssueDetailPage() {
         </EmptyHeader>
       </Empty>
     )
-  const { issue } = detail
+  const issue =
+    state?.issues.find((candidate) => candidate.id === detail.issue.id) ??
+    detail.issue
   const directChildren = (state?.issues ?? detail.children).filter(
     (candidate) => candidate.parentId === issue.id
   )
@@ -241,6 +340,69 @@ export function IssueDetailPage() {
       toast.success("评论已复制")
     } catch {
       toast.error("复制失败，请检查浏览器的剪贴板权限")
+    }
+  }
+  const loadOlder = async (kind: "comments" | "events" | "executions") => {
+    if (loadingMore) return
+    setLoadingMore(kind)
+    try {
+      if (kind === "comments") {
+        const page = await fetchIssueComments(
+          issue.id,
+          detail.commentsPage.nextCursor
+        )
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                comments: mergeById(
+                  current.comments,
+                  page.items,
+                  chronological
+                ),
+                commentsPage: page.page,
+              }
+            : current
+        )
+      } else if (kind === "events") {
+        const page = await fetchIssueEvents(
+          issue.id,
+          detail.eventsPage.nextCursor
+        )
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                events: mergeById(
+                  current.events,
+                  page.items,
+                  reverseChronological
+                ),
+                eventsPage: page.page,
+              }
+            : current
+        )
+      } else {
+        const page = await fetchIssueExecutions(
+          issue.id,
+          detail.executionsPage.nextCursor
+        )
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                executions: mergeById(current.executions, page.items, (a, b) =>
+                  b.startedAt.localeCompare(a.startedAt)
+                ),
+                executionsPage: page.page,
+              }
+            : current
+        )
+      }
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "读取历史记录失败")
+    } finally {
+      setLoadingMore(null)
     }
   }
   const steer = async (e: React.FormEvent) => {
@@ -602,74 +764,8 @@ export function IssueDetailPage() {
                   同一个固定验收会话中的逐轮记录；验收者可以看到此前结论与反馈。
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {detail.validations.map((validation) => (
-                  <div
-                    key={validation.id}
-                    className="rounded-lg border bg-muted/20 p-4"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-medium">
-                        第 {validation.attempt} 次验收
-                      </p>
-                      <Badge
-                        variant={
-                          validation.status === "passed"
-                            ? "default"
-                            : validation.status === "running" ||
-                                validation.status === "skipped" ||
-                                validation.status === "interrupted"
-                              ? "secondary"
-                              : "destructive"
-                        }
-                      >
-                        {validation.status === "passed"
-                          ? "通过"
-                          : validation.status === "running"
-                            ? "进行中"
-                            : validation.status === "abandoned"
-                              ? "已放弃"
-                              : validation.status === "skipped"
-                                ? "已跳过"
-                                : validation.status === "interrupted"
-                                  ? "等待恢复"
-                                  : validation.status === "failed"
-                                    ? "未通过"
-                                    : "异常"}
-                      </Badge>
-                    </div>
-                    {validation.summary && (
-                      <MarkdownContent className="mt-3 text-sm">
-                        {validation.summary}
-                      </MarkdownContent>
-                    )}
-                    {validation.feedback && (
-                      <div className="mt-3 rounded-md bg-destructive/5 p-3">
-                        <p className="mb-1 text-xs font-medium text-destructive">
-                          续作要求
-                        </p>
-                        <MarkdownContent className="text-sm">
-                          {validation.feedback}
-                        </MarkdownContent>
-                      </div>
-                    )}
-                    {validation.abandonmentProof && (
-                      <div className="mt-3 rounded-md bg-muted p-3">
-                        <p className="mb-1 text-xs font-medium">
-                          无法达到目标的证明
-                        </p>
-                        <MarkdownContent className="text-sm">
-                          {validation.abandonmentProof}
-                        </MarkdownContent>
-                      </div>
-                    )}
-                    {validation.error && (
-                      <p className="mt-3 text-sm text-destructive">
-                        {validation.error}
-                      </p>
-                    )}
-                  </div>
-                ))}
+              <CardContent>
+                <ValidationHistory validations={detail.validations} />
               </CardContent>
             </Card>
           )}
@@ -685,6 +781,7 @@ export function IssueDetailPage() {
                 </CardDescription>
               </CardHeader>
               <IssueTree
+                key={issue.id}
                 issues={state?.issues ?? detail.children}
                 relations={state?.relations ?? []}
                 agents={state?.agents ?? []}
@@ -705,10 +802,10 @@ export function IssueDetailPage() {
               <Tabs defaultValue="comments">
                 <TabsList>
                   <TabsTrigger value="comments">
-                    评论 {detail.comments.length}
+                    评论 {detail.commentsPage.total}
                   </TabsTrigger>
                   <TabsTrigger value="events">
-                    事件 {detail.events.length}
+                    事件 {detail.eventsPage.total}
                   </TabsTrigger>
                   <TabsTrigger value="broadcasts">
                     广播 {detail.broadcasts.length}
@@ -716,90 +813,13 @@ export function IssueDetailPage() {
                 </TabsList>
                 <TabsContent value="comments" className="pt-3">
                   <div className="flex h-[520px] flex-col gap-3 sm:h-[560px]">
-                    <ScrollArea className="min-h-0 flex-1 rounded-xl border">
-                      <div className="flex flex-col gap-3 p-3">
-                        {detail.comments.length ? (
-                          detail.comments.map((c) => (
-                            <div key={c.id} className="rounded-xl border p-4">
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-xs font-medium">
-                                  {c.authorId}
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  <span className="text-xs text-muted-foreground">
-                                    {formatTime(c.createdAt)}
-                                  </span>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    title="复制评论"
-                                    aria-label={`复制 ${c.authorId} 的评论`}
-                                    onClick={() => void copyComment(c.body)}
-                                  >
-                                    <Copy data-icon="inline-start" />
-                                  </Button>
-                                </div>
-                              </div>
-                              <MarkdownContent className="mt-2 text-sm">
-                                {c.body}
-                              </MarkdownContent>
-                              {c.attachments?.length > 0 && (
-                                <AttachmentGroup className="mt-3">
-                                  {c.attachments.map((attachment) => (
-                                    <Attachment
-                                      key={attachment.id}
-                                      size="sm"
-                                      className="w-72"
-                                    >
-                                      <AttachmentMedia>
-                                        <FileText />
-                                      </AttachmentMedia>
-                                      <AttachmentContent>
-                                        <AttachmentTitle
-                                          title={attachment.name}
-                                        >
-                                          {attachment.name}
-                                        </AttachmentTitle>
-                                        <AttachmentDescription
-                                          title={
-                                            attachment.description ||
-                                            attachment.sourcePath
-                                          }
-                                        >
-                                          {attachment.description ||
-                                            attachment.sourcePath}
-                                          {" · "}
-                                          {formatBytes(attachment.size)}
-                                        </AttachmentDescription>
-                                      </AttachmentContent>
-                                      <AttachmentActions>
-                                        <a
-                                          className={buttonVariants({
-                                            variant: "ghost",
-                                            size: "icon-xs",
-                                          })}
-                                          aria-label={`下载 ${attachment.name}`}
-                                          title="下载附件"
-                                          href={`/api/attachments/${encodeURIComponent(attachment.id)}`}
-                                          download={attachment.name}
-                                        >
-                                          <Download data-icon="inline-start" />
-                                        </a>
-                                      </AttachmentActions>
-                                    </Attachment>
-                                  ))}
-                                </AttachmentGroup>
-                              )}
-                            </div>
-                          ))
-                        ) : (
-                          <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
-                            还没有评论
-                          </div>
-                        )}
-                      </div>
-                    </ScrollArea>
+                    <IssueCommentsList
+                      comments={detail.comments}
+                      hasMore={detail.commentsPage.hasMore}
+                      loadingMore={loadingMore === "comments"}
+                      onLoadMore={() => void loadOlder("comments")}
+                      onCopy={(value) => void copyComment(value)}
+                    />
                     <form
                       onSubmit={comment}
                       className="flex shrink-0 flex-col gap-3"
@@ -818,12 +838,13 @@ export function IssueDetailPage() {
                   </div>
                 </TabsContent>
                 <TabsContent value="events" className="pt-3">
-                  <ScrollArea className="h-[520px] pr-3 sm:h-[560px]">
-                    <ExecutionEvents
-                      events={detail.events}
-                      issues={state?.issues ?? []}
-                    />
-                  </ScrollArea>
+                  <ExecutionEvents
+                    events={detail.events}
+                    issues={state?.issues ?? []}
+                    hasMore={detail.eventsPage.hasMore}
+                    loadingMore={loadingMore === "events"}
+                    onLoadMore={() => void loadOlder("events")}
+                  />
                 </TabsContent>
                 <TabsContent value="broadcasts" className="pt-3">
                   <BroadcastHistory
@@ -880,6 +901,19 @@ export function IssueDetailPage() {
                   </p>
                 </Link>
               ))}
+              {detail.executionsPage.hasMore ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={loadingMore === "executions"}
+                  onClick={() => void loadOlder("executions")}
+                >
+                  {loadingMore === "executions" ? <Spinner /> : null}
+                  加载更早运行
+                </Button>
+              ) : null}
             </CardContent>
           </Card>
           <Card>
@@ -947,6 +981,102 @@ function Block({ label, value }: { label: string; value: string }) {
       </h3>
       <MarkdownContent>{value}</MarkdownContent>
     </div>
+  )
+}
+
+function ValidationHistory({
+  validations,
+}: {
+  validations: IssueValidation[]
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {validations.map((validation) => (
+        <ValidationHistoryItem key={validation.id} validation={validation} />
+      ))}
+    </div>
+  )
+}
+
+function ValidationHistoryItem({
+  validation,
+}: {
+  validation: IssueValidation
+}) {
+  const [open, setOpen] = React.useState(validation.status === "running")
+  const label =
+    validation.status === "passed"
+      ? "通过"
+      : validation.status === "running"
+        ? "进行中"
+        : validation.status === "abandoned"
+          ? "已放弃"
+          : validation.status === "skipped"
+            ? "已跳过"
+            : validation.status === "interrupted"
+              ? "等待恢复"
+              : validation.status === "failed"
+                ? "未通过"
+                : "异常"
+  const variant =
+    validation.status === "passed"
+      ? "default"
+      : validation.status === "running" ||
+          validation.status === "skipped" ||
+          validation.status === "interrupted"
+        ? "secondary"
+        : "destructive"
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="rounded-lg border bg-muted/20">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 p-4 text-left">
+          <span className="text-sm font-medium">
+            第 {validation.attempt} 次验收
+          </span>
+          <span className="flex items-center gap-2">
+            <Badge variant={variant}>{label}</Badge>
+            <ChevronDown
+              className={cn(
+                "size-4 text-muted-foreground transition-transform",
+                open && "rotate-180"
+              )}
+            />
+          </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="border-t p-4">
+            {validation.summary ? (
+              <MarkdownContent className="text-sm">
+                {validation.summary}
+              </MarkdownContent>
+            ) : null}
+            {validation.feedback ? (
+              <div className="mt-3 rounded-md bg-destructive/5 p-3">
+                <p className="mb-1 text-xs font-medium text-destructive">
+                  续作要求
+                </p>
+                <MarkdownContent className="text-sm">
+                  {validation.feedback}
+                </MarkdownContent>
+              </div>
+            ) : null}
+            {validation.abandonmentProof ? (
+              <div className="mt-3 rounded-md bg-muted p-3">
+                <p className="mb-1 text-xs font-medium">无法达到目标的证明</p>
+                <MarkdownContent className="text-sm">
+                  {validation.abandonmentProof}
+                </MarkdownContent>
+              </div>
+            ) : null}
+            {validation.error ? (
+              <p className="mt-3 text-sm text-destructive">
+                {validation.error}
+              </p>
+            ) : null}
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   )
 }
 

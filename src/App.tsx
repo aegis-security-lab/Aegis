@@ -57,6 +57,11 @@ const SecurityPage = React.lazy(() =>
     default: module.SecurityPage,
   }))
 )
+const UncoverPage = React.lazy(() =>
+  import("@/pages/uncover").then((module) => ({
+    default: module.UncoverPage,
+  }))
+)
 const SkillsPage = React.lazy(() =>
   import("@/pages/skills").then((module) => ({ default: module.SkillsPage }))
 )
@@ -80,7 +85,14 @@ const TasksPage = React.lazy(() =>
   import("@/pages/tasks").then((module) => ({ default: module.TasksPage }))
 )
 const TimelinePage = React.lazy(() =>
-  import("@/pages/timeline").then((module) => ({ default: module.TimelinePage }))
+  import("@/pages/timeline").then((module) => ({
+    default: module.TimelinePage,
+  }))
+)
+const WorkspaceChatPage = React.lazy(() =>
+  import("@/pages/workspace-chat").then((module) => ({
+    default: module.WorkspaceChatPage,
+  }))
 )
 
 export function App() {
@@ -116,6 +128,11 @@ export function App() {
         <Route path="/setup" element={<Navigate to="/" replace />} />
         <Route element={<AppShell />}>
           <Route index element={<DashboardPage />} />
+          <Route path="workspace" element={<WorkspaceChatPage />} />
+          <Route
+            path="workspace/:conversationId"
+            element={<WorkspaceChatPage />}
+          />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="tasks/new" element={<TaskNewPage />} />
           <Route path="tasks/:issueId" element={<IssueDetailPage />} />
@@ -133,6 +150,7 @@ export function App() {
           <Route path="sessions/:executionId" element={<SessionDetailPage />} />
           <Route path="approvals" element={<ApprovalsPage />} />
           <Route path="security/findings" element={<FindingsPage />} />
+          <Route path="security/uncover" element={<UncoverPage />} />
           <Route path="security" element={<SecurityPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFound />} />

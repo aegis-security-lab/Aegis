@@ -10,9 +10,11 @@ import {
   MessagesSquare,
   Moon,
   Plus,
+  Radar,
   Settings,
   ShieldCheck,
   ShieldAlert,
+  Sparkles,
   Sun,
   Wrench,
 } from "lucide-react"
@@ -39,12 +41,14 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { useAppState } from "@/lib/state"
+import { cn } from "@/lib/utils"
 
 const navigation = [
   {
     label: "工作区",
     items: [
       { to: "/", label: "概览", icon: CircleGauge, end: true },
+      { to: "/workspace", label: "管家", icon: Sparkles },
       { to: "/tasks", label: "任务", icon: ListTodo },
       { to: "/timeline", label: "时间线", icon: History },
       { to: "/issues", label: "Issues", icon: CheckSquare2 },
@@ -68,8 +72,9 @@ const navigation = [
   {
     label: "安全",
     items: [
-      { to: "/security", label: "安全态势", icon: ShieldAlert },
+      { to: "/security", label: "安全态势", icon: ShieldAlert, end: true },
       { to: "/security/findings", label: "发现详情", icon: FileSearch },
+      { to: "/security/uncover", label: "空间搜索", icon: Radar },
     ],
   },
 ]
@@ -184,7 +189,14 @@ export function AppShell() {
             {resolvedTheme === "dark" ? <Sun /> : <Moon />}
           </Button>
         </header>
-        <div className="mx-auto w-full max-w-[1500px] flex-1 px-4 py-6 lg:px-8 lg:py-8">
+        <div
+          className={cn(
+            "w-full flex-1",
+            location.pathname.startsWith("/workspace")
+              ? "min-h-0 overflow-hidden"
+              : "mx-auto max-w-[1500px] px-4 py-6 lg:px-8 lg:py-8"
+          )}
+        >
           <Outlet />
         </div>
       </SidebarInset>

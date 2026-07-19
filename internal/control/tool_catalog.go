@@ -111,6 +111,19 @@ func toolCatalog() map[string]ToolSnapshot {
 				},
 			},
 		},
+		"aegis_create_task": {
+			Name: "aegis_create_task", Label: "Create Aegis task", Source: "aegis_extension",
+			Description: "根据当前管家对话创建一个真实的顶层 Aegis 任务，并立即交给现有调度器选择或启动负责 Agent。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("title", "string", "清晰具体的任务标题，最多 120 个字符。", true),
+				parameter("taskDescription", "string", "执行背景、范围、约束和需要完成的工作。", true),
+				parameter("objective", "string", "可选的可验证目标；为空时任务不进入验收流程。", false),
+				{Name: "priority", Type: "enum", Description: "任务优先级。", Required: true, Enum: []string{"critical", "high", "medium", "low"}},
+				{Name: "workMode", Type: "enum", Description: "自主执行或需要引导审批。", Required: true, Enum: []string{"autonomous", "guided"}},
+				parameter("agentId", "string", "明确适合时指定启用的 Agent ID；空字符串表示由调度器选择。", false),
+				parameter("workspace", "string", "可选工作目录；为空时使用全局工作区。", false),
+			},
+		},
 		"aegis_publish_attachment": {
 			Name: "aegis_publish_attachment", Label: "Publish attachment", Source: "aegis_extension",
 			Description: "把 Issue 工作目录中的交付文件复制为持久化附件，并在 Execution 完成时挂载到 Agent 评论。",
@@ -177,6 +190,18 @@ func toolCatalog() map[string]ToolSnapshot {
 			Parameters: []ToolParameterSnapshot{
 				parameter("reason", "string", "为什么现有结果需要返工，以及触发请求的用户或 Leader 要求。", true),
 				parameter("requestedOutcome", "string", "批准后应完成的具体结果、建议拆解范围和验收依据。", true),
+			},
+		},
+		"aegis_uncover_search": {
+			Name: "aegis_uncover_search", Label: "Search cyberspace engines", Source: "aegis_extension",
+			Description: "使用 ProjectDiscovery uncover 对一个指定网络空间引擎执行原生语法检索，返回归一化预览，并把完整结果按所选格式发布为 Issue 附件。仅限已授权、非破坏性的信息收集。",
+			Parameters: []ToolParameterSnapshot{
+				{Name: "engine", Type: "enum", Description: "只选择一个搜索引擎；query 必须使用该引擎自己的语法。", Required: true, Enum: []string{"shodan", "censys", "fofa", "shodan-idb", "quake", "hunter", "zoomeye", "netlas", "criminalip", "publicwww", "hunterhow", "google", "odin", "binaryedge", "onyphe", "driftnet", "greynoise", "daydaymap", "nerdydata"}},
+				parameter("query", "string", "原样传给所选引擎的查询语法；不要混用其他引擎的字段和运算符。", true),
+				parameter("limit", "number", "去重后的最大结果数，范围 1–1000，默认 100。", false),
+				{Name: "format", Type: "enum", Description: "完整结果的附件导出格式，默认 jsonl。", Required: false, Enum: []string{"txt", "json", "jsonl", "csv"}},
+				{Name: "field", Type: "enum", Description: "TXT 导出时每行输出的字段，默认 ip:port。", Required: false, Enum: []string{"ip:port", "host:port", "ip", "host", "port", "url"}},
+				parameter("timeout", "number", "搜索超时秒数，范围 5–120，默认 30。", false),
 			},
 		},
 		"aegis_search_knowledge": {

@@ -18,10 +18,18 @@ import (
 	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
+	"gorm.io/gorm"
 )
 
 var requiredAgentTools = []string{"aegis_create_subissues", "aegis_publish_attachment", "aegis_report_progress", "aegis_broadcast", "aegis_list_broadcasts", "aegis_get_memo", "aegis_update_memo", "aegis_request_rework"}
 var defaultAgentTools = ensureRequiredAgentTools([]string{"read", "grep", "find", "ls", "bash", "edit", "write"})
+
+const (
+	uncoverToolID                  = "aegis_uncover_search"
+	uncoverSkillID                 = "uncover-cyberspace-search"
+	uncoverRedTeamSeedMigrationID  = "uncover-red-team-defaults-v1"
+	uncoverUIConfigSeedMigrationID = "uncover-ui-provider-config-v1"
+)
 
 func defaultSkills(now time.Time) []SkillDefinition {
 	definitions := []struct {
@@ -50,7 +58,8 @@ func defaultSkills(now time.Time) []SkillDefinition {
 - Avoid brittle assertions on timestamps and generated identifiers.`},
 		{"sqlite-schema-safety", "SQLite 变更安全", "安全演进 SQLite/GORM 数据模型并验证数据一致性。", `# SQLite schema safety
 
-- Use explicit migrations and stable serialized field names.
+- Keep the schema and serialized field names aligned with the current product contract.
+- During rapid iteration, update the current model directly; do not add legacy aliases, data backfills, or version bridges unless the operator explicitly requires them.
 - Validate constraints and data consistency after schema changes.
 - Make seeds idempotent and never overwrite user edits on restart.
 - Test reopening the database after the new data is written.
@@ -97,14 +106,113 @@ func defaultSkills(now time.Time) []SkillDefinition {
 - Confirm failed attempts are visible in diagnostics and do not alter task state.
 - Re-test the intended allowed workflow after every restriction.
 - Stop when validation would require external access or destructive actions.`},
+		{"uncover-cyberspace-search", "网络空间搜索语法", "使用 ProjectDiscovery uncover 选择搜索引擎、编写原生查询语法并安全导出资产结果。", `# Uncover cyberspace search
+
+Use this Skill only for authorized, passive asset discovery with the aegis_uncover_search tool. ProjectDiscovery uncover passes the query to the selected provider; there is no universal query language and no automatic translation between engines.
+
+## Fixed workflow
+
+1. Extract the exact authorized organization, domain, IP or CIDR scope. If scope is missing or ambiguous, stop and report the blocker.
+2. Choose exactly one configured engine. Prefer the engine whose indexed fields match the objective; use shodan-idb only for exact public IP or CIDR lookups.
+3. Write the query in that engine's native syntax. Never mix a Shodan filter such as country:SG with FOFA-style && expressions unless the selected engine documents it.
+4. Start narrow: include the authorized domain, netblock, ASN or organization constraint before product, port or banner filters. Never run a broad product-only collection when the task has a bounded owner or target.
+5. Call aegis_uncover_search. Use JSONL for pipelines, JSON for a single structured artifact, CSV for spreadsheets, or TXT for one endpoint field per line.
+6. Review the normalized preview, warnings and result count. The complete result set is the returned attachment. Deduplicate observations and timestamp conclusions.
+7. Treat indexed data as historical observation. Verify only with separately authorized low-impact checks; exposure is not proof of a vulnerability.
+
+## Engine syntax quick reference
+
+### Shodan
+
+- Form: free text plus space-separated filter:value terms. There is no space between filter and value; quote values containing spaces.
+- Combine filters by placing them together: org:"Example Corp" country:SG port:443.
+- Useful filters include hostname, net, org, asn, country, city, port, product, version, os, ssl and http.title. Confirm availability in the current Shodan filter reference.
+- Example bounded query: hostname:"example.com" port:443.
+- Official guide: https://help.shodan.io/the-basics/search-query-fundamentals
+
+### Censys (CenQL)
+
+- Form: dataset.field operator value. Current fields begin with host, web or cert.
+- Operators: : tokenized/contains, = exact, =~ regex, < > <= >= ranges, and :* existence.
+- Combine with case-insensitive and, or, not and parentheses. Use a nested field expression when conditions must match the same service object.
+- Example: host.services:(protocol=SSH and not port=22) and host.dns.names:"example.com".
+- Official guide: https://docs.censys.com/docs/censys-query-language
+
+### FOFA
+
+- Form: field="value". Combine with &&, ||, != and parentheses; quote string values.
+- Common fields include domain, host, ip, port, protocol, title, body, header, server, app, cert, country and asn. Field access depends on the account tier.
+- Example bounded query: domain="example.com" && port="443".
+- The API accepts the same query expression as the search product and transmits it as qbase64; pass the plain expression to aegis_uncover_search, never pre-encode it.
+- Official API: https://en.fofa.info/api/info
+
+### ZoomEye
+
+- Use field="value" for case-insensitive contains and field=="value" for case-sensitive exact matches.
+- Combine with &&, ||, != and parentheses. Wildcards are used inside quoted strings. after="YYYY-MM-DD" limits observation time.
+- Example: domain="example.com" && service="https" && after="2026-01-01".
+- Official guide: https://www.zoomeye.ai/help
+
+### Netlas
+
+- Apache Lucene-style form: field:value, including dotted subfields such as geo.country:US.
+- Use AND, OR, NOT (also &&, ||, !), parentheses, [a TO b] ranges, quoted phrases, *, CIDR strings and /lucene-regex/ where supported.
+- Example: domain:*.example.com AND port:443. For a CIDR use ip:"203.0.113.0/24".
+- Official guide: https://docs.netlas.io/knowledge-base/query-language/
+
+### Hunter.how
+
+- Form: field="value" using the same expression as the website; the API transport base64-URL encodes it automatically.
+- Common fields include ip, domain, port, protocol, web.title, header, banner, product, country, asn and status_code.
+- Example: domain="example.com" && port="443". Pass plain syntax, never base64.
+- Official API: https://hunter.how/search-api
+
+### Criminal IP
+
+- Form: field:value terms separated by spaces; quote multi-word values and consult the current filter list for field-specific operators.
+- Example bounded query: domain:example.com product:nginx.
+- Official developer guide: https://search.criminalip.io/developer/sample-code
+
+### Google CSE
+
+- Use Google search operators such as site:, inurl:, intitle:, filetype:, quoted phrases and a leading minus for exclusion.
+- Example: site:example.com inurl:admin -site:status.example.com.
+- Official API: https://developers.google.com/custom-search/v1/overview
+
+### Shodan InternetDB
+
+- Input an exact public IP or CIDR only. It is anonymous and does not support general Shodan dorks.
+- Example: 1.1.1.1.
+- Official API: https://internetdb.shodan.io/docs
+
+### Other uncover engines
+
+For quake, hunter, publicwww, odin, binaryedge, onyphe, driftnet, greynoise, daydaymap and nerdydata, first open the official documentation URL exposed for that engine in the Aegis space-search page. Use only documented fields and operators. If the documentation cannot be consulted, ask for a known-good native query rather than guessing or translating syntax from another engine.
+
+## Credentials and exports
+
+- Configure provider credentials only through Aegis's 空间搜索 page. Do not ask the operator to create external provider files or environment variables.
+- Aegis stores credentials locally and never returns their original values through the API. Never place API keys in a query, Issue description, comment, broadcast, report or tool-call purpose.
+- TXT exports may select ip:port, host:port, ip, host, port or url. JSON, JSONL and CSV always contain the normalized timestamp, source, ip, port, host and url fields.
+
+## Safety boundary
+
+- Search only assets the task explicitly authorizes. Do not collect unrelated personal data, credentials, private content or an unbounded population of third-party assets.
+- Keep limits proportional to the task and honor provider terms, quotas and rate limits.
+- Do not claim current reachability, ownership or exploitability from a search-engine record alone.
+- Record the engine, exact query, observation time, warnings and export attachment in the evidence trail.`},
 	}
 	result := make([]SkillDefinition, 0, len(definitions))
 	for _, definition := range definitions {
+		version := "1.0.0"
+		if definition.id == uncoverSkillID {
+			version = "1.1.0"
+		}
 		result = append(result, SkillDefinition{
 			ID: definition.id, Name: definition.id, DisplayName: definition.displayName,
 			Description: definition.description,
 			Content:     renderSkillContent(definition.id, definition.description, definition.body),
-			Source:      "builtin", Version: "1.0.0", Builtin: true, CreatedAt: now, UpdatedAt: now,
+			Source:      "builtin", Version: version, Builtin: true, CreatedAt: now, UpdatedAt: now,
 		})
 	}
 	return result
@@ -116,6 +224,27 @@ func defaultAgents(now time.Time) []AgentDefinition {
 		AllowWrite: true, ApprovalMode: "",
 	}
 	return []AgentDefinition{
+		{
+			ID: conciergeAgentID, Name: "Aegis 管家", Description: "理解你的需求，直接回答问题，或把明确的执行需求创建为真实任务并交给调度器。",
+			Avatar: "sparkles", Category: "concierge", Enabled: true, Builtin: true,
+			SystemPrompt: `You are the Aegis Concierge, the user's default conversational entry point into the workspace. Respond in the user's language with concise, practical help and preserve conversational context across turns.
+
+You have exactly two product responsibilities:
+1. Answer directly when the user asks a question, explores an idea, needs clarification, or has not clearly asked Aegis to execute work.
+2. Create a real Aegis Task with aegis_create_task when the user clearly asks the system to build, investigate, test, change, produce, or otherwise execute work.
+
+Aegis domain facts you must explain accurately:
+- A Task is a top-level Issue. Complex Tasks form an Issue tree whose descendants are child Issues.
+- The scheduler assigns runnable Issues to Agents, respects dependency edges, and resumes a parent after its child subtree completes.
+- An Agent is a reusable capability definition (model, system prompt, tools, Skills/knowledge, and permission boundary), not a chat session or a task.
+- A Session is one durable Pi conversation/execution record. This concierge chat is separate from work Sessions and does not appear as a Task.
+- A Task or Issue with a non-empty objective enters acceptance validation unless validation is disabled; an empty objective skips validation.
+
+Before creating a Task, make sure the requested outcome is concrete enough to schedule. Ask a short clarifying question when a missing choice would materially change the work. Do not create tasks for greetings, explanations, status questions, hypothetical discussion, or ambiguous wishes. Never claim a task was created unless the tool succeeded. After a successful tool call, briefly confirm the Task identifier, assigned strategy, objective/validation behavior, and provide the returned task link. If the user provides no objective, leave it empty so the Task runs without acceptance validation. Choose a specialist agentId only when the match is clear; otherwise leave it empty and let the scheduler decide. Never use prose to simulate delegation or execution.`,
+			Tools: []string{"aegis_create_task", "aegis_get_memo", "aegis_update_memo"}, SkillIDs: []string{},
+			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: false, AllowShell: false, AllowWrite: false, ApprovalMode: "none", ReworkApprovalMode: "all"},
+			CreatedAt:   now, UpdatedAt: now,
+		},
 		{
 			ID: "aegis-orchestrator", Name: "Aegis Orchestrator", Description: "拆解任务、分配专业 Agent 并协调执行顺序。",
 			Avatar: "route", Category: "orchestrator", Enabled: true, Builtin: true,
@@ -168,7 +297,7 @@ For red-team work that needs target discovery, asset inventory, DNS and subdomai
 When the requested deliverable includes a formal vulnerability, assessment, remediation, or executive report, create a final child Issue assigned to vulnerability-report-engineer after all evidence-producing children. Make it depend on those children and include the required report format, audience, language, severity standard, redaction rules, and output file type in its description and objective.
 
 On continuation, review all child results, identify duplication and coverage gaps, perform any bounded integration or validation still needed, and create another small wave of child Issues only when material work remains. Always respect the task's explicit authorization, target boundaries, testing mode, and safety constraints. Do not claim coverage or findings that were not actually verified. Your output format is flexible; prioritize sound judgment, complete coverage, actionable delegation, and an evidence-based final result.`,
-			Tools: append([]string{}, defaultAgentTools...), SkillIDs: []string{"decompose-issues", "threat-model-workflows", "security-validation"},
+			Tools: append(append([]string{}, defaultAgentTools...), uncoverToolID), SkillIDs: []string{"decompose-issues", "threat-model-workflows", "security-validation", uncoverSkillID},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
 		},
@@ -261,7 +390,7 @@ OUTPUT RULES
 			ID: "red-team-engineer", Name: "红队攻防工程师", Description: "负责威胁建模、应用安全审查与非破坏性安全验证。",
 			Avatar: "shield", Category: "security", Enabled: true, Builtin: true,
 			SystemPrompt: `You are Aegis's red-team application security engineer. Review authorized code and runtime boundaries adversarially, produce reproducible non-destructive evidence, distinguish confirmed vulnerabilities from hypotheses, and recommend scoped fixes. Never access resources outside the task workspace, exfiltrate data, or perform destructive actions.`,
-			Tools:        append([]string{}, defaultAgentTools...), SkillIDs: []string{"threat-model-workflows", "appsec-code-review", "security-validation"},
+			Tools:        append(append([]string{}, defaultAgentTools...), uncoverToolID), SkillIDs: []string{"threat-model-workflows", "appsec-code-review", "security-validation", uncoverSkillID},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
 		},
@@ -425,57 +554,106 @@ func (s *Store) seedRegistry() error {
 		}
 		s.agents = append(s.agents, agent)
 	}
-	// Internal control-plane Agents are product implementation details rather
-	// than user-authored definitions. Keep the validator contract synchronized
-	// when its evidence capabilities evolve.
-	for _, builtin := range defaultAgents(now) {
-		if builtin.ID != "acceptance-validator" {
-			continue
-		}
-		index, exists := agentIndex(s.agents, builtin.ID)
-		if !exists || s.agents[index].SystemPrompt == builtin.SystemPrompt {
-			continue
-		}
-		s.agents[index].SystemPrompt = builtin.SystemPrompt
-		s.agents[index].UpdatedAt = now
-		var record agentRecord
-		if err := s.db.First(&record, "id = ?", builtin.ID).Error; err != nil {
-			return fmt.Errorf("load internal validator: %w", err)
-		}
-		record.Definition = s.agents[index]
-		record.UpdatedAt = now
-		if err := s.db.Save(&record).Error; err != nil {
-			return fmt.Errorf("update internal validator: %w", err)
-		}
+	if err := s.applyRegistrySeedMigrations(now); err != nil {
+		return err
 	}
-	// Control-plane tools are available to every Agent. Persist them explicitly
-	// so saved definitions and the runtime tool list stay in sync.
-	for index := range s.agents {
-		agent := &s.agents[index]
-		if agent.Internal {
+	return nil
+}
+
+func (s *Store) applyRegistrySeedMigrations(now time.Time) error {
+	if err := s.applyUncoverRedTeamSeedMigration(now); err != nil {
+		return err
+	}
+	return s.applyUncoverUIConfigSeedMigration(now)
+}
+
+func (s *Store) applyUncoverRedTeamSeedMigration(now time.Time) error {
+	var applied int64
+	if err := s.db.Model(&registrySeedMigrationRecord{}).Where("id = ?", uncoverRedTeamSeedMigrationID).Count(&applied).Error; err != nil {
+		return fmt.Errorf("check registry seed migration %s: %w", uncoverRedTeamSeedMigrationID, err)
+	}
+	if applied > 0 {
+		return nil
+	}
+
+	updated := make(map[int]AgentDefinition)
+	for index, current := range s.agents {
+		if !current.Builtin {
 			continue
 		}
-		missingRequiredTool := false
-		for _, required := range requiredAgentTools {
-			if !slices.Contains(agent.Tools, required) {
-				missingRequiredTool = true
-				break
+		next := cloneAgent(current)
+		switch current.ID {
+		case "red-team-lead", "red-team-engineer":
+			next.Tools = uniqueStrings(append(next.Tools, uncoverToolID))
+			next.SkillIDs = uniqueStrings(append(next.SkillIDs, uncoverSkillID))
+		case "recon-engineer":
+			next.Tools = stringsWithout(next.Tools, uncoverToolID)
+			next.SkillIDs = stringsWithout(next.SkillIDs, uncoverSkillID)
+		default:
+			continue
+		}
+		if slices.Equal(next.Tools, current.Tools) && slices.Equal(next.SkillIDs, current.SkillIDs) {
+			continue
+		}
+		next.UpdatedAt = now
+		updated[index] = next
+	}
+
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		for _, agent := range updated {
+			record := agentRecord{ID: agent.ID, Definition: agent, CreatedAt: agent.CreatedAt, UpdatedAt: now}
+			if err := tx.Save(&record).Error; err != nil {
+				return fmt.Errorf("update built-in Agent %s: %w", agent.ID, err)
 			}
 		}
-		if !missingRequiredTool {
-			continue
+		return tx.Create(&registrySeedMigrationRecord{ID: uncoverRedTeamSeedMigrationID, AppliedAt: now}).Error
+	}); err != nil {
+		return fmt.Errorf("apply registry seed migration %s: %w", uncoverRedTeamSeedMigrationID, err)
+	}
+	for index, agent := range updated {
+		s.agents[index] = agent
+	}
+	return nil
+}
+
+func (s *Store) applyUncoverUIConfigSeedMigration(now time.Time) error {
+	var applied int64
+	if err := s.db.Model(&registrySeedMigrationRecord{}).Where("id = ?", uncoverUIConfigSeedMigrationID).Count(&applied).Error; err != nil {
+		return fmt.Errorf("check registry seed migration %s: %w", uncoverUIConfigSeedMigrationID, err)
+	}
+	if applied > 0 {
+		return nil
+	}
+
+	defaults := defaultSkills(now)
+	defaultIndex, exists := skillIndex(defaults, uncoverSkillID)
+	if !exists {
+		return errors.New("default uncover Skill is missing")
+	}
+	builtin := defaults[defaultIndex]
+	index, exists := skillIndex(s.skills, uncoverSkillID)
+	var updated *SkillDefinition
+	if exists && s.skills[index].Builtin {
+		next := cloneSkill(s.skills[index])
+		next.Description = builtin.Description
+		next.Content = builtin.Content
+		next.Version = builtin.Version
+		next.UpdatedAt = now
+		updated = &next
+	}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if updated != nil {
+			record := skillRecord{ID: updated.ID, Definition: *updated, CreatedAt: updated.CreatedAt, UpdatedAt: now}
+			if err := tx.Save(&record).Error; err != nil {
+				return fmt.Errorf("update built-in Skill %s: %w", updated.ID, err)
+			}
 		}
-		agent.Tools = ensureRequiredAgentTools(agent.Tools)
-		agent.UpdatedAt = now
-		var record agentRecord
-		if err := s.db.First(&record, "id = ?", agent.ID).Error; err != nil {
-			return fmt.Errorf("load agent %s for tool migration: %w", agent.ID, err)
-		}
-		record.Definition = *agent
-		record.UpdatedAt = now
-		if err := s.db.Save(&record).Error; err != nil {
-			return fmt.Errorf("migrate agent %s tools: %w", agent.ID, err)
-		}
+		return tx.Create(&registrySeedMigrationRecord{ID: uncoverUIConfigSeedMigrationID, AppliedAt: now}).Error
+	}); err != nil {
+		return fmt.Errorf("apply registry seed migration %s: %w", uncoverUIConfigSeedMigrationID, err)
+	}
+	if updated != nil {
+		s.skills[index] = *updated
 	}
 	return nil
 }
@@ -531,7 +709,8 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 		return AgentDefinition{}, errors.New("agent not found")
 	}
 	internal := exists && s.agents[index].Internal
-	if !internal {
+	concierge := id == conciergeAgentID || strings.TrimSpace(input.Category) == "concierge"
+	if !internal && !concierge {
 		input.Tools = ensureRequiredAgentTools(input.Tools)
 	}
 	knowledgeBaseIDs, err := s.knowledgeBaseIDSet()
@@ -548,11 +727,15 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 		createdAt = s.agents[index].CreatedAt
 		builtin = s.agents[index].Builtin
 	}
+	tools := uniqueStrings(input.Tools)
+	if !concierge {
+		tools = ensureRequiredAgentTools(tools)
+	}
 	agent := AgentDefinition{
 		ID: id, Name: name, Description: strings.TrimSpace(input.Description), Avatar: strings.TrimSpace(input.Avatar),
 		Category: fallback(strings.TrimSpace(input.Category), "general"), Enabled: input.Enabled, Builtin: builtin, Internal: internal,
 		Model: input.Model, SystemPrompt: strings.TrimSpace(input.SystemPrompt), Memo: strings.TrimSpace(input.Memo),
-		Tools: ensureRequiredAgentTools(input.Tools), SkillIDs: uniqueStrings(input.SkillIDs), KnowledgeBaseIDs: uniqueStrings(input.KnowledgeBaseIDs), Permissions: input.Permissions,
+		Tools: tools, SkillIDs: uniqueStrings(input.SkillIDs), KnowledgeBaseIDs: uniqueStrings(input.KnowledgeBaseIDs), Permissions: input.Permissions,
 		CreatedAt: createdAt, UpdatedAt: now,
 	}
 	if internal {
@@ -1050,6 +1233,16 @@ func uniqueStrings(values []string) []string {
 		}
 		seen[value] = struct{}{}
 		result = append(result, value)
+	}
+	return result
+}
+
+func stringsWithout(values []string, excluded string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != excluded {
+			result = append(result, value)
+		}
 	}
 	return result
 }

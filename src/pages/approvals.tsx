@@ -33,14 +33,9 @@ const approvalLabels = {
 export function ApprovalsPage() {
   const { state, refresh } = useAppState()
   const [busy, setBusy] = React.useState<string | null>(null)
-  const visibleApprovals =
-    state?.approvals.filter(
-      (approval) => String(approval.status) !== "expired"
-    ) ?? []
-  const pending = visibleApprovals.filter(
-    (approval) => approval.status === "pending"
-  )
-  const history = visibleApprovals.filter(
+  const approvals = state?.approvals ?? []
+  const pending = approvals.filter((approval) => approval.status === "pending")
+  const history = approvals.filter(
     (approval) =>
       approval.status === "approved" || approval.status === "rejected"
   )

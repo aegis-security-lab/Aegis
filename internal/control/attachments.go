@@ -154,7 +154,8 @@ func (m *Manager) collectExecutionAttachments(issue Issue, executionID string) {
 		if json.Unmarshal([]byte(event.InputJSON), &input) != nil {
 			continue
 		}
-		path := firstString(input, "path", "filePath", "file_path")
+		path, _ := input["path"].(string)
+		path = strings.TrimSpace(path)
 		if path == "" || !autoPublishableAttachment(path) {
 			continue
 		}
@@ -169,15 +170,6 @@ func autoPublishableAttachment(path string) bool {
 	default:
 		return false
 	}
-}
-
-func firstString(values map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func (s *Store) captureAttachment(issue Issue, executionID string, input PublishAttachmentInput) (IssueAttachment, error) {
@@ -221,6 +213,50 @@ func (s *Store) captureAttachment(issue Issue, executionID string, input Publish
 		ID: id, IssueID: issue.ID, ExecutionID: executionID, Name: name,
 		Description: strings.TrimSpace(input.Description), SourcePath: relative,
 		StoragePath: storageRelative, MimeType: attachmentMimeType(name), Size: info.Size(), CreatedAt: time.Now(),
+	}
+	if err := s.db.Create(&attachment).Error; err != nil {
+		_ = os.RemoveAll(filepath.Dir(storageAbsolute))
+		return IssueAttachment{}, err
+	}
+	return attachment, nil
+}
+
+// captureGeneratedAttachment persists a control-plane generated artifact without
+// pretending that it came from the Issue workspace. sourcePath is a stable,
+// non-secret logical path used for idempotency within one Execution.
+func (s *Store) captureGeneratedAttachment(issue Issue, executionID, sourcePath, name, description string, data []byte) (IssueAttachment, error) {
+	executionID = strings.TrimSpace(executionID)
+	sourcePath = strings.TrimSpace(filepath.ToSlash(sourcePath))
+	name = filepath.Base(strings.TrimSpace(name))
+	if executionID == "" || sourcePath == "" {
+		return IssueAttachment{}, errors.New("execution id and generated attachment source are required")
+	}
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return IssueAttachment{}, errors.New("附件名称无效")
+	}
+	if len(data) > maxAttachmentSize {
+		return IssueAttachment{}, fmt.Errorf("附件不能超过 %d MB", maxAttachmentSize>>20)
+	}
+	var existing IssueAttachment
+	if err := s.db.Where("execution_id = ? AND source_path = ?", executionID, sourcePath).First(&existing).Error; err == nil {
+		return existing, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return IssueAttachment{}, err
+	}
+	id := nextID("attachment")
+	storageRelative := filepath.Join("artifacts", id, name)
+	storageAbsolute := filepath.Join(s.dataDir, storageRelative)
+	if err := os.MkdirAll(filepath.Dir(storageAbsolute), 0o700); err != nil {
+		return IssueAttachment{}, err
+	}
+	if err := os.WriteFile(storageAbsolute, data, 0o600); err != nil {
+		_ = os.RemoveAll(filepath.Dir(storageAbsolute))
+		return IssueAttachment{}, err
+	}
+	attachment := IssueAttachment{
+		ID: id, IssueID: issue.ID, ExecutionID: executionID, Name: name,
+		Description: strings.TrimSpace(description), SourcePath: sourcePath,
+		StoragePath: storageRelative, MimeType: attachmentMimeType(name), Size: int64(len(data)), CreatedAt: time.Now(),
 	}
 	if err := s.db.Create(&attachment).Error; err != nil {
 		_ = os.RemoveAll(filepath.Dir(storageAbsolute))

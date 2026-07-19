@@ -61,6 +61,9 @@ func TestStateAndSessionListsOmitHeavyExecutionContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.GetSession(execution.SessionID); err == nil {
+		t.Fatal("session detail must use the Aegis Execution ID")
+	}
 	if detail.Session.Execution.InitialPrompt != large || detail.Session.Execution.Result != large {
 		t.Fatal("session detail should preserve the complete execution snapshot")
 	}
@@ -94,7 +97,7 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 	}
 
 	var fullEvent ExecutionEvent
-	for index := 0; index < issueDetailEventLimit+25; index++ {
+	for index := 0; index < detailPageSize+25; index++ {
 		createdAt := time.Now().Add(time.Duration(index) * time.Millisecond)
 		event := ExecutionEvent{
 			ID:          fmt.Sprintf("event-%03d", index),
@@ -116,7 +119,7 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 		if err := s.db.Create(&event).Error; err != nil {
 			t.Fatal(err)
 		}
-		if index == issueDetailEventLimit+24 {
+		if index == detailPageSize+24 {
 			fullEvent = event
 		}
 	}
@@ -125,8 +128,8 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Events) != issueDetailEventLimit {
-		t.Fatalf("events=%d, want %d", len(detail.Events), issueDetailEventLimit)
+	if len(detail.Events) != detailPageSize || !detail.EventsPage.HasMore || detail.EventsPage.Total != int64(detailPageSize+25) {
+		t.Fatalf("unexpected initial event page: events=%d page=%+v", len(detail.Events), detail.EventsPage)
 	}
 	if len(detail.Messages) != 0 {
 		t.Fatalf("issue detail should not duplicate session messages, got %d", len(detail.Messages))
@@ -144,12 +147,97 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 	if !strings.Contains(latest.InputJSON, `"description":"生成最终证据报告供验收 Agent 核对。"`) {
 		t.Fatalf("event summary does not preserve the invocation description: %s", latest.InputJSON)
 	}
+	older, err := s.IssueEventsPage(issue.ID, detail.EventsPage.NextCursor, detailPageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(older.Items) != 25 || older.Page.HasMore || older.Items[len(older.Items)-1].ID != "event-000" {
+		t.Fatalf("unexpected older event page: items=%d page=%+v", len(older.Items), older.Page)
+	}
 	loaded, err := s.GetExecutionEvent(fullEvent.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.InputJSON != fullEvent.InputJSON || loaded.OutputJSON != fullEvent.OutputJSON {
 		t.Fatal("full event endpoint did not preserve the stored payload")
+	}
+}
+
+func TestDetailCursorPagesAndSessionDelta(t *testing.T) {
+	s := configuredStore(t)
+	issue, err := s.CreateIssue(CreateIssueInput{
+		Title: "Paginated activity", Objective: "Keep large histories bounded.", Priority: "medium", WorkMode: "guided",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := s.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Minute)
+	for index := 0; index < detailPageSize+25; index++ {
+		createdAt := base.Add(time.Duration(index) * time.Millisecond)
+		if err = s.db.Create(&IssueComment{
+			ID: fmt.Sprintf("comment-%03d", index), IssueID: issue.ID, AuthorType: "agent", AuthorID: "backend-engineer",
+			Body: fmt.Sprintf("comment %d", index), CreatedAt: createdAt,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err = s.db.Create(&Message{
+			ID: fmt.Sprintf("message-%03d", index), ExecutionID: execution.ID, IssueID: issue.ID, Role: "assistant",
+			Content: fmt.Sprintf("message %d", index), CreatedAt: createdAt, UpdatedAt: createdAt,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	detail, err := s.GetIssueDetail(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Comments) != detailPageSize || detail.Comments[0].ID != "comment-025" || detail.CommentsPage.Total != int64(detailPageSize+25) {
+		t.Fatalf("unexpected comment page: first=%q count=%d page=%+v", detail.Comments[0].ID, len(detail.Comments), detail.CommentsPage)
+	}
+	olderComments, err := s.IssueCommentsPage(issue.ID, detail.CommentsPage.NextCursor, detailPageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(olderComments.Items) != 25 || olderComments.Items[0].ID != "comment-000" || olderComments.Page.HasMore {
+		t.Fatalf("unexpected older comments: %+v", olderComments.Page)
+	}
+
+	session, err := s.GetSession(execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(session.Messages) != detailPageSize || session.Messages[0].ID != "message-025" || !session.MessagesPage.HasMore {
+		t.Fatalf("unexpected session message page: first=%q count=%d page=%+v", session.Messages[0].ID, len(session.Messages), session.MessagesPage)
+	}
+	newMessage := Message{
+		ID: "message-live", ExecutionID: execution.ID, IssueID: issue.ID, Role: "assistant",
+		Content: "streaming delta", Streaming: true, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err = s.db.Create(&newMessage).Error; err != nil {
+		t.Fatal(err)
+	}
+	newEvent := ExecutionEvent{
+		ID: "event-live", ExecutionID: execution.ID, IssueID: issue.ID, Type: "tool", ToolName: "bash",
+		InputJSON:  encodeEventPayload(map[string]any{"command": strings.Repeat("echo x;", 500)}),
+		OutputJSON: strings.Repeat("output", 20_000), CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err = s.db.Create(&newEvent).Error; err != nil {
+		t.Fatal(err)
+	}
+	delta, err := s.SessionDelta(execution.ID, session.Watermark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delta.Messages) != 1 || delta.Messages[0].ID != newMessage.ID || len(delta.Events) != 1 {
+		t.Fatalf("unexpected session delta: messages=%d events=%d", len(delta.Messages), len(delta.Events))
+	}
+	if delta.Events[0].OutputJSON != "" || len(delta.Events[0].InputJSON) >= len(newEvent.InputJSON) {
+		t.Fatal("session delta did not compact the event payload")
 	}
 }
 

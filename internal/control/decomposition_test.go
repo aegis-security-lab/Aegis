@@ -1,7 +1,6 @@
 package control
 
 import (
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -193,34 +192,6 @@ func TestChildIssuesSkipValidationWhenParentHasNoObjective(t *testing.T) {
 		if !child.ValidationDisabled {
 			t.Fatalf("child did not inherit no-validation policy: %+v", child)
 		}
-	}
-}
-
-func TestStoreNormalizesHistoricalIssueDepths(t *testing.T) {
-	s := configuredStore(t)
-	root, err := s.CreateIssue(CreateIssueInput{Title: "Root", Objective: "Complete root.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	child, err := s.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Child", Objective: "Complete child.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	grandchild, err := s.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Grandchild", Objective: "Complete grandchild.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.db.Model(&Issue{}).Where("id IN ?", []string{child.ID, grandchild.ID}).Update("request_depth", 0).Error; err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := NewStore(filepath.Clean(s.DataDir()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	child, _ = reopened.GetIssue(child.ID)
-	grandchild, _ = reopened.GetIssue(grandchild.ID)
-	if child.RequestDepth != 1 || grandchild.RequestDepth != 2 {
-		t.Fatalf("historical depths were not normalized: child=%d grandchild=%d", child.RequestDepth, grandchild.RequestDepth)
 	}
 }
 

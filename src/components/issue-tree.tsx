@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { Link } from "react-router-dom"
 import {
   CircleCheck,
@@ -12,12 +13,8 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
 import { Progress } from "@/components/ui/progress"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
@@ -110,6 +107,30 @@ export function IssueTree({
     () => summarizeTree(visibleIssues, executionMap),
     [executionMap, visibleIssues]
   )
+  const [expanded, setExpanded] = React.useState<Set<string>>(
+    () => new Set(roots.map((issue) => issue.id))
+  )
+  const rows = React.useMemo(() => {
+    const items: Array<{ issue: Issue; depth: number }> = []
+    const visit = (issue: Issue, depth: number) => {
+      items.push({ issue, depth })
+      if (!expanded.has(issue.id)) return
+      for (const child of childrenMap.get(issue.id) ?? []) {
+        visit(child, depth + 1)
+      }
+    }
+    for (const root of roots) visit(root, 0)
+    return items
+  }, [childrenMap, expanded, roots])
+  const viewportRef = React.useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => 92,
+    getItemKey: (index) => rows[index]?.issue.id ?? index,
+    overscan: 8,
+  })
 
   if (roots.length === 0) {
     return (
@@ -143,20 +164,48 @@ export function IssueTree({
           待执行 {summary.pending}
         </Badge>
       </div>
-      <div className="divide-y">
-        {roots.map((issue) => (
-          <TreeNode
-            key={issue.id}
-            issue={issue}
-            depth={0}
-            childrenMap={childrenMap}
-            issueMap={issueMap}
-            relations={relations}
-            agentMap={agentMap}
-            executionMap={executionMap}
-          />
-        ))}
-      </div>
+      <ScrollArea
+        viewportRef={viewportRef}
+        className="h-[min(680px,calc(100dvh-260px))] min-h-[360px]"
+      >
+        <div
+          className="relative"
+          style={{ height: virtualizer.getTotalSize() }}
+        >
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const row = rows[virtualItem.index]
+            if (!row) return null
+            return (
+              <div
+                key={virtualItem.key}
+                ref={virtualizer.measureElement}
+                data-index={virtualItem.index}
+                className="absolute top-0 left-0 w-full border-b"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+                <TreeNode
+                  issue={row.issue}
+                  depth={row.depth}
+                  childrenMap={childrenMap}
+                  issueMap={issueMap}
+                  relations={relations}
+                  agentMap={agentMap}
+                  executionMap={executionMap}
+                  open={expanded.has(row.issue.id)}
+                  onToggle={() =>
+                    setExpanded((current) => {
+                      const next = new Set(current)
+                      if (next.has(row.issue.id)) next.delete(row.issue.id)
+                      else next.add(row.issue.id)
+                      return next
+                    })
+                  }
+                />
+              </div>
+            )
+          })}
+        </div>
+      </ScrollArea>
     </div>
   )
 }
@@ -169,6 +218,8 @@ interface TreeNodeProps {
   relations: IssueRelation[]
   agentMap: Map<string, string>
   executionMap: Map<string, Execution>
+  open: boolean
+  onToggle: () => void
 }
 
 function TreeNode({
@@ -179,9 +230,10 @@ function TreeNode({
   relations,
   agentMap,
   executionMap,
+  open,
+  onToggle,
 }: TreeNodeProps) {
   const children = childrenMap.get(issue.id) ?? []
-  const [open, setOpen] = React.useState(depth < 2)
   const completed = children.filter((child) =>
     terminalStatuses.has(child.status)
   ).length
@@ -198,122 +250,96 @@ function TreeNode({
   const operationalState = issueOperationalState(issue, execution, blockers)
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div
-        className={cn(
-          "group flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-muted/35",
-          depth > 0 && "border-l border-border/70"
+    <div
+      className={cn(
+        "group flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-muted/35",
+        depth > 0 && "border-l border-border/70"
+      )}
+      style={{ paddingLeft: 16 + Math.min(depth, 4) * 20 }}
+    >
+      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center">
+        {children.length ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={open ? "折叠子 Issues" : "展开子 Issues"}
+            onClick={onToggle}
+          >
+            <ChevronDown
+              className={cn("transition-transform", !open && "-rotate-90")}
+            />
+          </Button>
+        ) : (
+          <CircleDotDashed className="size-3.5 text-muted-foreground/55" />
         )}
-        style={{ paddingLeft: 16 + Math.min(depth, 4) * 20 }}
-      >
-        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center">
-          {children.length ? (
-            <CollapsibleTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={open ? "折叠子 Issues" : "展开子 Issues"}
-                />
-              }
-            >
-              <ChevronDown
-                className={cn("transition-transform", !open && "-rotate-90")}
-              />
-            </CollapsibleTrigger>
-          ) : (
-            <CircleDotDashed className="size-3.5 text-muted-foreground/55" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <Link
+            to={`/issues/${issue.id}`}
+            className="min-w-0 flex-1 basis-48 truncate text-sm font-medium hover:underline"
+            title={issue.title}
+          >
+            {issue.title}
+          </Link>
+          <OperationalBadge state={operationalState} />
+          {issue.validationDisabled && issue.status !== "cancelled" && (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+              跳过验收
+            </Badge>
           )}
         </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <Link
-              to={`/issues/${issue.id}`}
-              className="min-w-0 flex-1 basis-48 truncate text-sm font-medium hover:underline"
-              title={issue.title}
-            >
-              {issue.title}
-            </Link>
-            <OperationalBadge state={operationalState} />
-            {issue.validationDisabled && issue.status !== "cancelled" && (
-              <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                跳过验收
-              </Badge>
-            )}
-          </div>
-
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span className="font-mono text-[11px]">{issue.identifier}</span>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span className="font-mono text-[11px]">{issue.identifier}</span>
+          <span>
+            {agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent"}
+          </span>
+          <span>深度 {issue.requestDepth}</span>
+          {children.length > 0 && (
             <span>
-              {agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent"}
+              {completed}/{children.length} 个直属子项完成
             </span>
-            <span>深度 {issue.requestDepth}</span>
-            {children.length > 0 && (
-              <span>
-                {completed}/{children.length} 个直属子项完成
-              </span>
-            )}
-            {blockers.length > 0 && (
-              <Tooltip>
-                <TooltipTrigger className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
-                  <LockKeyhole className="size-3" />
-                  {blockers.length} 个未完成依赖
-                </TooltipTrigger>
-                <TooltipContent>
-                  {blockers.map((blocker) => blocker.identifier).join("、")}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-          {operationalState.detail && (
+          )}
+          {blockers.length > 0 && (
             <Tooltip>
-              <TooltipTrigger className="mt-1.5 flex max-w-full items-center gap-1 text-xs text-destructive">
-                <TriangleAlert className="size-3 shrink-0" />
-                <span className="truncate">{operationalState.detail}</span>
+              <TooltipTrigger className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                <LockKeyhole className="size-3" />
+                {blockers.length} 个未完成依赖
               </TooltipTrigger>
-              <TooltipContent className="max-w-sm">
-                {operationalState.detail}
+              <TooltipContent>
+                {blockers.map((blocker) => blocker.identifier).join("、")}
               </TooltipContent>
             </Tooltip>
           )}
-          {children.length > 0 && (
-            <Progress
-              value={progress}
-              className="mt-2 max-w-xs"
-              aria-label="子 Issue 完成进度"
-            />
-          )}
         </div>
-
-        <Badge
-          variant="outline"
-          className="mt-0.5 hidden shrink-0 gap-1 sm:flex"
-        >
-          <GitBranch className="size-3" />
-          {children.length}
-        </Badge>
+        {operationalState.detail && (
+          <Tooltip>
+            <TooltipTrigger className="mt-1.5 flex max-w-full items-center gap-1 text-xs text-destructive">
+              <TriangleAlert className="size-3 shrink-0" />
+              <span className="truncate">{operationalState.detail}</span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm">
+              {operationalState.detail}
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {children.length > 0 && (
+          <Progress
+            value={progress}
+            className="mt-2 max-w-xs"
+            aria-label="子 Issue 完成进度"
+          />
+        )}
       </div>
 
-      {children.length > 0 && (
-        <CollapsibleContent>
-          <div className="border-t border-border/45 bg-muted/10">
-            {children.map((child) => (
-              <TreeNode
-                key={child.id}
-                issue={child}
-                depth={depth + 1}
-                childrenMap={childrenMap}
-                issueMap={issueMap}
-                relations={relations}
-                agentMap={agentMap}
-                executionMap={executionMap}
-              />
-            ))}
-          </div>
-        </CollapsibleContent>
-      )}
-    </Collapsible>
+      <Badge variant="outline" className="mt-0.5 hidden shrink-0 gap-1 sm:flex">
+        <GitBranch className="size-3" />
+        {children.length}
+      </Badge>
+    </div>
   )
 }
 

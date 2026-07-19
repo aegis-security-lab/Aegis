@@ -209,6 +209,24 @@ export interface Message {
   createdAt: string
   updatedAt: string
 }
+export interface ConciergeConversation {
+  id: string
+  title: string
+  executionId: string
+  status: "idle" | "running" | "disconnected" | "error"
+  lastMessage?: string
+  messageCount: number
+  createdTaskId?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface ConciergeConversationDetail {
+  conversation: ConciergeConversation
+  execution: Execution
+  messages: Message[]
+  messagesPage: PageInfo
+  watermark: string
+}
 export interface Approval {
   id: string
   executionId: string
@@ -302,6 +320,19 @@ export interface IssueDetail {
   decompositions: IssueDecomposition[]
   validations: IssueValidation[]
   broadcasts: TaskBroadcast[]
+  commentsPage: PageInfo
+  eventsPage: PageInfo
+  executionsPage: PageInfo
+  watermark: string
+}
+export interface PageInfo {
+  nextCursor?: string
+  hasMore: boolean
+  total: number
+}
+export interface CursorPage<T> {
+  items: T[]
+  page: PageInfo
 }
 export interface TaskCancellationResult {
   task: Issue
@@ -425,6 +456,17 @@ export interface SessionDetail {
   events: ExecutionEvent[]
   progressUpdates: ExecutionProgress[]
   approvals: Approval[]
+  messagesPage: PageInfo
+  eventsPage: PageInfo
+  progressPage: PageInfo
+  watermark: string
+}
+export interface SessionDelta {
+  execution: Execution
+  messages: Message[]
+  events: ExecutionEvent[]
+  progressUpdates: ExecutionProgress[]
+  watermark: string
 }
 export interface AppState {
   configured: boolean
@@ -497,4 +539,67 @@ export interface FindingList {
   total: number
   page: number
   pageSize: number
+}
+export interface UncoverEngine {
+  id: string
+  name: string
+  configured: boolean
+  anonymous: boolean
+  credentialFields: UncoverCredentialField[]
+  docsUrl: string
+  example: string
+}
+export interface UncoverCredentialField {
+  key: string
+  label: string
+  description: string
+  secret: boolean
+  configured: boolean
+  maskedValue?: string
+}
+export interface UncoverStatus {
+  engines: UncoverEngine[]
+  formats: Array<"txt" | "json" | "jsonl" | "csv">
+  textFields: Array<"ip:port" | "host:port" | "ip" | "host" | "port" | "url">
+}
+export interface SaveUncoverProviderInput {
+  values: Record<string, string>
+}
+export interface UncoverSearchInput {
+  engine: string
+  query: string
+  limit: number
+  format: "txt" | "json" | "jsonl" | "csv"
+  field: "ip:port" | "host:port" | "ip" | "host" | "port" | "url"
+  timeout: number
+}
+export interface UncoverAsset {
+  timestamp: number
+  source: string
+  ip: string
+  port: number
+  host: string
+  url: string
+}
+export interface UncoverExportInfo {
+  id: string
+  name: string
+  format: string
+  field?: string
+  mimeType: string
+  size: number
+  downloadUrl: string
+}
+export interface UncoverSearchResult {
+  id: string
+  engine: string
+  query: string
+  count: number
+  preview: UncoverAsset[]
+  previewLimited: boolean
+  warnings: string[]
+  export: UncoverExportInfo
+  attachment?: UncoverExportInfo
+  durationMs: number
+  createdAt: string
 }

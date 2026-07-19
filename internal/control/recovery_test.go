@@ -196,13 +196,6 @@ func TestRestartPersistsInterruptedExecutionForAutomaticRecovery(t *testing.T) {
 	if err = store.db.Create(&approval).Error; err != nil {
 		t.Fatal(err)
 	}
-	historicalExpired := Approval{
-		ID: nextID("approval"), ExecutionID: execution.ID, IssueID: issue.ID, Type: "tool_call",
-		Title: "Obsolete approval", Status: "expired", CreatedAt: time.Now(),
-	}
-	if err = store.db.Create(&historicalExpired).Error; err != nil {
-		t.Fatal(err)
-	}
 	store.startToolEvent(execution.ID, issue.ID, "call-running", "bash", map[string]any{"command": "go test ./..."})
 
 	reopened, err := NewStore(store.DataDir())
@@ -226,7 +219,7 @@ func TestRestartPersistsInterruptedExecutionForAutomaticRecovery(t *testing.T) {
 		t.Fatalf("streaming message was not safely closed: err=%v message=%+v", err, message)
 	}
 	var removedApprovalCount int64
-	if err = reopened.db.Model(&Approval{}).Where("id IN ?", []string{approval.ID, historicalExpired.ID}).Count(&removedApprovalCount).Error; err != nil || removedApprovalCount != 0 {
+	if err = reopened.db.Model(&Approval{}).Where("id = ?", approval.ID).Count(&removedApprovalCount).Error; err != nil || removedApprovalCount != 0 {
 		t.Fatalf("invalid approvals were not removed: err=%v count=%d", err, removedApprovalCount)
 	}
 	var toolEvent ExecutionEvent

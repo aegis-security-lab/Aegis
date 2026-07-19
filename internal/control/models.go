@@ -94,6 +94,7 @@ type Issue struct {
 	Result                string     `json:"result,omitempty"`
 	Error                 string     `json:"error,omitempty"`
 	ObjectiveAbandoned    bool       `json:"objectiveAbandoned" gorm:"index"`
+	Hidden                bool       `json:"-" gorm:"index"`
 	AbandonmentReason     string     `json:"abandonmentReason,omitempty" gorm:"type:text"`
 	AbandonRequestedAt    *time.Time `json:"abandonRequestedAt,omitempty"`
 	AbandonedAt           *time.Time `json:"abandonedAt,omitempty"`
@@ -103,6 +104,40 @@ type Issue struct {
 	CancelledAt           *time.Time `json:"cancelledAt,omitempty"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	UpdatedAt             time.Time  `json:"updatedAt"`
+}
+
+// ConciergeConversation is a user-facing, persistent chat with the built-in
+// concierge Agent. IssueID points at an internal hidden Issue used only to
+// reuse the durable Pi execution/session machinery without polluting Tasks.
+type ConciergeConversation struct {
+	ID            string    `json:"id" gorm:"primaryKey"`
+	Title         string    `json:"title"`
+	IssueID       string    `json:"-" gorm:"uniqueIndex"`
+	ExecutionID   string    `json:"executionId" gorm:"uniqueIndex"`
+	Status        string    `json:"status" gorm:"index"`
+	LastMessage   string    `json:"lastMessage,omitempty" gorm:"type:text"`
+	MessageCount  int       `json:"messageCount"`
+	CreatedTaskID string    `json:"createdTaskId,omitempty" gorm:"index"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt" gorm:"index"`
+}
+
+type ConciergeConversationDetail struct {
+	Conversation ConciergeConversation `json:"conversation"`
+	Execution    Execution             `json:"execution"`
+	Messages     []Message             `json:"messages"`
+	MessagesPage PageInfo              `json:"messagesPage"`
+	Watermark    time.Time             `json:"watermark"`
+}
+
+type CreateConciergeTaskInput struct {
+	Title           string `json:"title"`
+	Description     string `json:"taskDescription"`
+	Objective       string `json:"objective"`
+	Priority        string `json:"priority"`
+	WorkMode        string `json:"workMode"`
+	AssigneeAgentID string `json:"agentId"`
+	Workspace       string `json:"workspace"`
 }
 
 // IssueRelation keeps dependency edges independent from the parent/child hierarchy.
@@ -117,7 +152,7 @@ type IssueRelation struct {
 
 type Execution struct {
 	ID               string         `json:"id" gorm:"primaryKey"`
-	IssueID          string         `json:"issueId" gorm:"index"`
+	IssueID          string         `json:"issueId" gorm:"index;index:idx_executions_issue_started,priority:1"`
 	AgentID          string         `json:"agentId" gorm:"index"`
 	Kind             string         `json:"kind"`
 	Status           string         `json:"status" gorm:"index"`
@@ -142,7 +177,7 @@ type Execution struct {
 	CacheReadTokens  int64          `json:"cacheReadTokens"`
 	CacheWriteTokens int64          `json:"cacheWriteTokens"`
 	MessageCount     int            `json:"messageCount"`
-	StartedAt        time.Time      `json:"startedAt"`
+	StartedAt        time.Time      `json:"startedAt" gorm:"index:idx_executions_issue_started,priority:2"`
 	UpdatedAt        time.Time      `json:"updatedAt"`
 	FinishedAt       *time.Time     `json:"finishedAt,omitempty"`
 }
@@ -187,8 +222,8 @@ type ToolParameterSnapshot struct {
 
 type ExecutionEvent struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
-	ExecutionID string    `json:"executionId" gorm:"index"`
-	IssueID     string    `json:"issueId,omitempty" gorm:"index"`
+	ExecutionID string    `json:"executionId" gorm:"index;index:idx_events_execution_created,priority:1;index:idx_events_execution_updated,priority:1"`
+	IssueID     string    `json:"issueId,omitempty" gorm:"index;index:idx_events_issue_created,priority:1"`
 	Type        string    `json:"type"`
 	Title       string    `json:"title"`
 	Detail      string    `json:"detail"`
@@ -198,8 +233,8 @@ type ExecutionEvent struct {
 	InputJSON   string    `json:"inputJson,omitempty" gorm:"type:text"`
 	OutputJSON  string    `json:"outputJson,omitempty" gorm:"type:text"`
 	IsError     bool      `json:"isError,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	CreatedAt   time.Time `json:"createdAt" gorm:"index:idx_events_execution_created,priority:2;index:idx_events_issue_created,priority:2"`
+	UpdatedAt   time.Time `json:"updatedAt" gorm:"index:idx_events_execution_updated,priority:2"`
 }
 
 // ExecutionProgress is an immutable, Agent-authored milestone within one Pi
@@ -207,12 +242,12 @@ type ExecutionEvent struct {
 // present a concise work log without interpreting provider-specific payloads.
 type ExecutionProgress struct {
 	ID              string    `json:"id" gorm:"primaryKey"`
-	ExecutionID     string    `json:"executionId" gorm:"index"`
+	ExecutionID     string    `json:"executionId" gorm:"index;index:idx_progress_execution_created,priority:1"`
 	IssueID         string    `json:"issueId" gorm:"index"`
 	Stage           string    `json:"stage"`
 	Summary         string    `json:"summary" gorm:"type:text"`
 	CurrentActivity string    `json:"currentActivity" gorm:"type:text"`
-	CreatedAt       time.Time `json:"createdAt"`
+	CreatedAt       time.Time `json:"createdAt" gorm:"index:idx_progress_execution_created,priority:2"`
 }
 
 // TaskBroadcast is a durable peer-to-peer coordination message scoped to one
@@ -237,13 +272,13 @@ type TaskBroadcast struct {
 
 type Message struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
-	ExecutionID string    `json:"executionId" gorm:"index"`
+	ExecutionID string    `json:"executionId" gorm:"index;index:idx_messages_execution_created,priority:1;index:idx_messages_execution_updated,priority:1"`
 	IssueID     string    `json:"issueId,omitempty" gorm:"index"`
 	Role        string    `json:"role"`
 	Content     string    `json:"content" gorm:"type:text"`
 	Streaming   bool      `json:"streaming"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	CreatedAt   time.Time `json:"createdAt" gorm:"index:idx_messages_execution_created,priority:2"`
+	UpdatedAt   time.Time `json:"updatedAt" gorm:"index:idx_messages_execution_updated,priority:2"`
 }
 type Approval struct {
 	ID          string     `json:"id" gorm:"primaryKey"`
@@ -259,13 +294,13 @@ type Approval struct {
 }
 type IssueComment struct {
 	ID          string            `json:"id" gorm:"primaryKey"`
-	IssueID     string            `json:"issueId" gorm:"index"`
+	IssueID     string            `json:"issueId" gorm:"index;index:idx_comments_issue_created,priority:1"`
 	AuthorType  string            `json:"authorType"`
 	AuthorID    string            `json:"authorId"`
 	Body        string            `json:"body" gorm:"type:text"`
 	Mentions    []string          `json:"mentions" gorm:"serializer:json;type:text"`
 	Attachments []IssueAttachment `json:"attachments" gorm:"-"`
-	CreatedAt   time.Time         `json:"createdAt"`
+	CreatedAt   time.Time         `json:"createdAt" gorm:"index:idx_comments_issue_created,priority:2"`
 }
 
 type IssueAttachment struct {
@@ -477,6 +512,10 @@ type IssueDetail struct {
 	Decompositions []IssueDecomposition `json:"decompositions"`
 	Validations    []IssueValidation    `json:"validations"`
 	Broadcasts     []TaskBroadcast      `json:"broadcasts"`
+	CommentsPage   PageInfo             `json:"commentsPage"`
+	EventsPage     PageInfo             `json:"eventsPage"`
+	ExecutionsPage PageInfo             `json:"executionsPage"`
+	Watermark      time.Time            `json:"watermark"`
 }
 type SessionSummary struct {
 	Execution       Execution `json:"execution"`
@@ -490,6 +529,49 @@ type SessionDetail struct {
 	Events          []ExecutionEvent    `json:"events"`
 	ProgressUpdates []ExecutionProgress `json:"progressUpdates"`
 	Approvals       []Approval          `json:"approvals"`
+	MessagesPage    PageInfo            `json:"messagesPage"`
+	EventsPage      PageInfo            `json:"eventsPage"`
+	ProgressPage    PageInfo            `json:"progressPage"`
+	Watermark       time.Time           `json:"watermark"`
+}
+
+type PageInfo struct {
+	NextCursor string `json:"nextCursor,omitempty"`
+	HasMore    bool   `json:"hasMore"`
+	Total      int64  `json:"total"`
+}
+
+type IssueCommentPage struct {
+	Items []IssueComment `json:"items"`
+	Page  PageInfo       `json:"page"`
+}
+
+type ExecutionEventPage struct {
+	Items []ExecutionEvent `json:"items"`
+	Page  PageInfo         `json:"page"`
+}
+
+type ExecutionPage struct {
+	Items []Execution `json:"items"`
+	Page  PageInfo    `json:"page"`
+}
+
+type MessagePage struct {
+	Items []Message `json:"items"`
+	Page  PageInfo  `json:"page"`
+}
+
+type ExecutionProgressPage struct {
+	Items []ExecutionProgress `json:"items"`
+	Page  PageInfo            `json:"page"`
+}
+
+type SessionDelta struct {
+	Execution       Execution           `json:"execution"`
+	Messages        []Message           `json:"messages"`
+	Events          []ExecutionEvent    `json:"events"`
+	ProgressUpdates []ExecutionProgress `json:"progressUpdates"`
+	Watermark       time.Time           `json:"watermark"`
 }
 type StateView struct {
 	Configured     bool              `json:"configured"`

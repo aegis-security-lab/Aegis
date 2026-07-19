@@ -176,6 +176,99 @@ const createSubissuesTool = defineTool({
   },
 })
 
+const createTaskTool = defineTool({
+  name: "aegis_create_task",
+  label: "Create Aegis task",
+  description:
+    "Create one real top-level Aegis Task from the current concierge conversation and hand it to the scheduler. Use only when the user clearly asks Aegis to execute work; never use it for questions, discussion, or ambiguous wishes.",
+  promptSnippet:
+    "Create a real scheduled Aegis Task for an explicit user request",
+  promptGuidelines: [
+    "Ask a concise clarification before calling when a missing decision would materially change the requested work.",
+    "Leave objective empty when the user did not define a verifiable target; Aegis will then skip acceptance validation.",
+    "Leave agentId empty unless one enabled specialist is clearly appropriate, so the scheduler can choose.",
+    "Never claim creation succeeded unless this tool returns a Task identifier.",
+  ],
+  parameters: Type.Object({
+    title: Type.String({
+      description: "Concrete Task title, at most 120 characters",
+      maxLength: 120,
+    }),
+    taskDescription: Type.String({
+      description:
+        "Execution context, requested scope, constraints, and deliverables",
+      maxLength: 30000,
+    }),
+    objective: Type.Optional(
+      Type.String({
+        description:
+          "Verifiable target for acceptance; omit or use an empty string when the user did not provide one",
+        maxLength: 20000,
+      })
+    ),
+    priority: Type.Union([
+      Type.Literal("critical"),
+      Type.Literal("high"),
+      Type.Literal("medium"),
+      Type.Literal("low"),
+    ]),
+    workMode: Type.Union([Type.Literal("autonomous"), Type.Literal("guided")]),
+    agentId: Type.Optional(
+      Type.String({
+        description:
+          "Enabled specialist Agent id; omit or use an empty string to let the scheduler choose",
+      })
+    ),
+    workspace: Type.Optional(
+      Type.String({
+        description:
+          "Optional task workspace; omit to use the global workspace",
+      })
+    ),
+  }),
+  async execute(_toolCallId, params, signal) {
+    const controlURL = process.env.AEGIS_CONTROL_URL
+    const executionID = process.env.AEGIS_EXECUTION_ID
+    const token = process.env.AEGIS_CONTROL_TOKEN
+    if (!controlURL || !executionID || !token) {
+      throw new Error("Aegis concierge control context is unavailable")
+    }
+    const response = await fetch(
+      `${controlURL.replace(/\/$/, "")}/api/internal/executions/${encodeURIComponent(executionID)}/concierge/tasks`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params),
+        signal,
+      }
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string
+      id?: string
+      identifier?: string
+      title?: string
+      assigneeAgentId?: string
+    }
+    if (!response.ok) {
+      throw new Error(
+        payload.error || `Aegis control API returned HTTP ${response.status}`
+      )
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Created Task ${payload.identifier ?? payload.id ?? ""}: ${payload.title ?? params.title}. It is now in the Aegis scheduler.${payload.id ? ` Open /tasks/${payload.id}` : ""}`,
+        },
+      ],
+      details: payload,
+    }
+  },
+})
+
 const publishAttachmentTool = defineTool({
   name: "aegis_publish_attachment",
   label: "Publish attachment",
@@ -569,6 +662,150 @@ async function validationAttachmentRequest(path: string, signal: AbortSignal) {
   return payload
 }
 
+const uncoverSearchTool = defineTool({
+  name: "aegis_uncover_search",
+  label: "Search cyberspace engines",
+  description:
+    "Run one authorized, passive search against a selected cyberspace engine through ProjectDiscovery uncover. The query is passed through unchanged and must use that engine's native syntax. Returns a normalized preview and publishes the complete export as an Issue attachment.",
+  promptSnippet:
+    "Search one configured cyberspace engine with its native query language",
+  promptGuidelines: [
+    "Confirm that the requested organization, domain, IP, or CIDR is within the authorized scope before searching.",
+    "Use the uncover-cyberspace-search Skill to choose one engine and construct only that engine's native query syntax.",
+    "Keep the result limit proportional to the objective, and treat indexed exposure as a lead rather than proof of a vulnerability.",
+    "Use the returned attachment as the complete result set; do not repeat every asset in the final response.",
+  ],
+  parameters: Type.Object({
+    engine: Type.Union([
+      Type.Literal("shodan"),
+      Type.Literal("censys"),
+      Type.Literal("fofa"),
+      Type.Literal("shodan-idb"),
+      Type.Literal("quake"),
+      Type.Literal("hunter"),
+      Type.Literal("zoomeye"),
+      Type.Literal("netlas"),
+      Type.Literal("criminalip"),
+      Type.Literal("publicwww"),
+      Type.Literal("hunterhow"),
+      Type.Literal("google"),
+      Type.Literal("odin"),
+      Type.Literal("binaryedge"),
+      Type.Literal("onyphe"),
+      Type.Literal("driftnet"),
+      Type.Literal("greynoise"),
+      Type.Literal("daydaymap"),
+      Type.Literal("nerdydata"),
+    ]),
+    query: Type.String({
+      description:
+        "Native query syntax for the selected engine, passed through unchanged",
+      minLength: 1,
+      maxLength: 10000,
+    }),
+    limit: Type.Optional(
+      Type.Integer({
+        description: "Maximum number of deduplicated results; defaults to 100",
+        minimum: 1,
+        maximum: 1000,
+      })
+    ),
+    format: Type.Optional(
+      Type.Union([
+        Type.Literal("txt"),
+        Type.Literal("json"),
+        Type.Literal("jsonl"),
+        Type.Literal("csv"),
+      ])
+    ),
+    field: Type.Optional(
+      Type.Union([
+        Type.Literal("ip:port"),
+        Type.Literal("host:port"),
+        Type.Literal("ip"),
+        Type.Literal("host"),
+        Type.Literal("port"),
+        Type.Literal("url"),
+      ])
+    ),
+    timeout: Type.Optional(
+      Type.Integer({
+        description: "Search timeout in seconds; defaults to 30",
+        minimum: 5,
+        maximum: 120,
+      })
+    ),
+  }),
+  async execute(_toolCallId, params, signal) {
+    const controlURL = process.env.AEGIS_CONTROL_URL
+    const executionID = process.env.AEGIS_EXECUTION_ID
+    const token = process.env.AEGIS_CONTROL_TOKEN
+    if (!controlURL || !executionID || !token) {
+      throw new Error("Aegis execution control context is unavailable")
+    }
+    const response = await fetch(
+      `${controlURL.replace(/\/$/, "")}/api/internal/executions/${encodeURIComponent(executionID)}/uncover`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params),
+        signal,
+      }
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string
+      engine?: string
+      query?: string
+      count?: number
+      preview?: Array<{
+        ip?: string
+        port?: number
+        host?: string
+        url?: string
+      }>
+      previewLimited?: boolean
+      warnings?: string[]
+      durationMs?: number
+      attachment?: {
+        id: string
+        name: string
+        mimeType: string
+        size: number
+        downloadUrl: string
+      }
+    }
+    if (!response.ok) {
+      throw new Error(
+        payload.error || `Aegis control API returned HTTP ${response.status}`
+      )
+    }
+    const preview = payload.preview ?? []
+    const previewText = preview
+      .slice(0, 20)
+      .map((asset) => {
+        const endpoint = asset.url || asset.host || asset.ip || "unknown"
+        return `- ${endpoint}${asset.port ? `:${asset.port}` : ""}`
+      })
+      .join("\n")
+    const attachment = payload.attachment
+    const warningText = (payload.warnings ?? []).length
+      ? `\nWarnings:\n${(payload.warnings ?? []).map((item) => `- ${item}`).join("\n")}`
+      : ""
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${payload.engine ?? params.engine} returned ${payload.count ?? 0} deduplicated assets in ${payload.durationMs ?? 0} ms.${attachment ? ` Complete ${attachment.mimeType} export: ${attachment.name} (${attachment.size} bytes) at ${attachment.downloadUrl}` : ""}${previewText ? `\n\nPreview${payload.previewLimited ? " (truncated)" : ""}:\n${previewText}` : ""}${warningText}`,
+        },
+      ],
+      details: payload,
+    }
+  },
+})
+
 const searchKnowledgeTool = defineTool({
   name: "aegis_search_knowledge",
   label: "Search knowledge",
@@ -832,7 +1069,7 @@ function pathEscapesWorkspace(input: Record<string, unknown>) {
   if (!workspace || process.env.AEGIS_WORKSPACE_SCOPE !== "run_workspace") {
     return false
   }
-  const candidate = input.path ?? input.filePath ?? input.file_path
+	const candidate = input.path
   if (typeof candidate !== "string" || candidate.trim() === "") return false
   const resolved = path.resolve(workspace, candidate)
   const relative = path.relative(workspace, resolved)
@@ -855,6 +1092,7 @@ export default function aegisGuard(pi: ExtensionAPI) {
     registerDescribedTool(pi, listValidationAttachmentsTool)
     registerDescribedTool(pi, readValidationAttachmentTool)
   } else if (process.env.AEGIS_RETRIEVAL_MODE !== "1") {
+    registerDescribedTool(pi, createTaskTool)
     registerDescribedTool(pi, createSubissuesTool)
     registerDescribedTool(pi, publishAttachmentTool)
     registerDescribedTool(pi, reportProgressTool)
@@ -863,6 +1101,7 @@ export default function aegisGuard(pi: ExtensionAPI) {
     registerDescribedTool(pi, getMemoTool)
     registerDescribedTool(pi, updateMemoTool)
     registerDescribedTool(pi, requestReworkTool)
+    registerDescribedTool(pi, uncoverSearchTool)
     if (process.env.AEGIS_KNOWLEDGE_BASE_IDS) {
       registerDescribedTool(pi, searchKnowledgeTool)
     }
@@ -900,6 +1139,13 @@ export default function aegisGuard(pi: ExtensionAPI) {
           "Agent permission boundary: workspace writes are disabled"
         )
       }
+    }
+
+    if (
+      event.toolName === "aegis_uncover_search" &&
+      process.env.AEGIS_ALLOW_NETWORK === "false"
+    ) {
+      return denied("Agent permission boundary: network access is disabled")
     }
 
     if (

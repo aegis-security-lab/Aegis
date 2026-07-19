@@ -2,11 +2,16 @@ import type {
   AgentDefinition,
   AppState,
   Approval,
+  ConciergeConversation,
+  ConciergeConversationDetail,
   ConnectionTestResult,
   CreateIssueInput,
+  CursorPage,
+  Execution,
   Finding,
   FindingList,
   ExecutionEvent,
+  ExecutionProgress,
   Issue,
   IssueComment,
   IssueDetail,
@@ -16,10 +21,16 @@ import type {
   Message,
   RuntimeProbe,
   SaveConfigInput,
+  SaveUncoverProviderInput,
   SessionDetail,
+  SessionDelta,
   SkillDefinition,
   TaskCancellationResult,
   TaskTimeline,
+  UncoverEngine,
+  UncoverSearchInput,
+  UncoverSearchResult,
+  UncoverStatus,
 } from "@/types"
 export type SaveAgentInput = Omit<
   AgentDefinition,
@@ -52,6 +63,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 export const fetchState = () => request<AppState>("/api/state")
+export const fetchConciergeConversations = () =>
+  request<{ conversations: ConciergeConversation[] }>(
+    "/api/concierge/conversations"
+  )
+export const createConciergeConversation = () =>
+  request<ConciergeConversation>("/api/concierge/conversations", {
+    method: "POST",
+  })
+export const fetchConciergeConversation = (id: string) =>
+  request<ConciergeConversationDetail>(
+    `/api/concierge/conversations/${encodeURIComponent(id)}`
+  )
+export const deleteConciergeConversation = (id: string) =>
+  request<void>(`/api/concierge/conversations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
+export const sendConciergeMessage = (id: string, message: string) =>
+  request<Message>(
+    `/api/concierge/conversations/${encodeURIComponent(id)}/messages`,
+    { method: "POST", body: JSON.stringify({ message }) }
+  )
 export const probeRuntime = (nodePath: string, piPath: string) =>
   request<RuntimeProbe>("/api/setup/probe", {
     method: "POST",
@@ -74,6 +106,23 @@ export const saveSettings = (input: SaveConfigInput) =>
   })
 export const fetchIssue = (id: string) =>
   request<IssueDetail>(`/api/issues/${encodeURIComponent(id)}`)
+const pageQuery = (before?: string, limit = 50) => {
+  const query = new URLSearchParams({ limit: String(limit) })
+  if (before) query.set("before", before)
+  return query.toString()
+}
+export const fetchIssueComments = (id: string, before?: string, limit = 50) =>
+  request<CursorPage<IssueComment>>(
+    `/api/issues/${encodeURIComponent(id)}/comments?${pageQuery(before, limit)}`
+  )
+export const fetchIssueEvents = (id: string, before?: string, limit = 50) =>
+  request<CursorPage<ExecutionEvent>>(
+    `/api/issues/${encodeURIComponent(id)}/events?${pageQuery(before, limit)}`
+  )
+export const fetchIssueExecutions = (id: string, before?: string, limit = 50) =>
+  request<CursorPage<Execution>>(
+    `/api/issues/${encodeURIComponent(id)}/executions?${pageQuery(before, limit)}`
+  )
 export const fetchExecutionEvent = (id: string) =>
   request<ExecutionEvent>(`/api/execution-events/${encodeURIComponent(id)}`)
 export const createIssue = (input: CreateIssueInput) =>
@@ -126,6 +175,22 @@ export const stopExecution = (id: string) =>
   })
 export const fetchSessionDetail = (id: string) =>
   request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`)
+export const fetchSessionMessages = (id: string, before?: string, limit = 50) =>
+  request<CursorPage<Message>>(
+    `/api/sessions/${encodeURIComponent(id)}/messages?${pageQuery(before, limit)}`
+  )
+export const fetchSessionEvents = (id: string, before?: string, limit = 50) =>
+  request<CursorPage<ExecutionEvent>>(
+    `/api/sessions/${encodeURIComponent(id)}/events?${pageQuery(before, limit)}`
+  )
+export const fetchSessionProgress = (id: string, before?: string, limit = 50) =>
+  request<CursorPage<ExecutionProgress>>(
+    `/api/sessions/${encodeURIComponent(id)}/progress?${pageQuery(before, limit)}`
+  )
+export const fetchSessionDelta = (id: string, since: string) =>
+  request<SessionDelta>(
+    `/api/sessions/${encodeURIComponent(id)}/delta?since=${encodeURIComponent(since)}`
+  )
 export const createAgent = (input: SaveAgentInput) =>
   request<AgentDefinition>("/api/agents", {
     method: "POST",
@@ -139,9 +204,7 @@ export const updateAgent = (id: string, input: SaveAgentInput) =>
 export const deleteAgent = (id: string) =>
   request<void>(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" })
 export const fetchKnowledgeBase = (id: string) =>
-  request<KnowledgeBaseDetail>(
-    `/api/knowledge-bases/${encodeURIComponent(id)}`
-  )
+  request<KnowledgeBaseDetail>(`/api/knowledge-bases/${encodeURIComponent(id)}`)
 export const createKnowledgeBase = (input: SaveKnowledgeBaseInput) =>
   request<KnowledgeBase>("/api/knowledge-bases", {
     method: "POST",
@@ -227,6 +290,26 @@ export const fetchFindings = (params?: {
 export const updateFinding = (id: string, input: Partial<Finding>) =>
   request<Finding>(`/api/findings/${encodeURIComponent(id)}`, {
     method: "PATCH",
+    body: JSON.stringify(input),
+  })
+export const fetchUncoverStatus = () =>
+  request<UncoverStatus>("/api/tools/uncover/status")
+export const saveUncoverProvider = (
+  engine: string,
+  input: SaveUncoverProviderInput
+) =>
+  request<UncoverEngine>(
+    `/api/tools/uncover/providers/${encodeURIComponent(engine)}`,
+    { method: "PUT", body: JSON.stringify(input) }
+  )
+export const deleteUncoverProvider = (engine: string) =>
+  request<void>(
+    `/api/tools/uncover/providers/${encodeURIComponent(engine)}`,
+    { method: "DELETE" }
+  )
+export const searchUncover = (input: UncoverSearchInput) =>
+  request<UncoverSearchResult>("/api/tools/uncover/search", {
+    method: "POST",
     body: JSON.stringify(input),
   })
 export async function exportSkill(id: string) {

@@ -105,7 +105,7 @@ func TestCommentWakeupWithoutObjectiveDoesNotStartValidation(t *testing.T) {
 	}
 }
 
-func TestDispatchWakeupReusesExistingLiveSession(t *testing.T) {
+func TestDispatchWakeupReusesLatestAgentSession(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Continue review", Objective: "Finish the review.", Priority: "medium", WorkMode: "guided", AssigneeAgentID: "backend-engineer",
@@ -113,13 +113,12 @@ func TestDispatchWakeupReusesExistingLiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution, err := store.createExecution(issue, "backend-engineer", "work")
+	_, err = store.createExecution(issue, "backend-engineer", "work")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Simulate a legacy wakeup execution created by the old behavior. Future
-	// comments must still return to the original worker conversation.
-	if _, err = store.createExecution(issue, "backend-engineer", "wakeup"); err != nil {
+	execution, err := store.createExecution(issue, "backend-engineer", "wakeup")
+	if err != nil {
 		t.Fatal(err)
 	}
 	comment := IssueComment{ID: nextID("comment"), IssueID: issue.ID, AuthorType: "operator", AuthorID: "operator", Body: "Please continue in context.", CreatedAt: time.Now()}

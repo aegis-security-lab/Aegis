@@ -40,6 +40,9 @@ func TestIssueTitleLengthLimit(t *testing.T) {
 	if _, err = s.UpdateIssue(issue.ID, UpdateIssueInput{Title: &tooLong}); err == nil {
 		t.Fatal("update should reject an Issue title over the limit")
 	}
+	if _, err = s.GetIssue(issue.Identifier); err == nil {
+		t.Fatal("Issue lookup must use the immutable Aegis ID")
+	}
 }
 
 func TestIssueHierarchyRelationsAndCheckout(t *testing.T) {
@@ -496,6 +499,37 @@ func TestDefaultRegistry(t *testing.T) {
 		if a.SystemPrompt == "" || len(a.Tools) == 0 || len(a.SkillIDs) == 0 {
 			t.Fatalf("incomplete agent %s", id)
 		}
+	}
+}
+
+func TestRegistryRestartDoesNotRewritePersistedDefinitions(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record agentRecord
+	if err = store.db.First(&record, "id = ?", "backend-engineer").Error; err != nil {
+		t.Fatal(err)
+	}
+	record.Definition.SystemPrompt = "Use the current operator-owned backend contract."
+	record.Definition.Tools = []string{"read"}
+	if err = store.db.Save(&record).Error; err != nil {
+		t.Fatal(err)
+	}
+	database, _ := store.db.DB()
+	_ = database.Close()
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := reopened.GetAgent("backend-engineer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.SystemPrompt != record.Definition.SystemPrompt || !slices.Equal(agent.Tools, record.Definition.Tools) {
+		t.Fatalf("restart rewrote persisted Agent definition: %+v", agent)
 	}
 }
 

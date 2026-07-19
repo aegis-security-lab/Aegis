@@ -44,6 +44,8 @@ type PiSession struct {
 	cmd                                                              *exec.Cmd
 	stdin                                                            io.WriteCloser
 	writeMu                                                          sync.Mutex
+	responseMu                                                       sync.Mutex
+	responseError                                                    string
 	currentMessageID                                                 string
 	busy                                                             atomic.Bool
 	closed                                                           atomic.Bool
@@ -207,12 +209,14 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	}
 	systemPrompt := agentKnowledgeSystemPrompt(agent.SystemPrompt, knowledgeBases)
 	systemPrompt = agentToolDescriptionSystemPrompt(systemPrompt)
-	if e.Kind != "validation" {
+	if e.Kind != "validation" && e.Kind != "concierge" {
 		systemPrompt = agentProgressSystemPrompt(systemPrompt)
 		systemPrompt = agentBroadcastSystemPrompt(systemPrompt)
 	}
-	prompt = agentPermissionInitialPrompt(prompt, issue.Workspace, agent.Permissions)
-	if e.InitialPrompt == "" {
+	if e.Kind != "concierge" {
+		prompt = agentPermissionInitialPrompt(prompt, issue.Workspace, agent.Permissions)
+	}
+	if e.InitialPrompt == "" && e.Kind != "concierge" {
 		prompt = agentMemoInitialPrompt(prompt, agent.Memo)
 	}
 	args := []string{"--mode", "rpc", "--provider", cfg.Provider, "--model", cfg.Model, "--thinking", cfg.Thinking, "--session-dir", filepath.Join(m.store.DataDir(), "sessions"), "--session-id", e.SessionID, "--name", issue.Identifier + " · " + agent.Name, "--no-extensions", "--no-approve", "--no-skills", "--system-prompt", systemPrompt}
@@ -448,6 +452,21 @@ func (m *Manager) handleRPCLine(s *PiSession, line []byte) {
 		if a, ok := event["assistantMessageEvent"].(map[string]any); ok && a["type"] == "text_delta" {
 			m.appendAssistantDelta(s, stringValue(a["delta"]))
 		}
+	case "message_end":
+		message, _ := event["message"].(map[string]any)
+		if stringValue(message["role"]) == "assistant" {
+			if stringValue(message["stopReason"]) == "error" {
+				s.setResponseError(stringValue(message["errorMessage"]))
+			} else {
+				s.setResponseError("")
+			}
+		}
+	case "auto_retry_end":
+		if success, _ := event["success"].(bool); success {
+			s.setResponseError("")
+		} else if finalError := stringValue(event["finalError"]); finalError != "" {
+			s.setResponseError(finalError)
+		}
 	case "tool_execution_start":
 		tool := stringValue(event["toolName"])
 		m.checkpointExecution(s.executionID, fmt.Sprintf("正在调用 %s：%s", tool, compactJSON(event["args"], 1000)), map[string]any{"status": "running", "current_tool": tool})
@@ -500,9 +519,64 @@ func (m *Manager) appendAssistantDelta(s *PiSession, delta string) {
 		s.currentMessageID = nextID("message")
 		_ = m.store.db.Create(&Message{ID: s.currentMessageID, ExecutionID: s.executionID, IssueID: s.issueID, Role: "assistant", Streaming: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}).Error
 		_ = m.store.db.Model(&Execution{}).Where("id = ?", s.executionID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
+		if s.kind == "concierge" {
+			m.store.incrementConciergeMessages(s.executionID)
+		}
 	}
 	_ = m.store.db.Model(&Message{}).Where("id = ?", s.currentMessageID).Updates(map[string]any{"content": gorm.Expr("content || ?", delta), "updated_at": time.Now()}).Error
 	m.store.notify()
+}
+
+func (s *PiSession) setResponseError(message string) {
+	s.responseMu.Lock()
+	s.responseError = strings.TrimSpace(message)
+	s.responseMu.Unlock()
+}
+
+func (s *PiSession) takeResponseError() string {
+	s.responseMu.Lock()
+	defer s.responseMu.Unlock()
+	message := s.responseError
+	s.responseError = ""
+	return message
+}
+
+func visibleModelError(message string) string {
+	message = strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
+	if message == "" {
+		message = "模型服务未返回可用结果"
+	}
+	return truncate(message, 1000)
+}
+
+func (m *Manager) visibleModelError(message string) string {
+	message = visibleModelError(message)
+	if apiKey := strings.TrimSpace(m.store.Config().APIKey); apiKey != "" {
+		message = strings.ReplaceAll(message, apiKey, "[REDACTED]")
+	}
+	return message
+}
+
+func (m *Manager) persistAssistantError(s *PiSession, rawError string) string {
+	errorMessage := m.visibleModelError(rawError)
+	actor := "Agent"
+	if s.kind == "concierge" {
+		actor = "管家"
+	}
+	content := fmt.Sprintf("**%s 暂时无法响应。**\n\n模型服务返回错误：`%s`\n\n请稍后重试，或前往设置页测试当前模型连接。", actor, strings.ReplaceAll(errorMessage, "`", "'"))
+	now := time.Now()
+	message := Message{
+		ID: nextID("message"), ExecutionID: s.executionID, IssueID: s.issueID,
+		Role: "assistant", Content: content, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := m.store.db.Create(&message).Error; err == nil {
+		_ = m.store.db.Model(&Execution{}).Where("id = ?", s.executionID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
+		if s.kind == "concierge" {
+			m.store.incrementConciergeMessages(s.executionID)
+		}
+	}
+	m.store.addEvent(s.executionID, s.issueID, "error", "模型服务未能完成响应", errorMessage)
+	return content
 }
 
 func (m *Manager) handleApproval(s *PiSession, event map[string]any) {
@@ -581,6 +655,36 @@ func (m *Manager) handleSettled(s *PiSession) {
 	}
 	result := m.latestAssistant(s.executionID)
 	now := time.Now()
+	if responseError := s.takeResponseError(); responseError != "" {
+		result = m.persistAssistantError(s, responseError)
+		if s.kind == "concierge" {
+			_ = m.store.updateExecution(s.executionID, map[string]any{
+				"status": "idle", "result": result, "error": m.visibleModelError(responseError),
+				"current_tool": "", "finished_at": nil,
+			})
+			_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+				"status": "done", "execution_phase": "completed", "result": result,
+				"error": m.visibleModelError(responseError), "updated_at": now,
+			}).Error
+			m.store.touchConciergeConversation(s.executionID, "error", result)
+			m.store.notify()
+			return
+		}
+		m.failExecution(issue, execution, errors.New(m.visibleModelError(responseError)))
+		return
+	}
+	if s.kind == "concierge" {
+		_ = m.store.updateExecution(s.executionID, map[string]any{
+			"status": "idle", "result": result, "error": "", "current_tool": "", "finished_at": nil,
+		})
+		_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+			"status": "done", "execution_phase": "completed", "result": result,
+			"updated_at": now,
+		}).Error
+		m.store.touchConciergeConversation(s.executionID, "idle", result)
+		m.store.notify()
+		return
+	}
 	if s.kind == "validation" {
 		m.handleValidationSettled(issue, s, result)
 		return
@@ -1249,6 +1353,13 @@ func (m *Manager) sessionExited(s *PiSession, waitErr error) {
 		message = waitErr.Error()
 	}
 	now := time.Now()
+	if s.kind == "concierge" {
+		_ = m.store.updateExecution(s.executionID, map[string]any{"status": "disconnected", "error": message, "finished_at": now, "pid": 0})
+		_ = m.store.db.Model(&Issue{}).Where("id = ?", s.issueID).Updates(map[string]any{"status": "done", "execution_phase": "completed", "updated_at": now}).Error
+		m.store.touchConciergeConversation(s.executionID, "disconnected", "")
+		m.store.notify()
+		return
+	}
 	_ = m.store.updateExecution(s.executionID, map[string]any{"status": "disconnected", "error": message, "finished_at": now, "pid": 0})
 	_ = m.store.db.Where("execution_id = ? AND status = ? AND type = ?", s.executionID, "pending", "tool_call").Delete(&Approval{}).Error
 	_ = m.store.db.Model(&Issue{}).Where("id = ? AND checkout_execution_id = ?", s.issueID, s.executionID).Updates(map[string]any{"status": "blocked", "execution_phase": "blocked", "error": message, "checkout_execution_id": "", "updated_at": now}).Error
@@ -1340,7 +1451,101 @@ func (m *Manager) SendChat(issueID, executionID, message string) (Message, error
 	return m.sendSessionPrompt(s, message)
 }
 
+func (m *Manager) CreateConciergeConversation() (ConciergeConversation, error) {
+	return m.store.CreateConciergeConversation()
+}
+
+func (m *Manager) DeleteConciergeConversation(id string) error {
+	detail, err := m.store.GetConciergeConversation(id)
+	if err != nil {
+		return err
+	}
+	if session := m.getSession(detail.Execution.ID); session != nil {
+		session.Close()
+		m.mu.Lock()
+		if m.sessions[detail.Execution.ID] == session {
+			delete(m.sessions, detail.Execution.ID)
+		}
+		m.mu.Unlock()
+	}
+	return m.store.deleteConciergeConversation(id)
+}
+
+func (m *Manager) SendConciergeMessage(conversationID, message string) (Message, error) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return Message{}, errors.New("消息不能为空")
+	}
+	if utf8.RuneCountInString(message) > 50000 {
+		return Message{}, errors.New("消息不能超过 50000 个字符")
+	}
+	detail, err := m.store.GetConciergeConversation(conversationID)
+	if err != nil {
+		return Message{}, err
+	}
+	agent, err := m.store.GetAgent(conciergeAgentID)
+	if err != nil || !agent.Enabled {
+		return Message{}, errors.New("管家 Agent 当前不可用")
+	}
+	issue, err := m.store.GetIssue(detail.Conversation.IssueID)
+	if err != nil {
+		return Message{}, err
+	}
+	m.store.titleConciergeConversation(detail.Execution.ID, message)
+	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "in_progress", "execution_phase": "active", "error": "", "updated_at": time.Now(),
+	}).Error
+	m.store.touchConciergeConversation(detail.Execution.ID, "running", message)
+
+	var sent Message
+	if session := m.getSession(detail.Execution.ID); session != nil {
+		sent, err = m.sendSessionPrompt(session, message)
+	} else {
+		_ = m.store.updateExecution(detail.Execution.ID, map[string]any{
+			"status": "starting", "error": "", "finished_at": nil,
+		})
+		if _, err = m.startSession(issue, detail.Execution, agent, message); err == nil {
+			err = m.store.db.Where("execution_id = ? AND role = ?", detail.Execution.ID, "user").Order("created_at desc, id desc").First(&sent).Error
+		}
+	}
+	if err != nil {
+		m.store.touchConciergeConversation(detail.Execution.ID, "error", "")
+		return Message{}, err
+	}
+	m.store.incrementConciergeMessages(detail.Execution.ID)
+	m.store.notify()
+	return sent, nil
+}
+
+// CreateTaskFromConcierge is reachable only from the authenticated concierge
+// Pi extension tool. It creates a real top-level Issue and hands it to the
+// existing scheduler.
+func (m *Manager) CreateTaskFromConcierge(executionID, token string, input CreateConciergeTaskInput) (Issue, error) {
+	session := m.getSession(executionID)
+	if session == nil || session.kind != "concierge" || session.agentID != conciergeAgentID || token == "" || len(token) != len(session.controlToken) || subtle.ConstantTimeCompare([]byte(token), []byte(session.controlToken)) != 1 {
+		return Issue{}, errors.New("invalid concierge execution control token")
+	}
+	if err := validateConciergeTaskInput(input); err != nil {
+		return Issue{}, err
+	}
+	priority := fallback(strings.TrimSpace(input.Priority), "medium")
+	workMode := fallback(strings.TrimSpace(input.WorkMode), "autonomous")
+	issue, err := m.CreateIssue(CreateIssueInput{
+		Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description),
+		Objective: strings.TrimSpace(input.Objective), Priority: priority, Status: "todo",
+		WorkMode: workMode, AssigneeAgentID: strings.TrimSpace(input.AssigneeAgentID),
+		Workspace: strings.TrimSpace(input.Workspace), Context: "由管家 Agent 根据用户对话创建。",
+	})
+	if err != nil {
+		return Issue{}, err
+	}
+	m.store.recordConciergeTask(executionID, issue)
+	m.store.addEvent(executionID, session.issueID, "task_created", "管家已创建任务", issue.Identifier+" · "+issue.Title)
+	return issue, nil
+}
+
 func (m *Manager) sendSessionPrompt(s *PiSession, message string) (Message, error) {
+	s.setResponseError("")
 	msg := Message{ID: nextID("message"), ExecutionID: s.executionID, IssueID: s.issueID, Role: "user", Content: message, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := m.store.db.Create(&msg).Error; err != nil {
 		return Message{}, err
@@ -1522,7 +1727,7 @@ func (m *Manager) dispatchWakeup(id string) {
 	}
 	var e Execution
 	err = m.store.db.Where("issue_id = ? AND agent_id = ? AND session_id <> ''", issue.ID, agent.ID).
-		Order("CASE WHEN kind = 'wakeup' THEN 1 ELSE 0 END, started_at desc").First(&e).Error
+		Order("started_at desc").First(&e).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		e, err = m.store.createExecution(issue, agent.ID, "wakeup")
 	}
@@ -1885,20 +2090,32 @@ func (s *Store) sessionSummariesLocked(executions []Execution, issues []Issue) [
 	return out
 }
 func (s *Store) GetSession(id string) (SessionDetail, error) {
-	var e Execution
-	if err := s.db.Where("id = ? OR session_id = ?", id, id).First(&e).Error; err != nil {
-		return SessionDetail{}, errors.New("session not found")
+	e, err := s.sessionExecution(id)
+	if err != nil {
+		return SessionDetail{}, err
 	}
 	issue, _ := s.GetIssue(e.IssueID)
 	agentName := e.AgentID
 	if a, err := s.GetAgent(e.AgentID); err == nil {
 		agentName = a.Name
 	}
-	d := SessionDetail{Session: SessionSummary{Execution: e, IssueIdentifier: issue.Identifier, IssueTitle: issue.Title, AgentName: agentName}, Messages: []Message{}, Events: []ExecutionEvent{}, ProgressUpdates: []ExecutionProgress{}, Approvals: []Approval{}}
-	s.db.Where("execution_id = ?", e.ID).Order("created_at asc").Find(&d.Messages)
-	s.db.Where("execution_id = ?", e.ID).Order("created_at desc").Find(&d.Events)
-	s.db.Where("execution_id = ?", e.ID).Order("created_at asc").Find(&d.ProgressUpdates)
-	s.db.Where("execution_id = ? AND status <> ?", e.ID, "expired").Order("created_at desc").Find(&d.Approvals)
+	d := SessionDetail{Session: SessionSummary{Execution: e, IssueIdentifier: issue.Identifier, IssueTitle: issue.Title, AgentName: agentName}, Messages: []Message{}, Events: []ExecutionEvent{}, ProgressUpdates: []ExecutionProgress{}, Approvals: []Approval{}, Watermark: time.Now()}
+	messages, err := s.SessionMessagesPage(e.ID, "", detailPageSize)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	d.Messages, d.MessagesPage = messages.Items, messages.Page
+	events, err := s.SessionEventsPage(e.ID, "", detailPageSize)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	d.Events, d.EventsPage = events.Items, events.Page
+	progress, err := s.SessionProgressPage(e.ID, "", detailPageSize)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	d.ProgressUpdates, d.ProgressPage = progress.Items, progress.Page
+	s.db.Where("execution_id = ?", e.ID).Order("created_at desc").Find(&d.Approvals)
 	return d, nil
 }
 
@@ -2117,6 +2334,7 @@ func (m *Manager) TestConnection(ctx context.Context, input SaveConfigInput) Con
 	_, _ = stdin.Write(append(data, '\n'))
 	reader := bufio.NewReader(stdout)
 	var reply strings.Builder
+	responseError := ""
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
@@ -2131,8 +2349,31 @@ func (m *Manager) TestConnection(ctx context.Context, input SaveConfigInput) Con
 				reply.WriteString(stringValue(d["delta"]))
 			}
 		}
+		if event["type"] == "message_end" {
+			if message, ok := event["message"].(map[string]any); ok && stringValue(message["role"]) == "assistant" {
+				if stringValue(message["stopReason"]) == "error" {
+					responseError = stringValue(message["errorMessage"])
+				} else {
+					responseError = ""
+				}
+			}
+		}
+		if event["type"] == "auto_retry_end" {
+			if success, _ := event["success"].(bool); success {
+				responseError = ""
+			} else if finalError := stringValue(event["finalError"]); finalError != "" {
+				responseError = finalError
+			}
+		}
 		if event["type"] == "agent_settled" {
-			return testResult(started, strings.TrimSpace(reply.String()), nil)
+			value := strings.TrimSpace(reply.String())
+			if responseError != "" {
+				return testResult(started, value, errors.New(m.visibleModelError(responseError)))
+			}
+			if value == "" {
+				return testResult(started, value, errors.New("模型服务未返回可用文本"))
+			}
+			return testResult(started, value, nil)
 		}
 	}
 }

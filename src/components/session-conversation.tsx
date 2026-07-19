@@ -1,8 +1,11 @@
+import * as React from "react"
 import { Bot, MessageSquareText, UserRound } from "lucide-react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 
 import { MarkdownContent } from "@/components/markdown-content"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
+import { Button } from "@/components/ui/button"
 import {
   Empty,
   EmptyDescription,
@@ -26,6 +29,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
+import { Spinner } from "@/components/ui/spinner"
 import { formatTime } from "@/lib/format"
 import type { Message as SessionMessage } from "@/types"
 
@@ -34,12 +38,49 @@ export function SessionConversation({
   agentName,
   issueIdentifier,
   initialPrompt,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: {
   messages: SessionMessage[]
   agentName: string
   issueIdentifier: string
   initialPrompt: string
+  hasMore?: boolean
+  loadingMore?: boolean
+  onLoadMore?: () => void
 }) {
+  const initialPromptMessageId = initialPrompt
+    ? messages.find(
+        (message) =>
+          message.role === "user" && message.content === initialPrompt
+      )?.id
+    : undefined
+  const isStreaming = messages.some((message) => message.streaming)
+  const viewportRef = React.useRef<HTMLDivElement>(null)
+  const count = messages.length + 1 + (hasMore ? 1 : 0)
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: (index) => {
+      if (hasMore && index === 0) return 52
+      const messageIndex = index - (hasMore ? 1 : 0) - 1
+      if (messageIndex < 0) return 48
+      const contentLength = messages[messageIndex]?.content.length ?? 0
+      return Math.min(900, 120 + Math.ceil(contentLength / 5))
+    },
+    getItemKey: (index) => {
+      if (hasMore && index === 0) return "load-more-messages"
+      const messageIndex = index - (hasMore ? 1 : 0) - 1
+      return messageIndex < 0
+        ? "session-start"
+        : (messages[messageIndex]?.id ?? index)
+    },
+    overscan: 4,
+    initialOffset: 1_000_000_000,
+  })
+
   if (messages.length === 0) {
     return (
       <Empty className="h-full border-0">
@@ -56,52 +97,77 @@ export function SessionConversation({
     )
   }
 
-  const initialPromptMessageId = initialPrompt
-    ? messages.find(
-        (message) =>
-          message.role === "user" && message.content === initialPrompt
-      )?.id
-    : undefined
-  const isStreaming = messages.some((message) => message.streaming)
-
   return (
     <MessageScrollerProvider
       defaultScrollPosition="last-anchor"
       autoScroll={isStreaming}
     >
       <MessageScroller>
-        <MessageScrollerViewport aria-label={`${agentName} Session 对话记录`}>
-          <MessageScrollerContent className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-8">
-            <MessageScrollerItem messageId="session-start">
-              <Marker variant="separator">
-                <MarkerIcon>
-                  <MessageSquareText />
-                </MarkerIcon>
-                <MarkerContent>{issueIdentifier} · Session 开始</MarkerContent>
-              </Marker>
-            </MessageScrollerItem>
-            {messages.map((message) => (
-              <MessageScrollerItem
-                key={message.id}
-                messageId={message.id}
-                scrollAnchor={message.role === "user"}
-              >
-                {message.role === "system" ? (
-                  <Marker variant="border">
-                    <MarkerIcon>
-                      <Bot />
-                    </MarkerIcon>
-                    <MarkerContent>{message.content}</MarkerContent>
-                  </Marker>
-                ) : (
-                  <ConversationMessage
-                    message={message}
-                    agentName={agentName}
-                    isInitialPrompt={message.id === initialPromptMessageId}
-                  />
-                )}
-              </MessageScrollerItem>
-            ))}
+        <MessageScrollerViewport
+          ref={viewportRef}
+          aria-label={`${agentName} Session 对话记录`}
+        >
+          <MessageScrollerContent
+            className="relative mx-auto block w-full max-w-4xl px-4 py-6 sm:px-8"
+            style={{ height: virtualizer.getTotalSize() + 48 }}
+          >
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const startOffset = hasMore ? 1 : 0
+              const messageIndex = virtualItem.index - startOffset - 1
+              const message = messages[messageIndex]
+              return (
+                <MessageScrollerItem
+                  key={virtualItem.key}
+                  ref={virtualizer.measureElement}
+                  data-index={virtualItem.index}
+                  messageId={message?.id ?? String(virtualItem.key)}
+                  scrollAnchor={message?.role === "user"}
+                  className="absolute top-0 left-4 w-[calc(100%-2rem)] pb-6 sm:left-8 sm:w-[calc(100%-4rem)]"
+                  style={{
+                    transform: `translateY(${virtualItem.start + 24}px)`,
+                  }}
+                >
+                  {hasMore && virtualItem.index === 0 ? (
+                    <div className="flex justify-center">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={loadingMore}
+                        onClick={onLoadMore}
+                      >
+                        {loadingMore ? (
+                          <Spinner data-icon="inline-start" />
+                        ) : null}
+                        加载更早消息
+                      </Button>
+                    </div>
+                  ) : messageIndex < 0 ? (
+                    <Marker variant="separator">
+                      <MarkerIcon>
+                        <MessageSquareText />
+                      </MarkerIcon>
+                      <MarkerContent>
+                        {issueIdentifier} · Session 开始
+                      </MarkerContent>
+                    </Marker>
+                  ) : message?.role === "system" ? (
+                    <Marker variant="border">
+                      <MarkerIcon>
+                        <Bot />
+                      </MarkerIcon>
+                      <MarkerContent>{message.content}</MarkerContent>
+                    </Marker>
+                  ) : message ? (
+                    <ConversationMessage
+                      message={message}
+                      agentName={agentName}
+                      isInitialPrompt={message.id === initialPromptMessageId}
+                    />
+                  ) : null}
+                </MessageScrollerItem>
+              )
+            })}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton />

@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   CheckCircle2,
   ChevronRight,
@@ -17,6 +18,7 @@ import { Link } from "react-router-dom"
 import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -36,6 +38,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { formatTime } from "@/lib/format"
 import { fetchExecutionEvent } from "@/lib/api"
@@ -58,9 +61,17 @@ type EventIconName =
 export function ExecutionEvents({
   events,
   issues = [],
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
+  className,
 }: {
   events: ExecutionEvent[]
   issues?: Issue[]
+  hasMore?: boolean
+  loadingMore?: boolean
+  onLoadMore?: () => void
+  className?: string
 }) {
   const items = React.useMemo(
     () => [...events].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -79,11 +90,79 @@ export function ExecutionEvents({
     )
   }
   return (
-    <div className="flex flex-col gap-2">
-      {items.map((event) => (
-        <EventCard key={event.id} event={event} issues={issues} />
-      ))}
-    </div>
+    <VirtualExecutionEvents
+      items={items}
+      issues={issues}
+      hasMore={hasMore}
+      loadingMore={loadingMore}
+      onLoadMore={onLoadMore}
+      className={className}
+    />
+  )
+}
+
+function VirtualExecutionEvents({
+  items,
+  issues,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+  className,
+}: {
+  items: ExecutionEvent[]
+  issues: Issue[]
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore?: () => void
+  className?: string
+}) {
+  const viewportRef = React.useRef<HTMLDivElement>(null)
+  const count = items.length + (hasMore ? 1 : 0)
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: (index) => (index < items.length ? 68 : 48),
+    getItemKey: (index) => items[index]?.id ?? "load-more-events",
+    overscan: 8,
+  })
+  return (
+    <ScrollArea
+      viewportRef={viewportRef}
+      className={cn("h-[520px] pr-3 sm:h-[560px]", className)}
+    >
+      <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const event = items[virtualItem.index]
+          return (
+            <div
+              key={virtualItem.key}
+              ref={virtualizer.measureElement}
+              data-index={virtualItem.index}
+              className="absolute top-0 left-0 w-full pb-2"
+              style={{ transform: `translateY(${virtualItem.start}px)` }}
+            >
+              {event ? (
+                <EventCard event={event} issues={issues} />
+              ) : (
+                <div className="flex justify-center py-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loadingMore}
+                    onClick={onLoadMore}
+                  >
+                    {loadingMore ? <Spinner data-icon="inline-start" /> : null}
+                    加载更早事件
+                  </Button>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </ScrollArea>
   )
 }
 
@@ -270,6 +349,12 @@ function summarizeTool(tool: ToolData) {
         icon: "info" as const,
       }
     }
+    case "aegis_uncover_search":
+      return {
+        title: `空间搜索 · ${stringValue(tool.input.engine) || "引擎"}`,
+        meta: `${stringValue(tool.input.format) || "jsonl"} · 上限 ${stringValue(tool.input.limit) || "100"}`,
+        icon: "search" as const,
+      }
     case "grep":
       return {
         title: `搜索 · ${stringValue(tool.input.pattern) || "内容"}`,
@@ -355,9 +440,90 @@ function ToolDetails({ tool, issues }: { tool: ToolData; issues: Issue[] }) {
       return <BroadcastDetails tool={tool} />
     case "aegis_list_broadcasts":
       return <BroadcastHistoryDetails tool={tool} />
+    case "aegis_uncover_search":
+      return <UncoverSearchDetails tool={tool} />
     default:
       return <JSONSection label="结果" value={tool.output} />
   }
+}
+
+function UncoverSearchDetails({ tool }: { tool: ToolData }) {
+  const details = asRecord(tool.output.details)
+  const attachment = asRecord(details.attachment)
+  const preview = asArray(details.preview).map(asRecord)
+  const warnings = asArray(details.warnings).map(stringValue).filter(Boolean)
+  return (
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex flex-wrap gap-2">
+        <Badge variant="secondary">
+          {stringValue(details.engine || tool.input.engine) || "uncover"}
+        </Badge>
+        <Badge variant="outline">{stringValue(details.count) || "0"} 条</Badge>
+        {stringValue(details.durationMs) ? (
+          <Badge variant="outline">{stringValue(details.durationMs)} ms</Badge>
+        ) : null}
+      </div>
+      <CodeSection
+        label="原生查询语法"
+        value={stringValue(details.query || tool.input.query)}
+        maxVisibleLines={8}
+      />
+      {attachment.id ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">
+              {stringValue(attachment.name) || "搜索结果"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {stringValue(attachment.mimeType)} ·{" "}
+              {stringValue(attachment.size)} bytes
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            nativeButton={false}
+            render={
+              <a
+                href={stringValue(attachment.downloadUrl)}
+                download
+                aria-label="下载网络空间搜索结果"
+              />
+            }
+          >
+            下载附件
+          </Button>
+        </div>
+      ) : null}
+      {preview.length > 0 ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium text-muted-foreground">结果预览</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {preview.slice(0, 12).map((asset, index) => (
+              <div
+                key={`${stringValue(asset.ip)}-${stringValue(asset.port)}-${index}`}
+                className="min-w-0 rounded-lg border px-3 py-2"
+              >
+                <p className="truncate font-mono text-xs">
+                  {stringValue(asset.url || asset.host || asset.ip) ||
+                    "未知资产"}
+                  {asset.port ? `:${stringValue(asset.port)}` : ""}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {warnings.length > 0 ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-5 whitespace-pre-wrap text-amber-800 dark:text-amber-300">
+          {warnings.join("\n")}
+        </div>
+      ) : null}
+      {tool.isError ? (
+        <CodeSection label="搜索错误" value={toolOutput(tool)} />
+      ) : null}
+    </div>
+  )
 }
 
 function BroadcastDetails({ tool }: { tool: ToolData }) {

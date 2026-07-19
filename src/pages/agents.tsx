@@ -11,6 +11,7 @@ import {
   Server,
   Shield,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Wrench,
 } from "lucide-react"
@@ -92,6 +93,7 @@ const allTools = [
   "bash",
   "edit",
   "write",
+  "aegis_create_task",
   "aegis_create_subissues",
   "aegis_publish_attachment",
   "aegis_report_progress",
@@ -100,6 +102,7 @@ const allTools = [
   "aegis_get_memo",
   "aegis_update_memo",
   "aegis_request_rework",
+  "aegis_uncover_search",
 ]
 const requiredAgentTools = new Set([
   "aegis_create_subissues",
@@ -118,6 +121,7 @@ const categoryLabels: Record<string, string> = {
   frontend: "前端",
   security: "安全",
   knowledge: "检索",
+  concierge: "管家",
   general: "通用",
 }
 
@@ -191,7 +195,8 @@ export function AgentsPage() {
                   skills.find((skill) => skill.id === id)?.displayName ?? id
               )}
               knowledgeBaseNames={agent.knowledgeBaseIds.map(
-                (id) => knowledgeBases.find((item) => item.id === id)?.name ?? id
+                (id) =>
+                  knowledgeBases.find((item) => item.id === id)?.name ?? id
               )}
               globalProvider={state?.config.provider ?? "—"}
               globalModel={state?.config.model ?? "—"}
@@ -256,7 +261,9 @@ function AgentCard({
         </div>
         <CardAction className="flex items-center gap-2">
           {agent.builtin ? <Badge variant="outline">内置</Badge> : null}
-          {agent.internal ? <Badge variant="secondary">系统 Agent</Badge> : null}
+          {agent.internal ? (
+            <Badge variant="secondary">系统 Agent</Badge>
+          ) : null}
           <Badge variant={agent.enabled ? "default" : "secondary"}>
             {agent.enabled ? "启用" : "停用"}
           </Badge>
@@ -399,7 +406,7 @@ function AgentDialog({
   }
 
   const toggleTool = (tool: string, checked: boolean) => {
-    if (requiredAgentTools.has(tool)) return
+    if (form.category !== "concierge" && requiredAgentTools.has(tool)) return
     set(
       "tools",
       checked
@@ -488,6 +495,7 @@ function AgentDialog({
                       <SelectContent>
                         <SelectGroup>
                           <SelectItem value="general">通用</SelectItem>
+                          <SelectItem value="concierge">管家</SelectItem>
                           <SelectItem value="orchestrator">调度</SelectItem>
                           <SelectItem value="backend">后端</SelectItem>
                           <SelectItem value="frontend">前端</SelectItem>
@@ -684,7 +692,8 @@ function AgentDialog({
                   <CardHeader>
                     <CardTitle>受保护的只读能力</CardTitle>
                     <CardDescription>
-                      这个系统 Agent 只接收检索服务传入的候选文档片段，实际运行时使用
+                      这个系统 Agent
+                      只接收检索服务传入的候选文档片段，实际运行时使用
                       --no-tools，不能访问文件系统、Shell、网络或写入任何内容。
                     </CardDescription>
                   </CardHeader>
@@ -697,129 +706,138 @@ function AgentDialog({
                   </CardContent>
                 </Card>
               ) : (
-              <FieldGroup>
-                <FieldSet>
-                  <FieldLegend>工具集</FieldLegend>
-                  <FieldDescription>
-                    每个 Agent 保存独立工具数组；Issue 拆分是所有 Agent
-                    必备的控制面能力。
-                  </FieldDescription>
-                  <div
-                    data-slot="checkbox-group"
-                    className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
-                  >
-                    {allTools.map((tool) => (
-                      <Field
-                        key={tool}
-                        orientation="horizontal"
-                        data-disabled={
-                          requiredAgentTools.has(tool) || undefined
-                        }
-                        className="rounded-lg border p-3"
-                      >
-                        <Checkbox
-                          id={`agent-tool-${tool}`}
-                          checked={
-                            requiredAgentTools.has(tool) ||
-                            form.tools.includes(tool)
+                <FieldGroup>
+                  <FieldSet>
+                    <FieldLegend>工具集</FieldLegend>
+                    <FieldDescription>
+                      每个 Agent 保存独立工具数组；Issue 拆分是所有 Agent
+                      必备的控制面能力。
+                    </FieldDescription>
+                    <div
+                      data-slot="checkbox-group"
+                      className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
+                    >
+                      {allTools.map((tool) => (
+                        <Field
+                          key={tool}
+                          orientation="horizontal"
+                          data-disabled={
+                            (form.category !== "concierge" &&
+                              requiredAgentTools.has(tool)) ||
+                            undefined
                           }
-                          disabled={requiredAgentTools.has(tool)}
-                          onCheckedChange={(checked) =>
-                            toggleTool(tool, checked)
-                          }
-                        />
-                        <FieldLabel
-                          htmlFor={`agent-tool-${tool}`}
-                          className="font-mono font-normal"
+                          className="rounded-lg border p-3"
                         >
-                          {tool}
-                          {requiredAgentTools.has(tool) ? "（必备）" : ""}
-                        </FieldLabel>
-                      </Field>
-                    ))}
-                  </div>
-                </FieldSet>
-                <FieldSet>
-                  <FieldLegend>Skills / 方法</FieldLegend>
-                  <FieldDescription>
-                    选中的 SKILL.md 会在创建这个 Agent 的 Pi session
-                    时显式加载。
-                  </FieldDescription>
-                  <div
-                    data-slot="checkbox-group"
-                    className="grid gap-2 sm:grid-cols-2"
-                  >
-                    {skills.map((skill) => (
-                      <Field
-                        key={skill.id}
-                        orientation="horizontal"
-                        className="rounded-lg border p-3"
-                      >
-                        <Checkbox
-                          id={`agent-skill-${skill.id}`}
-                          checked={form.skillIds.includes(skill.id)}
-                          onCheckedChange={(checked) =>
-                            toggleSkill(skill.id, checked)
-                          }
-                        />
-                        <FieldLabel
-                          htmlFor={`agent-skill-${skill.id}`}
-                          className="font-normal"
-                        >
-                          <span>{skill.displayName}</span>
-                          <FieldDescription>
-                            {skill.description}
-                          </FieldDescription>
-                        </FieldLabel>
-                      </Field>
-                    ))}
-                  </div>
-                </FieldSet>
-                <FieldSet>
-                  <FieldLegend>关联知识库</FieldLegend>
-                  <FieldDescription>
-                    关联后会把知识库介绍注入系统提示词，并自动为这个 Agent
-                    增加只读的 aegis_search_knowledge 工具。
-                  </FieldDescription>
-                  {knowledgeBases.length === 0 ? (
-                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                      暂无知识库，请先在知识库页面创建并添加 Markdown 文档。
+                          <Checkbox
+                            id={`agent-tool-${tool}`}
+                            checked={
+                              (form.category !== "concierge" &&
+                                requiredAgentTools.has(tool)) ||
+                              form.tools.includes(tool)
+                            }
+                            disabled={
+                              form.category !== "concierge" &&
+                              requiredAgentTools.has(tool)
+                            }
+                            onCheckedChange={(checked) =>
+                              toggleTool(tool, checked)
+                            }
+                          />
+                          <FieldLabel
+                            htmlFor={`agent-tool-${tool}`}
+                            className="font-mono font-normal"
+                          >
+                            {tool}
+                            {form.category !== "concierge" &&
+                            requiredAgentTools.has(tool)
+                              ? "（必备）"
+                              : ""}
+                          </FieldLabel>
+                        </Field>
+                      ))}
                     </div>
-                  ) : (
+                  </FieldSet>
+                  <FieldSet>
+                    <FieldLegend>Skills / 方法</FieldLegend>
+                    <FieldDescription>
+                      选中的 SKILL.md 会在创建这个 Agent 的 Pi session
+                      时显式加载。
+                    </FieldDescription>
                     <div
                       data-slot="checkbox-group"
                       className="grid gap-2 sm:grid-cols-2"
                     >
-                      {knowledgeBases.map((knowledgeBase) => (
+                      {skills.map((skill) => (
                         <Field
-                          key={knowledgeBase.id}
+                          key={skill.id}
                           orientation="horizontal"
                           className="rounded-lg border p-3"
                         >
                           <Checkbox
-                            id={`agent-knowledge-${knowledgeBase.id}`}
-                            checked={form.knowledgeBaseIds.includes(
-                              knowledgeBase.id
-                            )}
+                            id={`agent-skill-${skill.id}`}
+                            checked={form.skillIds.includes(skill.id)}
                             onCheckedChange={(checked) =>
-                              toggleKnowledgeBase(knowledgeBase.id, checked)
+                              toggleSkill(skill.id, checked)
                             }
                           />
                           <FieldLabel
-                            htmlFor={`agent-knowledge-${knowledgeBase.id}`}
+                            htmlFor={`agent-skill-${skill.id}`}
                             className="font-normal"
                           >
-                            <span>{knowledgeBase.name}</span>
+                            <span>{skill.displayName}</span>
                             <FieldDescription>
-                              {knowledgeBase.description}
+                              {skill.description}
                             </FieldDescription>
                           </FieldLabel>
                         </Field>
                       ))}
                     </div>
-                  )}
-                </FieldSet>
-              </FieldGroup>
+                  </FieldSet>
+                  <FieldSet>
+                    <FieldLegend>关联知识库</FieldLegend>
+                    <FieldDescription>
+                      关联后会把知识库介绍注入系统提示词，并自动为这个 Agent
+                      增加只读的 aegis_search_knowledge 工具。
+                    </FieldDescription>
+                    {knowledgeBases.length === 0 ? (
+                      <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                        暂无知识库，请先在知识库页面创建并添加 Markdown 文档。
+                      </div>
+                    ) : (
+                      <div
+                        data-slot="checkbox-group"
+                        className="grid gap-2 sm:grid-cols-2"
+                      >
+                        {knowledgeBases.map((knowledgeBase) => (
+                          <Field
+                            key={knowledgeBase.id}
+                            orientation="horizontal"
+                            className="rounded-lg border p-3"
+                          >
+                            <Checkbox
+                              id={`agent-knowledge-${knowledgeBase.id}`}
+                              checked={form.knowledgeBaseIds.includes(
+                                knowledgeBase.id
+                              )}
+                              onCheckedChange={(checked) =>
+                                toggleKnowledgeBase(knowledgeBase.id, checked)
+                              }
+                            />
+                            <FieldLabel
+                              htmlFor={`agent-knowledge-${knowledgeBase.id}`}
+                              className="font-normal"
+                            >
+                              <span>{knowledgeBase.name}</span>
+                              <FieldDescription>
+                                {knowledgeBase.description}
+                              </FieldDescription>
+                            </FieldLabel>
+                          </Field>
+                        ))}
+                      </div>
+                    )}
+                  </FieldSet>
+                </FieldGroup>
               )}
             </TabsContent>
 
@@ -829,7 +847,8 @@ function AgentDialog({
                   <CardHeader>
                     <CardTitle>固定权限边界</CardTitle>
                     <CardDescription>
-                      禁止网络、Shell 与写入，审批策略固定为 none；检索进程没有可调用工具。
+                      禁止网络、Shell 与写入，审批策略固定为
+                      none；检索进程没有可调用工具。
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-wrap gap-2">
@@ -839,92 +858,111 @@ function AgentDialog({
                   </CardContent>
                 </Card>
               ) : (
-              <FieldGroup>
-                <Field>
-                  <FieldTitle>工作区范围</FieldTitle>
-                  <Input value="仅当前任务工作区（run_workspace）" disabled />
-                  <FieldDescription>
-                    文件工具访问会校验路径；Pi 进程工作目录固定为任务工作区。
-                  </FieldDescription>
-                </Field>
-                <PermissionSwitch
-                  id="permission-write"
-                  label="允许写入"
-                  description="控制 edit、write 以及可识别的 shell 写入命令。"
-                  checked={form.permissions.allowWrite}
-                  onCheckedChange={(checked) =>
-                    updatePermission("allowWrite", checked)
-                  }
-                />
-                <PermissionSwitch
-                  id="permission-shell"
-                  label="允许 Shell"
-                  description="关闭后 bash 工具调用会被 Aegis Guard 拦截。"
-                  checked={form.permissions.allowShell}
-                  onCheckedChange={(checked) =>
-                    updatePermission("allowShell", checked)
-                  }
-                />
-                <PermissionSwitch
-                  id="permission-network"
-                  label="允许网络访问"
-                  description="关闭后 curl、wget、ssh、git fetch、包安装等命令会被拦截。"
-                  checked={form.permissions.allowNetwork}
-                  onCheckedChange={(checked) =>
-                    updatePermission("allowNetwork", checked)
-                  }
-                />
-                <Field>
-                  <FieldLabel htmlFor="permission-approval">
-                    工具调用审批
-                  </FieldLabel>
-                  <Select
-                    value={form.permissions.approvalMode || "inherit"}
-                    onValueChange={(value) =>
-                      updatePermission(
-                        "approvalMode",
-                        value === "inherit"
-                          ? ""
-                          : (String(
-                              value
-                            ) as PermissionBoundary["approvalMode"])
-                      )
+                <FieldGroup>
+                  <Field>
+                    <FieldTitle>工作区范围</FieldTitle>
+                    <Input value="仅当前任务工作区（run_workspace）" disabled />
+                    <FieldDescription>
+                      文件工具访问会校验路径；Pi 进程工作目录固定为任务工作区。
+                    </FieldDescription>
+                  </Field>
+                  <PermissionSwitch
+                    id="permission-write"
+                    label="允许写入"
+                    description="控制 edit、write 以及可识别的 shell 写入命令。"
+                    checked={form.permissions.allowWrite}
+                    onCheckedChange={(checked) =>
+                      updatePermission("allowWrite", checked)
                     }
-                  >
-                    <SelectTrigger id="permission-approval" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="inherit">继承全局策略</SelectItem>
-                        <SelectItem value="all">
-                          所有写入与 Shell 都审批
-                        </SelectItem>
-                        <SelectItem value="risky">仅高风险 Shell</SelectItem>
-                        <SelectItem value="none">不审批</SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="permission-rework-approval">Issue 返工审批</FieldLabel>
-                  <Select
-                    value={form.permissions.reworkApprovalMode || "inherit"}
-                    onValueChange={(value) =>
-                      updatePermission("reworkApprovalMode", value === "inherit" ? "" : String(value) as PermissionBoundary["reworkApprovalMode"])
+                  />
+                  <PermissionSwitch
+                    id="permission-shell"
+                    label="允许 Shell"
+                    description="关闭后 bash 工具调用会被 Aegis Guard 拦截。"
+                    checked={form.permissions.allowShell}
+                    onCheckedChange={(checked) =>
+                      updatePermission("allowShell", checked)
                     }
-                  >
-                    <SelectTrigger id="permission-rework-approval" className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="inherit">继承全局策略</SelectItem>
-                        <SelectItem value="all">始终需要人工批准</SelectItem>
-                        <SelectItem value="none">自动批准并重新执行</SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </FieldGroup>
+                  />
+                  <PermissionSwitch
+                    id="permission-network"
+                    label="允许网络访问"
+                    description="关闭后 curl、wget、ssh、git fetch、包安装等命令会被拦截。"
+                    checked={form.permissions.allowNetwork}
+                    onCheckedChange={(checked) =>
+                      updatePermission("allowNetwork", checked)
+                    }
+                  />
+                  <Field>
+                    <FieldLabel htmlFor="permission-approval">
+                      工具调用审批
+                    </FieldLabel>
+                    <Select
+                      value={form.permissions.approvalMode || "inherit"}
+                      onValueChange={(value) =>
+                        updatePermission(
+                          "approvalMode",
+                          value === "inherit"
+                            ? ""
+                            : (String(
+                                value
+                              ) as PermissionBoundary["approvalMode"])
+                        )
+                      }
+                    >
+                      <SelectTrigger
+                        id="permission-approval"
+                        className="w-full"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="inherit">继承全局策略</SelectItem>
+                          <SelectItem value="all">
+                            所有写入与 Shell 都审批
+                          </SelectItem>
+                          <SelectItem value="risky">仅高风险 Shell</SelectItem>
+                          <SelectItem value="none">不审批</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="permission-rework-approval">
+                      Issue 返工审批
+                    </FieldLabel>
+                    <Select
+                      value={form.permissions.reworkApprovalMode || "inherit"}
+                      onValueChange={(value) =>
+                        updatePermission(
+                          "reworkApprovalMode",
+                          value === "inherit"
+                            ? ""
+                            : (String(
+                                value
+                              ) as PermissionBoundary["reworkApprovalMode"])
+                        )
+                      }
+                    >
+                      <SelectTrigger
+                        id="permission-rework-approval"
+                        className="w-full"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="inherit">继承全局策略</SelectItem>
+                          <SelectItem value="all">始终需要人工批准</SelectItem>
+                          <SelectItem value="none">
+                            自动批准并重新执行
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </FieldGroup>
               )}
             </TabsContent>
           </Tabs>
@@ -1050,6 +1088,7 @@ function categoryGlyph(category: string) {
   if (category === "frontend") return <Code2 className={className} />
   if (category === "security") return <Shield className={className} />
   if (category === "knowledge") return <Database className={className} />
+  if (category === "concierge") return <Sparkles className={className} />
   if (category === "data") return <Database className={className} />
   return <Wrench className={className} />
 }

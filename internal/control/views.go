@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-const issueDetailEventLimit = 200
-
 func compactIssueForState(issue Issue) Issue {
 	issue.Context = ""
 	issue.Constraints = ""
@@ -40,12 +38,12 @@ func compactExecutionEvent(event ExecutionEvent) ExecutionEvent {
 	copyKeys("description")
 	switch event.ToolName {
 	case "read":
-		copyKeys("path", "filePath", "file_path", "offset", "limit")
+		copyKeys("path", "offset", "limit")
 	case "write":
-		copyKeys("path", "filePath", "file_path")
+		copyKeys("path")
 		compact["_lineCount"] = textLineCount(stringValue(input["content"]))
 	case "edit":
-		copyKeys("path", "filePath", "file_path")
+		copyKeys("path")
 		if edits, ok := input["edits"].([]any); ok {
 			compact["_editCount"] = len(edits)
 			lines := 0
@@ -69,12 +67,14 @@ func compactExecutionEvent(event ExecutionEvent) ExecutionEvent {
 		copyKeys("subject", "message", "importance")
 	case "aegis_list_broadcasts":
 		copyKeys("limit")
+	case "aegis_uncover_search":
+		copyKeys("engine", "query", "limit", "format", "field", "timeout")
 	case "grep":
 		copyKeys("pattern", "path", "glob", "ignoreCase", "literal", "context", "limit")
 	case "find", "ls":
 		copyKeys("pattern", "path", "limit")
 	default:
-		copyKeys("path", "filePath", "file_path", "query", "attachmentId", "offset", "limit")
+		copyKeys("path", "query", "attachmentId", "offset", "limit")
 	}
 	event.InputJSON = encodeEventPayload(compact)
 	event.OutputJSON = ""

@@ -1,5 +1,6 @@
 import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
+import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   ArrowLeft,
   Bot,
@@ -47,7 +48,18 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { fetchSessionDetail } from "@/lib/api"
+import {
+  fetchSessionDelta,
+  fetchSessionDetail,
+  fetchSessionEvents,
+  fetchSessionMessages,
+  fetchSessionProgress,
+} from "@/lib/api"
+import {
+  chronological,
+  mergeById,
+  reverseChronological,
+} from "@/lib/collections"
 import {
   formatCost,
   formatDuration,
@@ -67,11 +79,17 @@ export function SessionDetailPage() {
   const { state } = useAppState()
   const [detail, setDetail] = React.useState<SessionDetail | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = React.useState<
+    "messages" | "events" | "progress" | null
+  >(null)
+  const watermarkRef = React.useRef("")
 
   const load = React.useCallback(async () => {
     if (!executionId) return
     try {
-      setDetail(await fetchSessionDetail(executionId))
+      const next = await fetchSessionDetail(executionId)
+      watermarkRef.current = next.watermark
+      setDetail(next)
       setError(null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Session 读取失败")
@@ -80,7 +98,139 @@ export function SessionDetailPage() {
 
   React.useEffect(() => {
     void load()
-  }, [load, state?.updatedAt])
+  }, [load])
+
+  const live = detail
+    ? ["queued", "starting", "running", "waiting_approval"].includes(
+        detail.session.execution.status
+      )
+    : false
+  React.useEffect(() => {
+    if (!executionId || !live || !watermarkRef.current) return
+    const timer = window.setTimeout(() => {
+      void fetchSessionDelta(executionId, watermarkRef.current)
+        .then((delta) => {
+          watermarkRef.current = delta.watermark
+          setDetail((current) => {
+            if (!current) return current
+            const newMessageCount = delta.messages.filter(
+              (item) =>
+                !current.messages.some((existing) => existing.id === item.id)
+            ).length
+            const newEventCount = delta.events.filter(
+              (item) =>
+                !current.events.some((existing) => existing.id === item.id)
+            ).length
+            const newProgressCount = delta.progressUpdates.filter(
+              (item) =>
+                !current.progressUpdates.some(
+                  (existing) => existing.id === item.id
+                )
+            ).length
+            return {
+              ...current,
+              session: { ...current.session, execution: delta.execution },
+              messages: mergeById(
+                current.messages,
+                delta.messages,
+                chronological
+              ),
+              events: mergeById(
+                current.events,
+                delta.events,
+                reverseChronological
+              ),
+              progressUpdates: mergeById(
+                current.progressUpdates,
+                delta.progressUpdates,
+                chronological
+              ),
+              messagesPage: {
+                ...current.messagesPage,
+                total: current.messagesPage.total + newMessageCount,
+              },
+              eventsPage: {
+                ...current.eventsPage,
+                total: current.eventsPage.total + newEventCount,
+              },
+              progressPage: {
+                ...current.progressPage,
+                total: current.progressPage.total + newProgressCount,
+              },
+              watermark: delta.watermark,
+            }
+          })
+        })
+        .catch(() => void load())
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [executionId, live, load, state?.updatedAt])
+
+  const loadOlder = async (kind: "messages" | "events" | "progress") => {
+    if (!executionId || !detail || loadingMore) return
+    setLoadingMore(kind)
+    try {
+      if (kind === "messages") {
+        const page = await fetchSessionMessages(
+          executionId,
+          detail.messagesPage.nextCursor
+        )
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                messages: mergeById(
+                  current.messages,
+                  page.items,
+                  chronological
+                ),
+                messagesPage: page.page,
+              }
+            : current
+        )
+      } else if (kind === "events") {
+        const page = await fetchSessionEvents(
+          executionId,
+          detail.eventsPage.nextCursor
+        )
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                events: mergeById(
+                  current.events,
+                  page.items,
+                  reverseChronological
+                ),
+                eventsPage: page.page,
+              }
+            : current
+        )
+      } else {
+        const page = await fetchSessionProgress(
+          executionId,
+          detail.progressPage.nextCursor
+        )
+        setDetail((current) =>
+          current
+            ? {
+                ...current,
+                progressUpdates: mergeById(
+                  current.progressUpdates,
+                  page.items,
+                  chronological
+                ),
+                progressPage: page.page,
+              }
+            : current
+        )
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "读取历史记录失败")
+    } finally {
+      setLoadingMore(null)
+    }
+  }
 
   if (error && !detail) {
     return (
@@ -157,15 +307,15 @@ export function SessionDetailPage() {
         <TabsList variant="line">
           <TabsTrigger value="conversation">
             <MessagesSquare />
-            对话 {detail.messages.length}
+            对话 {detail.messagesPage.total}
           </TabsTrigger>
           <TabsTrigger value="events">
             <SquareTerminal />
-            事件 {detail.events.length}
+            事件 {detail.eventsPage.total}
           </TabsTrigger>
           <TabsTrigger value="progress">
             <ListChecks />
-            进度 {detail.progressUpdates.length}
+            进度 {detail.progressPage.total}
           </TabsTrigger>
           <TabsTrigger value="prompts">
             <ScrollText />
@@ -197,6 +347,9 @@ export function SessionDetailPage() {
                 agentName={detail.session.agentName}
                 issueIdentifier={detail.session.issueIdentifier}
                 initialPrompt={initialPrompt}
+                hasMore={detail.messagesPage.hasMore}
+                loadingMore={loadingMore === "messages"}
+                onLoadMore={() => void loadOlder("messages")}
               />
             </CardContent>
           </Card>
@@ -206,11 +359,20 @@ export function SessionDetailPage() {
           <ExecutionEvents
             events={detail.events}
             issues={state?.issues ?? []}
+            hasMore={detail.eventsPage.hasMore}
+            loadingMore={loadingMore === "events"}
+            onLoadMore={() => void loadOlder("events")}
+            className="h-[calc(100svh-17rem)] min-h-[520px]"
           />
         </TabsContent>
 
         <TabsContent value="progress" className="pt-4">
-          <WorkProgressPanel updates={detail.progressUpdates} />
+          <WorkProgressPanel
+            updates={detail.progressUpdates}
+            hasMore={detail.progressPage.hasMore}
+            loadingMore={loadingMore === "progress"}
+            onLoadMore={() => void loadOlder("progress")}
+          />
         </TabsContent>
 
         <TabsContent value="prompts" className="pt-4">
@@ -279,7 +441,7 @@ export function SessionDetailPage() {
                 ["Cache read", formatTokens(execution.cacheReadTokens)],
                 ["Cache write", formatTokens(execution.cacheWriteTokens)],
                 ["Cost", formatCost(execution.cost)],
-                ["Messages", String(detail.messages.length)],
+                ["Messages", String(detail.messagesPage.total)],
                 ["Approvals", String(detail.approvals.length)],
               ]}
             />
@@ -313,7 +475,30 @@ export function SessionDetailPage() {
   )
 }
 
-function WorkProgressPanel({ updates }: { updates: ExecutionProgress[] }) {
+function WorkProgressPanel({
+  updates,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+}: {
+  updates: ExecutionProgress[]
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
+}) {
+  const viewportRef = React.useRef<HTMLDivElement>(null)
+  const count = updates.length + (hasMore ? 1 : 0)
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: (index) => (hasMore && index === 0 ? 52 : 220),
+    getItemKey: (index) => {
+      if (hasMore && index === 0) return "load-more-progress"
+      return updates[index - (hasMore ? 1 : 0)]?.id ?? index
+    },
+    overscan: 5,
+  })
   return (
     <Card className="h-[calc(100svh-17rem)] min-h-[520px] gap-0 py-0">
       <CardHeader className="shrink-0 border-b py-4">
@@ -336,46 +521,82 @@ function WorkProgressPanel({ updates }: { updates: ExecutionProgress[] }) {
             </EmptyHeader>
           </Empty>
         ) : (
-          <ScrollArea className="h-full">
-            <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 p-4 sm:p-6">
-              {updates.map((update, index) => {
+          <ScrollArea viewportRef={viewportRef} className="h-full">
+            <div
+              className="relative mx-auto w-full max-w-4xl"
+              style={{ height: virtualizer.getTotalSize() + 32 }}
+            >
+              {virtualizer.getVirtualItems().map((virtualItem) => {
+                const offset = hasMore ? 1 : 0
+                const index = virtualItem.index - offset
+                const update = updates[index]
                 const latest = index === updates.length - 1
                 return (
-                  <Card key={update.id} size="sm">
-                    <CardHeader>
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex min-w-0 items-start gap-3">
-                          <CircleCheckBig className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                          <div className="flex min-w-0 flex-col gap-1">
-                            <CardTitle>{update.stage}</CardTitle>
-                            <CardDescription>
-                              阶段 {index + 1} · {formatTime(update.createdAt)}
-                            </CardDescription>
+                  <div
+                    key={virtualItem.key}
+                    ref={virtualizer.measureElement}
+                    data-index={virtualItem.index}
+                    className="absolute top-0 left-0 w-full px-4 pb-3 sm:px-6"
+                    style={{
+                      transform: `translateY(${virtualItem.start + 16}px)`,
+                    }}
+                  >
+                    {!update ? (
+                      <div className="flex justify-center py-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={loadingMore}
+                          onClick={onLoadMore}
+                        >
+                          {loadingMore ? (
+                            <Spinner data-icon="inline-start" />
+                          ) : null}
+                          加载更早进度
+                        </Button>
+                      </div>
+                    ) : (
+                      <Card size="sm">
+                        <CardHeader>
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <CircleCheckBig className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <CardTitle>{update.stage}</CardTitle>
+                                <CardDescription>
+                                  阶段 {index + 1} ·{" "}
+                                  {formatTime(update.createdAt)}
+                                </CardDescription>
+                              </div>
+                            </div>
+                            {latest ? (
+                              <Badge variant="secondary">当前</Badge>
+                            ) : null}
                           </div>
-                        </div>
-                        {latest ? <Badge variant="secondary">当前</Badge> : null}
-                      </div>
-                    </CardHeader>
-                    <CardContent className="flex flex-col gap-4">
-                      <div className="flex flex-col gap-1.5">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          阶段结果
-                        </p>
-                        <MarkdownContent>{update.summary}</MarkdownContent>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            {latest ? "现在正在进行" : "随后开始"}
-                          </p>
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                            {update.currentActivity}
-                          </p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-4">
+                          <div className="flex flex-col gap-1.5">
+                            <p className="text-xs font-medium text-muted-foreground">
+                              阶段结果
+                            </p>
+                            <MarkdownContent>{update.summary}</MarkdownContent>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                {latest ? "现在正在进行" : "随后开始"}
+                              </p>
+                              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                {update.currentActivity}
+                              </p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
                 )
               })}
             </div>

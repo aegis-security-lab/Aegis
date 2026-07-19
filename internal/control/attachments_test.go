@@ -4,50 +4,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestAttachmentToolIsMigratedOntoExistingAgents(t *testing.T) {
-	dataDir := t.TempDir()
-	store, err := NewStore(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var record agentRecord
-	if err := store.db.First(&record, "id = ?", "backend-engineer").Error; err != nil {
-		t.Fatal(err)
-	}
-	record.Definition.Tools = slices.DeleteFunc(record.Definition.Tools, func(tool string) bool {
-		return tool == "aegis_publish_attachment"
-	})
-	if err := store.db.Save(&record).Error; err != nil {
-		t.Fatal(err)
-	}
-	database, err := store.db.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	reopened, err := NewStore(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		database, _ := reopened.db.DB()
-		_ = database.Close()
-	}()
-	agents := reopened.Agents()
-	index, exists := agentIndex(agents, "backend-engineer")
-	if !exists || !slices.Contains(agents[index].Tools, "aegis_publish_attachment") {
-		t.Fatalf("attachment tool was not migrated: %+v", agents)
-	}
-}
 
 func TestAttachmentIsCopiedAndBoundToCompletionComment(t *testing.T) {
 	store := configuredStore(t)

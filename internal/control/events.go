@@ -36,6 +36,8 @@ func toolEventTitle(tool string) string {
 		return "发送任务广播"
 	case "aegis_list_broadcasts":
 		return "读取广播历史"
+	case "aegis_uncover_search":
+		return "检索网络空间资产"
 	default:
 		if strings.TrimSpace(tool) == "" {
 			return "工具调用"
