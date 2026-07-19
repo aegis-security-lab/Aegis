@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -70,6 +71,9 @@ export function TasksPage() {
                 issueIDs.has(issue.id) &&
                 ["done", "cancelled"].includes(issue.status)
             ).length
+            const abandoned = issues.filter(
+              (issue) => issueIDs.has(issue.id) && issue.objectiveAbandoned
+            ).length
             const progress = descendants
               ? Math.round((completed / descendants) * 100)
               : task.status === "done"
@@ -100,6 +104,9 @@ export function TasksPage() {
                         {task.identifier}
                       </span>
                       <StatusBadge status={task.status} />
+                      {abandoned > 0 && (
+                        <Badge variant="outline">放弃目标 {abandoned}</Badge>
+                      )}
                     </div>
                     <CardTitle
                       className="line-clamp-2 leading-6 break-all"

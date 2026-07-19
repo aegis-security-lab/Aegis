@@ -12,6 +12,9 @@ export interface ConfigView {
   workspace: string
   concurrency: number
   approvalMode: "all" | "risky" | "none" | ""
+  reworkApprovalMode: "all" | "none" | ""
+  validationMode: "fixed" | "automatic"
+  maxValidationAttempts: number
   updatedAt: string
 }
 export interface RuntimeProbe {
@@ -42,7 +45,14 @@ export type IssueStatus =
   | "blocked"
   | "cancelled"
 export type IssueExecutionPhase =
-  "active" | "waiting_children" | "resuming" | "completed" | "blocked"
+  | "active"
+  | "waiting_children"
+  | "resuming"
+  | "validating"
+  | "summarizing"
+  | "recovering"
+  | "completed"
+  | "blocked"
 export interface Issue {
   id: string
   number: number
@@ -51,7 +61,7 @@ export interface Issue {
   parentId?: string
   title: string
   description: string
-  acceptanceCriteria: string
+  objective: string
   status: IssueStatus
   priority: "critical" | "high" | "medium" | "low"
   workMode: "guided" | "autonomous"
@@ -60,11 +70,22 @@ export interface Issue {
   assigneeAgentId?: string
   checkoutExecutionId?: string
   currentExecutionId?: string
+  validationExecutionId?: string
+  validationMode: "fixed" | "automatic"
+  maxValidationAttempts: number
+  validationDisabled: boolean
+  recoveryExecutionId?: string
+  recoveryPhase?: string
+  recoveryRequestedAt?: string
   workspace: string
   context?: string
   constraints?: string
   result?: string
   error?: string
+  objectiveAbandoned: boolean
+  abandonmentReason?: string
+  abandonRequestedAt?: string
+  abandonedAt?: string
   createdBy: string
   startedAt?: string
   completedAt?: string
@@ -94,7 +115,8 @@ export interface Execution {
   id: string
   issueId: string
   agentId: string
-  kind: "planning" | "work" | "continuation" | "wakeup"
+  kind:
+    "planning" | "work" | "continuation" | "validation" | "rework" | "wakeup"
   status: ExecutionStatus
   provider: string
   model: string
@@ -103,6 +125,8 @@ export interface Execution {
   sessionId: string
   pid?: number
   currentTool?: string
+  checkpoint?: string
+  checkpointAt?: string
   initialPrompt?: string
   systemPrompt?: string
   toolsSnapshot: ToolSnapshot[]
@@ -143,12 +167,37 @@ export interface ExecutionEvent {
   detail: string
   toolCallId?: string
   toolName?: string
-  status?: "running" | "completed" | "failed"
+  status?: "running" | "completed" | "failed" | "interrupted"
   inputJson?: string
   outputJson?: string
   isError?: boolean
   createdAt: string
   updatedAt?: string
+}
+export interface ExecutionProgress {
+  id: string
+  executionId: string
+  issueId: string
+  stage: string
+  summary: string
+  currentActivity: string
+  createdAt: string
+}
+export interface TaskBroadcast {
+  id: string
+  taskId: string
+  sourceIssueId: string
+  sourceIssueIdentifier: string
+  sourceIssueTitle: string
+  sourceExecutionId: string
+  sourceAgentId: string
+  sourceAgentName: string
+  subject: string
+  message: string
+  importance: "normal" | "important" | "critical"
+  deliveredCount: number
+  recipientExecutionIds: string[]
+  createdAt: string
 }
 export interface Message {
   id: string
@@ -164,6 +213,7 @@ export interface Approval {
   id: string
   executionId: string
   issueId?: string
+  type: "tool_call" | "issue_rework"
   title: string
   detail: string
   status: "pending" | "approved" | "rejected" | "expired"
@@ -214,6 +264,30 @@ export interface IssueDecomposition {
   childIds: string[]
   createdAt: string
 }
+export interface IssueValidation {
+  id: string
+  issueId: string
+  sourceExecutionId: string
+  validationExecutionId: string
+  attempt: number
+  objective: string
+  candidateResult: string
+  status:
+    | "running"
+    | "passed"
+    | "failed"
+    | "abandoned"
+    | "skipped"
+    | "interrupted"
+    | "error"
+  passed: boolean
+  summary: string
+  feedback: string
+  abandonmentProof?: string
+  error?: string
+  createdAt: string
+  completedAt?: string
+}
 export interface IssueDetail {
   issue: Issue
   children: Issue[]
@@ -226,6 +300,8 @@ export interface IssueDetail {
   approvals: Approval[]
   wakeups: AgentWakeup[]
   decompositions: IssueDecomposition[]
+  validations: IssueValidation[]
+  broadcasts: TaskBroadcast[]
 }
 export interface TaskCancellationResult {
   task: Issue
@@ -234,6 +310,35 @@ export interface TaskCancellationResult {
   cancelledExecutions: number
   expiredApprovals: number
   cancelledWakeups: number
+}
+export type TaskTimelineEventKind =
+  | "issue"
+  | "execution"
+  | "result"
+  | "comment"
+  | "validation"
+  | "approval"
+  | "system"
+export interface TaskTimelineEvent {
+  id: string
+  kind: TaskTimelineEventKind
+  issueId: string
+  issueIdentifier: string
+  issueTitle: string
+  executionId?: string
+  actorType: "operator" | "agent" | "system"
+  actorId?: string
+  actorName: string
+  title: string
+  summary?: string
+  detail?: string
+  status?: string
+  createdAt: string
+}
+export interface TaskTimeline {
+  task: Issue
+  issueCount: number
+  events: TaskTimelineEvent[]
 }
 export interface AgentModelConfig {
   provider: string
@@ -254,6 +359,7 @@ export interface PermissionBoundary {
   allowShell: boolean
   allowWrite: boolean
   approvalMode: "" | "all" | "risky" | "none"
+  reworkApprovalMode: "" | "all" | "none"
 }
 export interface AgentDefinition {
   id: string
@@ -266,6 +372,7 @@ export interface AgentDefinition {
   internal: boolean
   model: AgentModelConfig
   systemPrompt: string
+  memo: string
   tools: string[]
   skillIds: string[]
   knowledgeBaseIds: string[]
@@ -316,6 +423,7 @@ export interface SessionDetail {
   session: SessionSummary
   messages: Message[]
   events: ExecutionEvent[]
+  progressUpdates: ExecutionProgress[]
   approvals: Approval[]
 }
 export interface AppState {
@@ -346,13 +454,16 @@ export interface SaveConfigInput {
   workspace: string
   concurrency: number
   approvalMode: "all" | "risky" | "none"
+  reworkApprovalMode: "all" | "none"
+  validationMode: "fixed" | "automatic"
+  maxValidationAttempts: number
 }
 export interface CreateIssueInput {
   projectId?: string
   parentId?: string
   title: string
   description: string
-  acceptanceCriteria: string
+  objective: string
   priority: "critical" | "high" | "medium" | "low"
   workMode: "guided" | "autonomous"
   assigneeAgentId?: string

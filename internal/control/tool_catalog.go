@@ -20,7 +20,7 @@ func toolCatalog() map[string]ToolSnapshot {
 	parameter := func(name, kind, description string, required bool) ToolParameterSnapshot {
 		return ToolParameterSnapshot{Name: name, Type: kind, Description: description, Required: required}
 	}
-	return map[string]ToolSnapshot{
+	catalog := map[string]ToolSnapshot{
 		"read": {
 			Name: "read", Label: "Read", Source: "pi_builtin",
 			Description: "读取文本文件或受支持的图片。文本可按行偏移和数量分段读取；图片会作为多模态附件返回给模型。",
@@ -103,7 +103,7 @@ func toolCatalog() map[string]ToolSnapshot {
 					Children: []ToolParameterSnapshot{
 						parameter("title", "string", "子 Issue 标题，最多 120 个字符。", true),
 						parameter("description", "string", "子 Issue 的执行范围与上下文。", true),
-						parameter("acceptanceCriteria", "string", "可观察、可验证的完成标准。", true),
+						parameter("objective", "string", "验收 Agent 用于判断是否完成的明确目标。", true),
 						{Name: "priority", Type: "enum", Description: "子 Issue 优先级。", Required: true, Enum: []string{"critical", "high", "medium", "low"}},
 						parameter("agentId", "string", "负责该子 Issue 的启用 Agent ID；空字符串表示由调度器选择。", true),
 						parameter("dependsOn", "array<number>", "依赖的较早子项序号，使用从 1 开始的索引。", true),
@@ -117,7 +117,66 @@ func toolCatalog() map[string]ToolSnapshot {
 			Parameters: []ToolParameterSnapshot{
 				parameter("path", "string", "已生成文件的绝对路径或工作目录相对路径。", true),
 				parameter("name", "string", "可选的附件下载文件名。", false),
-				parameter("description", "string", "可选的交付物简短说明。", false),
+				parameter("attachmentDescription", "string", "可选的交付物简短说明。", false),
+			},
+		},
+		"aegis_report_progress": {
+			Name: "aegis_report_progress", Label: "Report work progress", Source: "aegis_extension",
+			Description: "记录当前 Session 的阶段性工作进度，包括刚完成的阶段、阶段结果以及接下来正在进行的工作。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("stage", "string", "刚完成的阶段名称，最多 120 个字符。", true),
+				parameter("summary", "string", "这个阶段完成、变更或确认的内容及证据，最多 4000 个字符。", true),
+				parameter("currentActivity", "string", "现在开始进行的具体工作，最多 1000 个字符。", true),
+			},
+		},
+		"aegis_broadcast": {
+			Name: "aegis_broadcast", Label: "Broadcast task information", Source: "aegis_extension",
+			Description: "把经过验证且对其他工作有价值的关键信息持久化，并广播给同一顶层任务树中所有正在执行的其他 Agent。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("subject", "string", "广播主题，最多 160 个字符。", true),
+				parameter("message", "string", "包含发现、证据、影响范围和协作价值的 Markdown 消息，最多 6000 个字符。", true),
+				{Name: "importance", Type: "enum", Description: "广播重要性。", Required: true, Enum: []string{"normal", "important", "critical"}},
+			},
+		},
+		"aegis_list_broadcasts": {
+			Name: "aegis_list_broadcasts", Label: "List task broadcasts", Source: "aegis_extension",
+			Description: "只读获取同一顶层任务树内最近的广播历史，按时间从新到旧返回。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("limit", "number", "最多返回的广播数量，范围 1–50，默认 20。", false),
+			},
+		},
+		"aegis_list_validation_attachments": {
+			Name: "aegis_list_validation_attachments", Label: "List validation attachments", Source: "aegis_extension",
+			Description: "只读列出当前验收所对应 Worker Execution 发布的附件，不能访问其他 Issue 或 Execution 的附件。",
+			Parameters:  []ToolParameterSnapshot{},
+		},
+		"aegis_read_validation_attachment": {
+			Name: "aegis_read_validation_attachment", Label: "Read validation attachment", Source: "aegis_extension",
+			Description: "按字节分段读取当前验收范围内的文本附件，用于核对附件交付物是否满足 Issue 目标。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("attachmentId", "string", "附件清单中的附件 ID。", true),
+				parameter("offset", "number", "继续读取的字节偏移，默认 0。", false),
+				parameter("limit", "number", "本次最多读取的字节数，范围 1–32768。", false),
+			},
+		},
+		"aegis_get_memo": {
+			Name: "aegis_get_memo", Label: "Read Agent memo", Source: "aegis_extension",
+			Description: "读取当前 Agent 的持久化备忘录。备忘录用于跨会话保留稳定的用户或 Leader 偏好、长期工作倾向、反复纠错和经常犯错的提醒。",
+			Parameters:  []ToolParameterSnapshot{},
+		},
+		"aegis_update_memo": {
+			Name: "aegis_update_memo", Label: "Update Agent memo", Source: "aegis_extension",
+			Description: "替换当前 Agent 的持久化备忘录。用户或 Leader 明确要求记住的内容、稳定个人习惯、长期工作偏好、经常犯错或反复被纠正的地方应写入；不要记录一次性任务细节、秘密、个人敏感信息或未经验证的推断。更新前先读取并保留仍有效的条目。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("content", "string", "完整的新备忘录内容，最多 20000 个字符；此操作会替换旧内容。", true),
+			},
+		},
+		"aegis_request_rework": {
+			Name: "aegis_request_rework", Label: "Request Issue rework", Source: "aegis_extension",
+			Description: "为已完成或待复核的当前 Issue 请求重新打开、细化并执行。仅当用户或 Leader 明确要求补做、重新拆解或重新执行时使用；请求会按返工审批策略进入审批中心，批准后创建新的工作 Execution 并重新获得 checkout。不要用它代替普通解释或一次性评论回复。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("reason", "string", "为什么现有结果需要返工，以及触发请求的用户或 Leader 要求。", true),
+				parameter("requestedOutcome", "string", "批准后应完成的具体结果、建议拆解范围和验收依据。", true),
 			},
 		},
 		"aegis_search_knowledge": {
@@ -130,4 +189,10 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 	}
+	purpose := parameter("description", "string", "用一句简短的话说明本次调用工具的目的和预期获得的结果。", true)
+	for name, definition := range catalog {
+		definition.Parameters = append([]ToolParameterSnapshot{purpose}, definition.Parameters...)
+		catalog[name] = definition
+	}
+	return catalog
 }

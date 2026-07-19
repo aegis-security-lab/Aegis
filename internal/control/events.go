@@ -30,6 +30,12 @@ func toolEventTitle(tool string) string {
 		return "执行命令"
 	case "aegis_create_subissues":
 		return "创建子 Issues"
+	case "aegis_report_progress":
+		return "更新工作进度"
+	case "aegis_broadcast":
+		return "发送任务广播"
+	case "aegis_list_broadcasts":
+		return "读取广播历史"
 	default:
 		if strings.TrimSpace(tool) == "" {
 			return "工具调用"

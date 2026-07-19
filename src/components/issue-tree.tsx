@@ -1,14 +1,15 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import {
+  CircleCheck,
   ChevronDown,
   CircleDotDashed,
+  CircleX,
   GitBranch,
   LockKeyhole,
-  RotateCcw,
+  TriangleAlert,
 } from "lucide-react"
 
-import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,20 +18,28 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { Progress } from "@/components/ui/progress"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import type { AgentDefinition, Issue, IssueRelation } from "@/types"
+import type { AgentDefinition, Execution, Issue, IssueRelation } from "@/types"
 
 const terminalStatuses = new Set(["done", "cancelled"])
+const activeExecutionStatuses = new Set([
+  "queued",
+  "starting",
+  "running",
+  "waiting_approval",
+])
 
 interface IssueTreeProps {
   issues: Issue[]
   relations: IssueRelation[]
   agents: AgentDefinition[]
+  executions?: Execution[]
   rootIds?: string[]
   className?: string
 }
@@ -39,6 +48,7 @@ export function IssueTree({
   issues,
   relations,
   agents,
+  executions = [],
   rootIds,
   className,
 }: IssueTreeProps) {
@@ -72,6 +82,34 @@ export function IssueTree({
     () => new Map(agents.map((agent) => [agent.id, agent.name])),
     [agents]
   )
+  const executionMap = React.useMemo(() => {
+    const map = new Map<string, Execution>()
+    for (const execution of executions) {
+      const current = map.get(execution.issueId)
+      if (
+        !current ||
+        new Date(execution.startedAt).getTime() >
+          new Date(current.startedAt).getTime()
+      ) {
+        map.set(execution.issueId, execution)
+      }
+    }
+    return map
+  }, [executions])
+  const visibleIssues = React.useMemo(() => {
+    const ids = new Set<string>()
+    const visit = (issue: Issue) => {
+      if (ids.has(issue.id)) return
+      ids.add(issue.id)
+      for (const child of childrenMap.get(issue.id) ?? []) visit(child)
+    }
+    for (const root of roots) visit(root)
+    return issues.filter((issue) => ids.has(issue.id))
+  }, [childrenMap, issues, roots])
+  const summary = React.useMemo(
+    () => summarizeTree(visibleIssues, executionMap),
+    [executionMap, visibleIssues]
+  )
 
   if (roots.length === 0) {
     return (
@@ -82,18 +120,43 @@ export function IssueTree({
   }
 
   return (
-    <div className={cn("divide-y", className)}>
-      {roots.map((issue) => (
-        <TreeNode
-          key={issue.id}
-          issue={issue}
-          depth={0}
-          childrenMap={childrenMap}
-          issueMap={issueMap}
-          relations={relations}
-          agentMap={agentMap}
-        />
-      ))}
+    <div className={cn("min-w-0", className)}>
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+        <Badge variant={summary.running > 0 ? "default" : "outline"}>
+          {summary.running > 0 ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <CircleDotDashed data-icon="inline-start" />
+          )}
+          执行中 {summary.running}
+        </Badge>
+        <Badge variant={summary.failed > 0 ? "destructive" : "outline"}>
+          <TriangleAlert data-icon="inline-start" />
+          失败 {summary.failed}
+        </Badge>
+        <Badge variant="secondary">
+          <CircleCheck data-icon="inline-start" />
+          已结束 {summary.completed}
+        </Badge>
+        <Badge variant="outline">
+          <CircleDotDashed data-icon="inline-start" />
+          待执行 {summary.pending}
+        </Badge>
+      </div>
+      <div className="divide-y">
+        {roots.map((issue) => (
+          <TreeNode
+            key={issue.id}
+            issue={issue}
+            depth={0}
+            childrenMap={childrenMap}
+            issueMap={issueMap}
+            relations={relations}
+            agentMap={agentMap}
+            executionMap={executionMap}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -105,6 +168,7 @@ interface TreeNodeProps {
   issueMap: Map<string, Issue>
   relations: IssueRelation[]
   agentMap: Map<string, string>
+  executionMap: Map<string, Execution>
 }
 
 function TreeNode({
@@ -114,6 +178,7 @@ function TreeNode({
   issueMap,
   relations,
   agentMap,
+  executionMap,
 }: TreeNodeProps) {
   const children = childrenMap.get(issue.id) ?? []
   const [open, setOpen] = React.useState(depth < 2)
@@ -129,6 +194,8 @@ function TreeNode({
   const progress = children.length
     ? Math.round((completed / children.length) * 100)
     : 0
+  const execution = executionMap.get(issue.id)
+  const operationalState = issueOperationalState(issue, execution, blockers)
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -137,7 +204,7 @@ function TreeNode({
           "group flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-muted/35",
           depth > 0 && "border-l border-border/70"
         )}
-        style={{ marginLeft: Math.min(depth, 4) * 20 }}
+        style={{ paddingLeft: 16 + Math.min(depth, 4) * 20 }}
       >
         <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center">
           {children.length ? (
@@ -168,34 +235,16 @@ function TreeNode({
             >
               {issue.title}
             </Link>
-            <span className="font-mono text-[11px] text-muted-foreground">
-              {issue.identifier}
-            </span>
-            <StatusBadge
-              status={issue.status}
-              className="h-5 px-1.5 text-[10px]"
-            />
-            {issue.executionPhase === "waiting_children" && (
-              <Badge
-                variant="secondary"
-                className="h-5 gap-1 px-1.5 text-[10px]"
-              >
-                <GitBranch className="size-3" />
-                等待子树
-              </Badge>
-            )}
-            {issue.executionPhase === "resuming" && (
-              <Badge
-                variant="secondary"
-                className="h-5 gap-1 px-1.5 text-[10px]"
-              >
-                <RotateCcw className="size-3" />
-                汇总中
+            <OperationalBadge state={operationalState} />
+            {issue.validationDisabled && issue.status !== "cancelled" && (
+              <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                跳过验收
               </Badge>
             )}
           </div>
 
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="font-mono text-[11px]">{issue.identifier}</span>
             <span>
               {agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent"}
             </span>
@@ -217,6 +266,17 @@ function TreeNode({
               </Tooltip>
             )}
           </div>
+          {operationalState.detail && (
+            <Tooltip>
+              <TooltipTrigger className="mt-1.5 flex max-w-full items-center gap-1 text-xs text-destructive">
+                <TriangleAlert className="size-3 shrink-0" />
+                <span className="truncate">{operationalState.detail}</span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-sm">
+                {operationalState.detail}
+              </TooltipContent>
+            </Tooltip>
+          )}
           {children.length > 0 && (
             <Progress
               value={progress}
@@ -247,6 +307,7 @@ function TreeNode({
                 issueMap={issueMap}
                 relations={relations}
                 agentMap={agentMap}
+                executionMap={executionMap}
               />
             ))}
           </div>
@@ -254,4 +315,142 @@ function TreeNode({
       )}
     </Collapsible>
   )
+}
+
+type OperationalState = {
+  kind: "running" | "failed" | "completed" | "cancelled" | "pending"
+  label: string
+  detail?: string
+}
+
+function issueOperationalState(
+  issue: Issue,
+  execution: Execution | undefined,
+  blockers: Issue[]
+): OperationalState {
+  if (issue.status === "done") {
+    return { kind: "completed", label: "任务结束" }
+  }
+  if (issue.status === "cancelled") {
+    return {
+      kind: "cancelled",
+      label: issue.objectiveAbandoned ? "目标已放弃" : "任务已取消",
+    }
+  }
+  if (issue.executionPhase === "recovering") {
+    return { kind: "running", label: "重启恢复中" }
+  }
+  if (
+    issue.status === "blocked" ||
+    execution?.status === "failed" ||
+    execution?.status === "disconnected"
+  ) {
+    return {
+      kind: "failed",
+      label: execution?.status === "disconnected" ? "执行断开" : "执行失败",
+      detail: issue.error || execution?.error,
+    }
+  }
+  if (issue.executionPhase === "waiting_children") {
+    return { kind: "running", label: "等待子任务" }
+  }
+  if (issue.executionPhase === "resuming") {
+    return { kind: "running", label: "汇总结果" }
+  }
+  if (issue.executionPhase === "validating") {
+    return { kind: "running", label: "验收中" }
+  }
+  if (issue.executionPhase === "summarizing") {
+    return { kind: "running", label: "取消后总结中" }
+  }
+  if (issue.status === "in_progress") {
+    if (execution?.status === "queued") {
+      return { kind: "running", label: "执行排队中" }
+    }
+    if (execution?.status === "starting") {
+      return { kind: "running", label: "Agent 启动中" }
+    }
+    if (execution?.status === "waiting_approval") {
+      return { kind: "running", label: "等待审批" }
+    }
+    return {
+      kind: "running",
+      label: execution?.currentTool
+        ? `执行中 · ${execution.currentTool}`
+        : "Agent 执行中",
+    }
+  }
+  if (issue.status === "in_review") {
+    return { kind: "pending", label: "等待人工复核" }
+  }
+  if (blockers.length > 0) {
+    return { kind: "pending", label: "等待依赖" }
+  }
+  return { kind: "pending", label: "等待调度" }
+}
+
+function OperationalBadge({ state }: { state: OperationalState }) {
+  if (state.kind === "running") {
+    return (
+      <Badge className="h-5 px-1.5 text-[10px]">
+        <Spinner data-icon="inline-start" />
+        {state.label}
+      </Badge>
+    )
+  }
+  if (state.kind === "failed") {
+    return (
+      <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">
+        <TriangleAlert data-icon="inline-start" />
+        {state.label}
+      </Badge>
+    )
+  }
+  if (state.kind === "completed") {
+    return (
+      <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+        <CircleCheck data-icon="inline-start" />
+        {state.label}
+      </Badge>
+    )
+  }
+  if (state.kind === "cancelled") {
+    return (
+      <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+        <CircleX data-icon="inline-start" />
+        {state.label}
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+      <CircleDotDashed data-icon="inline-start" />
+      {state.label}
+    </Badge>
+  )
+}
+
+function summarizeTree(issues: Issue[], executionMap: Map<string, Execution>) {
+  const summary = { running: 0, failed: 0, completed: 0, pending: 0 }
+  for (const issue of issues) {
+    const execution = executionMap.get(issue.id)
+    if (terminalStatuses.has(issue.status)) {
+      summary.completed++
+    } else if (
+      issue.status === "blocked" ||
+      execution?.status === "failed" ||
+      execution?.status === "disconnected"
+    ) {
+      summary.failed++
+    } else if (
+      issue.executionPhase === "recovering" ||
+      issue.status === "in_progress" ||
+      (execution && activeExecutionStatuses.has(execution.status))
+    ) {
+      summary.running++
+    } else {
+      summary.pending++
+    }
+  }
+  return summary
 }

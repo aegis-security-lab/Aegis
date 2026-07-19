@@ -9,8 +9,11 @@ import {
   GitBranch,
   MessageSquare,
   Play,
+  RadioTower,
   RotateCcw,
   Send,
+  ShieldCheck,
+  ShieldOff,
   TerminalSquare,
   XCircle,
 } from "lucide-react"
@@ -63,15 +66,17 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  abandonIssue,
   cancelTask,
   createIssueComment,
   dispatchIssue,
   fetchIssue,
+  setIssueValidationDisabled,
   sendChat,
 } from "@/lib/api"
 import { formatBytes, formatTime, formatTokens } from "@/lib/format"
 import { useAppState } from "@/lib/state"
-import type { IssueDetail } from "@/types"
+import type { AgentDefinition, Issue, IssueDetail, TaskBroadcast } from "@/types"
 export function IssueDetailPage() {
   const { issueId } = useParams()
   const { state, refresh } = useAppState()
@@ -81,6 +86,8 @@ export function IssueDetailPage() {
   const [chat, setChat] = React.useState("")
   const [busy, setBusy] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
+  const [abandonOpen, setAbandonOpen] = React.useState(false)
+  const [validationOpen, setValidationOpen] = React.useState(false)
   const load = React.useCallback(async () => {
     if (!issueId) return
     try {
@@ -93,7 +100,25 @@ export function IssueDetailPage() {
   }, [issueId])
   React.useEffect(() => {
     void load()
-  }, [load, state?.updatedAt])
+  }, [load])
+  const taskIssueIDs = React.useMemo(() => {
+    if (!detail) return new Set<string>()
+    const issues = state?.issues ?? [detail.issue, ...detail.children]
+    const rootID = findTaskRootID(detail.issue.id, issues)
+    return new Set(collectTaskIssues(rootID, issues).map((issue) => issue.id))
+  }, [detail, state?.issues])
+  const hasLiveExecution =
+    (state?.executions ?? detail?.executions ?? []).some((execution) =>
+      taskIssueIDs.has(execution.issueId) &&
+      ["queued", "starting", "running", "waiting_approval"].includes(
+        execution.status
+      )
+    ) ?? false
+  React.useEffect(() => {
+    if (!hasLiveExecution) return
+    const timer = window.setInterval(() => void load(), 2000)
+    return () => window.clearInterval(timer)
+  }, [hasLiveExecution, load])
   if (loading)
     return (
       <div className="flex min-h-64 items-center justify-center">
@@ -119,6 +144,13 @@ export function IssueDetailPage() {
   const childProgress = directChildren.length
     ? Math.round((completedChildren / directChildren.length) * 100)
     : 0
+  const abandonedObjectives = issue.parentId
+    ? issue.objectiveAbandoned
+      ? [issue]
+      : []
+    : collectTaskIssues(issue.id, state?.issues ?? [issue]).filter(
+        (candidate) => candidate.objectiveAbandoned
+      )
   const active = detail.executions.find((e) =>
     ["queued", "starting", "running", "waiting_approval"].includes(e.status)
   )
@@ -145,6 +177,40 @@ export function IssueDetailPage() {
       await Promise.all([refresh(), load()])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "取消任务失败")
+    } finally {
+      setBusy(false)
+    }
+  }
+  const abandon = async () => {
+    setBusy(true)
+    try {
+      const updated = await abandonIssue(
+        issue.id,
+        "操作员从 Issue 详情手动放弃目标"
+      )
+      setAbandonOpen(false)
+      toast.success(
+        updated.executionPhase === "summarizing"
+          ? "已通知负责人停止工作并总结"
+          : "目标已放弃"
+      )
+      await Promise.all([refresh(), load()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "放弃目标失败")
+    } finally {
+      setBusy(false)
+    }
+  }
+  const changeValidation = async () => {
+    setBusy(true)
+    try {
+      const disabled = !issue.validationDisabled
+      await setIssueValidationDisabled(issue.id, disabled)
+      setValidationOpen(false)
+      toast.success(disabled ? "此 Issue 已永久跳过验收" : "已恢复目标验收")
+      await Promise.all([refresh(), load()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "修改验收设置失败")
     } finally {
       setBusy(false)
     }
@@ -188,13 +254,9 @@ export function IssueDetailPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        eyebrow={issue.identifier}
+        eyebrow={`${issue.identifier} · ${issue.id}`}
         title={issue.title}
-        description={
-          issue.parentId
-            ? "子 Issue · 独立的工作与执行单元"
-            : "顶层任务 · 子 Issues 完成后自动汇总"
-        }
+        showIdentity
         actions={
           <>
             <Button
@@ -209,12 +271,13 @@ export function IssueDetailPage() {
               <ArrowLeft data-icon="inline-start" />
               返回
             </Button>
-            {["todo", "backlog"].includes(issue.status) && (
-              <Button disabled={busy} onClick={() => void dispatch()}>
-                <Play />
-                执行
-              </Button>
-            )}
+            {["todo", "backlog"].includes(issue.status) &&
+              issue.executionPhase !== "recovering" && (
+                <Button disabled={busy} onClick={() => void dispatch()}>
+                  <Play />
+                  执行
+                </Button>
+              )}
             {!issue.parentId &&
               !["done", "cancelled"].includes(issue.status) && (
                 <Button
@@ -224,6 +287,31 @@ export function IssueDetailPage() {
                 >
                   <XCircle data-icon="inline-start" />
                   取消任务
+                </Button>
+              )}
+            {!["done", "cancelled"].includes(issue.status) && (
+              <Button
+                variant="outline"
+                disabled={busy || issue.abandonRequestedAt != null}
+                onClick={() => setValidationOpen(true)}
+              >
+                {issue.validationDisabled ? (
+                  <ShieldCheck data-icon="inline-start" />
+                ) : (
+                  <ShieldOff data-icon="inline-start" />
+                )}
+                {issue.validationDisabled ? "恢复验收" : "取消验收"}
+              </Button>
+            )}
+            {issue.parentId &&
+              !["done", "cancelled"].includes(issue.status) && (
+                <Button
+                  variant="destructive"
+                  disabled={busy || issue.abandonRequestedAt != null}
+                  onClick={() => setAbandonOpen(true)}
+                >
+                  <XCircle data-icon="inline-start" />
+                  {issue.abandonRequestedAt ? "取消后总结中" : "放弃目标"}
                 </Button>
               )}
           </>
@@ -259,11 +347,80 @@ export function IssueDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog open={abandonOpen} onOpenChange={setAbandonOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <XCircle />
+            </AlertDialogMedia>
+            <AlertDialogTitle>放弃这个目标？</AlertDialogTitle>
+            <AlertDialogDescription>
+              此 Issue 的未完成子树会被取消，正在进行的验收会立即停止。Aegis
+              会用一条特殊系统消息要求当前负责人停止实施并提交最终总结；总结后直接以“目标已放弃”结束，不再经过验收。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>返回</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void abandon()}
+            >
+              {busy ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <XCircle data-icon="inline-start" />
+              )}
+              确认放弃
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={validationOpen} onOpenChange={setValidationOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              {issue.validationDisabled ? <ShieldCheck /> : <ShieldOff />}
+            </AlertDialogMedia>
+            <AlertDialogTitle>
+              {issue.validationDisabled ? "恢复目标验收？" : "取消目标验收？"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {issue.validationDisabled
+                ? "此 Issue 的下一次产出会重新交给固定验收会话核对目标。"
+                : "此设置会持久保存在 Issue 上，后续所有 Worker 产出都会跳过验收 Agent。若当前正在验收，会立即停止验收并采用现有产出。"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>返回</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy}
+              onClick={() => void changeValidation()}
+            >
+              {busy ? (
+                <Spinner data-icon="inline-start" />
+              ) : issue.validationDisabled ? (
+                <ShieldCheck data-icon="inline-start" />
+              ) : (
+                <ShieldOff data-icon="inline-start" />
+              )}
+              {issue.validationDisabled ? "确认恢复" : "确认取消验收"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="flex flex-wrap gap-2">
         <StatusBadge status={issue.status} />
         <Badge variant="outline">{issue.priority}</Badge>
         <Badge variant="outline">{issue.workMode}</Badge>
         <Badge variant="outline">深度 {issue.requestDepth}</Badge>
+        <Badge variant={issue.validationDisabled ? "secondary" : "outline"}>
+          {issue.validationDisabled
+            ? "验收已关闭"
+            : issue.validationMode === "automatic"
+              ? "自动验收"
+              : `固定验收 · ${detail.validations.length} 轮 / 常规上限 ${issue.maxValidationAttempts}`}
+        </Badge>
         {issue.executionPhase === "waiting_children" && (
           <Badge variant="secondary" className="gap-1">
             <Clock3 className="size-3" />
@@ -276,6 +433,24 @@ export function IssueDetailPage() {
             汇总中
           </Badge>
         )}
+        {issue.executionPhase === "validating" && (
+          <Badge variant="secondary" className="gap-1">
+            <ShieldCheck className="size-3" />
+            验收中
+          </Badge>
+        )}
+        {issue.executionPhase === "summarizing" && (
+          <Badge variant="secondary" className="gap-1">
+            <XCircle className="size-3" />
+            取消后总结中
+          </Badge>
+        )}
+        {issue.executionPhase === "recovering" && (
+          <Badge variant="secondary">
+            <Spinner data-icon="inline-start" />
+            重启恢复中
+          </Badge>
+        )}
         {issue.assigneeAgentId && (
           <Badge variant="secondary">
             {state?.agents.find((a) => a.id === issue.assigneeAgentId)?.name ??
@@ -283,6 +458,29 @@ export function IssueDetailPage() {
           </Badge>
         )}
       </div>
+      {abandonedObjectives.length > 0 && (
+        <Alert>
+          <XCircle />
+          <AlertTitle>已放弃目标 {abandonedObjectives.length} 项</AlertTitle>
+          <AlertDescription>
+            <div className="flex flex-col gap-3">
+              {abandonedObjectives.map((candidate) => (
+                <div key={candidate.id} className="flex flex-col gap-1">
+                  <Link
+                    className="font-medium underline-offset-4 hover:underline"
+                    to={`/issues/${candidate.id}`}
+                  >
+                    {candidate.identifier} · {candidate.objective}
+                  </Link>
+                  <MarkdownContent className="text-sm">
+                    {candidate.abandonmentReason || "未记录放弃证明"}
+                  </MarkdownContent>
+                </div>
+              ))}
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
       {["waiting_children", "resuming"].includes(issue.executionPhase) && (
         <Alert className="border-primary/20 bg-primary/5 px-4 py-3">
           {issue.executionPhase === "waiting_children" ? (
@@ -308,6 +506,46 @@ export function IssueDetailPage() {
           </AlertDescription>
         </Alert>
       )}
+      {issue.executionPhase === "validating" && (
+        <Alert className="border-primary/20 bg-primary/5 px-4 py-3">
+          <ShieldCheck className="size-4" />
+          <AlertTitle>验收 Agent 正在核对目标</AlertTitle>
+          <AlertDescription>
+            Worker
+            的产出尚未被标记为完成。若未达到目标，反馈会写入评论，并自动交还原负责人继续执行。
+          </AlertDescription>
+        </Alert>
+      )}
+      {issue.executionPhase === "summarizing" && (
+        <Alert className="border-destructive/20 bg-destructive/5 px-4 py-3">
+          <XCircle className="size-4" />
+          <AlertTitle>操作员已放弃目标，正在等待最终总结</AlertTitle>
+          <AlertDescription>
+            原负责人已收到停止实施的系统消息。它只需总结已完成工作、附件和剩余风险；本次结束不会进入验收。
+          </AlertDescription>
+        </Alert>
+      )}
+      {issue.executionPhase === "recovering" && (
+        <Alert>
+          <RotateCcw />
+          <AlertTitle>正在恢复重启前的 Execution</AlertTitle>
+          <AlertDescription>
+            Aegis 会复用原 Pi
+            Session、最近消息、工具事件和执行检查点，并按照并发上限自动继续。
+            {issue.recoveryPhase && ` 中断前阶段：${issue.recoveryPhase}。`}
+          </AlertDescription>
+        </Alert>
+      )}
+      {issue.validationDisabled && issue.executionPhase !== "summarizing" && (
+        <Alert className="border-amber-500/20 bg-amber-500/5 px-4 py-3">
+          <ShieldOff className="size-4" />
+          <AlertTitle>此 Issue 已关闭目标验收</AlertTitle>
+          <AlertDescription>
+            后续 Worker 产出会直接完成，不再交给验收
+            Agent。可在上方随时恢复验收。
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0 space-y-5">
           <Card className="h-[360px] gap-0 overflow-hidden py-0 sm:h-[420px]">
@@ -321,10 +559,7 @@ export function IssueDetailPage() {
                     label="描述"
                     value={issue.description || issue.context || "未填写"}
                   />
-                  <Block
-                    label="验收标准"
-                    value={issue.acceptanceCriteria || "未填写"}
-                  />
+                  <Block label="目标" value={issue.objective || "未填写"} />
                   <Block
                     label="执行边界"
                     value={issue.constraints || "未填写"}
@@ -341,6 +576,88 @@ export function IssueDetailPage() {
               </ScrollArea>
             </CardContent>
           </Card>
+          {detail.validations.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShieldCheck className="size-4" />
+                  目标验收
+                </CardTitle>
+                <CardDescription>
+                  同一个固定验收会话中的逐轮记录；验收者可以看到此前结论与反馈。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {detail.validations.map((validation) => (
+                  <div
+                    key={validation.id}
+                    className="rounded-lg border bg-muted/20 p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium">
+                        第 {validation.attempt} 次验收
+                      </p>
+                      <Badge
+                        variant={
+                          validation.status === "passed"
+                            ? "default"
+                            : validation.status === "running" ||
+                                validation.status === "skipped" ||
+                                validation.status === "interrupted"
+                              ? "secondary"
+                              : "destructive"
+                        }
+                      >
+                        {validation.status === "passed"
+                          ? "通过"
+                          : validation.status === "running"
+                            ? "进行中"
+                            : validation.status === "abandoned"
+                              ? "已放弃"
+                              : validation.status === "skipped"
+                                ? "已跳过"
+                                : validation.status === "interrupted"
+                                  ? "等待恢复"
+                                  : validation.status === "failed"
+                                    ? "未通过"
+                                    : "异常"}
+                      </Badge>
+                    </div>
+                    {validation.summary && (
+                      <MarkdownContent className="mt-3 text-sm">
+                        {validation.summary}
+                      </MarkdownContent>
+                    )}
+                    {validation.feedback && (
+                      <div className="mt-3 rounded-md bg-destructive/5 p-3">
+                        <p className="mb-1 text-xs font-medium text-destructive">
+                          续作要求
+                        </p>
+                        <MarkdownContent className="text-sm">
+                          {validation.feedback}
+                        </MarkdownContent>
+                      </div>
+                    )}
+                    {validation.abandonmentProof && (
+                      <div className="mt-3 rounded-md bg-muted p-3">
+                        <p className="mb-1 text-xs font-medium">
+                          无法达到目标的证明
+                        </p>
+                        <MarkdownContent className="text-sm">
+                          {validation.abandonmentProof}
+                        </MarkdownContent>
+                      </div>
+                    )}
+                    {validation.error && (
+                      <p className="mt-3 text-sm text-destructive">
+                        {validation.error}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
           {detail.children.length > 0 && (
             <Card className="overflow-hidden p-0">
               <CardHeader>
@@ -356,6 +673,7 @@ export function IssueDetailPage() {
                 issues={state?.issues ?? detail.children}
                 relations={state?.relations ?? []}
                 agents={state?.agents ?? []}
+                executions={state?.executions ?? detail.executions}
                 rootIds={detail.children.map((child) => child.id)}
               />
             </Card>
@@ -376,6 +694,9 @@ export function IssueDetailPage() {
                   </TabsTrigger>
                   <TabsTrigger value="events">
                     事件 {detail.events.length}
+                  </TabsTrigger>
+                  <TabsTrigger value="broadcasts">
+                    广播 {detail.broadcasts.length}
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="comments" className="pt-3">
@@ -489,6 +810,13 @@ export function IssueDetailPage() {
                     />
                   </ScrollArea>
                 </TabsContent>
+                <TabsContent value="broadcasts" className="pt-3">
+                  <BroadcastHistory
+                    broadcasts={detail.broadcasts}
+                    issues={state?.issues ?? [issue]}
+                    agents={state?.agents ?? []}
+                  />
+                </TabsContent>
               </Tabs>
             </CardContent>
           </Card>
@@ -513,7 +841,7 @@ export function IssueDetailPage() {
                 Executions
               </CardTitle>
               <CardDescription>
-                每次 Pi 运行都是独立且可调试的会话。
+                Worker 运行独立记录；同一 Issue 的所有验收轮次复用一个验收会话。
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -606,6 +934,100 @@ function Block({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
+function BroadcastHistory({
+  broadcasts,
+  issues,
+  agents,
+}: {
+  broadcasts: TaskBroadcast[]
+  issues: Issue[]
+  agents: AgentDefinition[]
+}) {
+  if (broadcasts.length === 0) {
+    return (
+      <Empty className="h-[520px] sm:h-[560px]">
+        <EmptyHeader>
+          <EmptyTitle>还没有任务广播</EmptyTitle>
+          <EmptyDescription>
+            Agent 分享对其他 Issues 有价值的发现后，广播会显示在这里。
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+  return (
+    <ScrollArea className="h-[520px] pr-3 sm:h-[560px]">
+      <div className="flex flex-col gap-3">
+        {broadcasts.map((broadcast) => {
+          const sourceIssue = issues.find(
+            (candidate) => candidate.id === broadcast.sourceIssueId
+          )
+          const sourceAgent = agents.find(
+            (candidate) => candidate.id === broadcast.sourceAgentId
+          )
+          return (
+            <Card key={broadcast.id} size="sm">
+              <CardHeader>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <RadioTower className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <CardTitle>{broadcast.subject}</CardTitle>
+                      <CardDescription>
+                        {sourceAgent?.name ??
+                          broadcast.sourceAgentName ??
+                          broadcast.sourceAgentId}
+                        {sourceIssue ? (
+                          <>
+                            {" · "}
+                            <Link
+                              to={`/issues/${sourceIssue.id}`}
+                              className="underline-offset-4 hover:underline"
+                            >
+                              {sourceIssue.identifier}
+                            </Link>
+                          </>
+                        ) : broadcast.sourceIssueIdentifier ? (
+                          <> · {broadcast.sourceIssueIdentifier}</>
+                        ) : null}
+                        {" · "}
+                        {formatTime(broadcast.createdAt)}
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                    <Badge
+                      variant={
+                        broadcast.importance === "critical"
+                          ? "destructive"
+                          : broadcast.importance === "important"
+                            ? "secondary"
+                            : "outline"
+                      }
+                    >
+                      {broadcast.importance === "critical"
+                        ? "关键"
+                        : broadcast.importance === "important"
+                          ? "重要"
+                          : "普通"}
+                    </Badge>
+                    <Badge variant="outline">
+                      已投递 {broadcast.deliveredCount}
+                    </Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <MarkdownContent>{broadcast.message}</MarkdownContent>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+    </ScrollArea>
+  )
+}
 function Relation({
   title,
   items,
@@ -632,4 +1054,32 @@ function Relation({
       )}
     </div>
   )
+}
+
+function collectTaskIssues(rootID: string, issues: Issue[]) {
+  const ids = new Set([rootID])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const issue of issues) {
+      if (issue.parentId && ids.has(issue.parentId) && !ids.has(issue.id)) {
+        ids.add(issue.id)
+        changed = true
+      }
+    }
+  }
+  return issues.filter((issue) => ids.has(issue.id))
+}
+
+function findTaskRootID(issueID: string, issues: Issue[]) {
+  const byID = new Map(issues.map((issue) => [issue.id, issue]))
+  let current = byID.get(issueID)
+  const seen = new Set<string>()
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id)
+    const parent = byID.get(current.parentId)
+    if (!parent) break
+    current = parent
+  }
+  return current?.id ?? issueID
 }

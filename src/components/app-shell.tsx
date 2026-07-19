@@ -4,6 +4,7 @@ import {
   CircleGauge,
   ClipboardCheck,
   FileSearch,
+  History,
   ListTodo,
   LibraryBig,
   MessagesSquare,
@@ -45,6 +46,7 @@ const navigation = [
     items: [
       { to: "/", label: "概览", icon: CircleGauge, end: true },
       { to: "/tasks", label: "任务", icon: ListTodo },
+      { to: "/timeline", label: "时间线", icon: History },
       { to: "/issues", label: "Issues", icon: CheckSquare2 },
     ],
   },

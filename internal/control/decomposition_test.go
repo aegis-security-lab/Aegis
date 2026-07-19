@@ -11,7 +11,7 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 	s := configuredStore(t)
 	parent, err := s.CreateIssue(CreateIssueInput{
 		Title: "Implement a broad feature", Priority: "high", WorkMode: "autonomous",
-		AssigneeAgentID: "backend-engineer", AcceptanceCriteria: "The integrated feature passes tests.",
+		AssigneeAgentID: "backend-engineer", Objective: "The integrated feature passes tests.",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -33,8 +33,8 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 		RequestKey: "feature-v1",
 		Summary:    "Backend and UI have separate acceptance criteria.",
 		Children: []SubIssueSpec{
-			{Title: "Implement API", Description: "Add the API contract.", AcceptanceCriteria: "API tests pass.", Priority: "high", AgentID: "backend-engineer", DependsOn: []int{}},
-			{Title: "Integrate UI", Description: "Consume the API.", AcceptanceCriteria: "UI build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
+			{Title: "Implement API", Description: "Add the API contract.", Objective: "API tests pass.", Priority: "high", AgentID: "backend-engineer", DependsOn: []int{}},
+			{Title: "Integrate UI", Description: "Consume the API.", Objective: "UI build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
 		},
 	}
 	tooLong := input
@@ -100,15 +100,15 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 
 func TestStoreNormalizesHistoricalIssueDepths(t *testing.T) {
 	s := configuredStore(t)
-	root, err := s.CreateIssue(CreateIssueInput{Title: "Root", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	root, err := s.CreateIssue(CreateIssueInput{Title: "Root", Objective: "Complete root.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := s.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	child, err := s.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Child", Objective: "Complete child.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	grandchild, err := s.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Grandchild", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	grandchild, err := s.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Grandchild", Objective: "Complete grandchild.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,13 +128,13 @@ func TestStoreNormalizesHistoricalIssueDepths(t *testing.T) {
 
 func TestIssueDepthAndHierarchyCycleBoundaries(t *testing.T) {
 	s := configuredStore(t)
-	parent, err := s.CreateIssue(CreateIssueInput{Title: "Level 0", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	parent, err := s.CreateIssue(CreateIssueInput{Title: "Level 0", Objective: "Complete level.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := parent
 	for depth := 1; depth <= maxIssueDepth; depth++ {
-		parent, err = s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Nested", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+		parent, err = s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Nested", Objective: "Complete nested level.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 		if err != nil {
 			t.Fatalf("create depth %d: %v", depth, err)
 		}
@@ -142,7 +142,7 @@ func TestIssueDepthAndHierarchyCycleBoundaries(t *testing.T) {
 			t.Fatalf("depth=%d, want %d", parent.RequestDepth, depth)
 		}
 	}
-	if _, err = s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Too deep", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"}); err == nil {
+	if _, err = s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Too deep", Objective: "Complete excess level.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"}); err == nil {
 		t.Fatal("creating beyond the maximum hierarchy depth should fail")
 	}
 	if _, err = s.UpdateIssue(root.ID, UpdateIssueInput{ParentID: &parent.ID}); err == nil {

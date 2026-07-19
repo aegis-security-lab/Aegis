@@ -21,15 +21,16 @@ import (
 var sequence atomic.Uint64
 
 type Store struct {
-	mu          sync.RWMutex
-	dataDir     string
-	db          *gorm.DB
-	config      Config
-	agents      []AgentDefinition
-	skills      []SkillDefinition
-	runtime     RuntimeProbe
-	updatedAt   time.Time
-	subscribers map[chan StateView]struct{}
+	mu               sync.RWMutex
+	dataDir          string
+	db               *gorm.DB
+	config           Config
+	agents           []AgentDefinition
+	skills           []SkillDefinition
+	runtime          RuntimeProbe
+	updatedAt        time.Time
+	subscribers      map[chan StateView]struct{}
+	broadcastPending bool
 }
 
 type configRecord struct {
@@ -66,13 +67,22 @@ func NewStore(dataDir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &Issue{}, &IssueRelation{}, &Execution{}, &ExecutionEvent{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &Finding{}); err != nil {
+	// Validation attempts share one fixed Execution per Issue, so this index is
+	// intentionally non-unique. Recreate it before AutoMigrate applies the new schema.
+	if err := db.Exec("DROP INDEX IF EXISTS idx_issue_validations_validation_execution_id").Error; err != nil {
+		return nil, fmt.Errorf("migrate validation execution index: %w", err)
+	}
+	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &Issue{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &Finding{}); err != nil {
 		return nil, fmt.Errorf("migrate sqlite: %w", err)
+	}
+	if err := db.Model(&Approval{}).Where("type = '' OR type IS NULL").Update("type", "tool_call").Error; err != nil {
+		return nil, fmt.Errorf("migrate approval types: %w", err)
 	}
 	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), updatedAt: time.Now()}
 	var settings configRecord
 	if err := db.First(&settings, 1).Error; err == nil {
 		s.config = settings.Value
+		s.config.ValidationMode, s.config.MaxValidationAttempts = normalizeValidationPolicy(s.config.ValidationMode, s.config.MaxValidationAttempts)
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -87,10 +97,101 @@ func NewStore(dataDir string) (*Store, error) {
 	}
 	now := time.Now()
 	if err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Execution{}).Where("status IN ?", []string{"queued", "starting", "running", "waiting_approval"}).Updates(map[string]any{"status": "disconnected", "pid": 0, "finished_at": now, "updated_at": now}).Error; err != nil {
+		var activeExecutions []Execution
+		if err := tx.Where("status IN ?", activeExecutionStatuses).Find(&activeExecutions).Error; err != nil {
 			return err
 		}
-		return tx.Model(&Issue{}).Where("status = ? AND execution_phase <> ?", "in_progress", "waiting_children").Updates(map[string]any{"status": "todo", "execution_phase": "active", "checkout_execution_id": "", "current_execution_id": "", "updated_at": now}).Error
+		activeByIssue := make(map[string][]Execution, len(activeExecutions))
+		activeIDs := make([]string, 0, len(activeExecutions))
+		for _, execution := range activeExecutions {
+			activeByIssue[execution.IssueID] = append(activeByIssue[execution.IssueID], execution)
+			activeIDs = append(activeIDs, execution.ID)
+		}
+		if len(activeIDs) > 0 {
+			if err := tx.Model(&Execution{}).Where("id IN ?", activeIDs).Updates(map[string]any{
+				"status": "disconnected", "pid": 0, "finished_at": now, "updated_at": now,
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&Message{}).Where("execution_id IN ? AND streaming = ?", activeIDs, true).Updates(map[string]any{"streaming": false, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&Approval{}).Where("execution_id IN ? AND status = ?", activeIDs, "pending").Updates(map[string]any{"status": "expired", "resolved_at": now}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&ExecutionEvent{}).Where("execution_id IN ? AND status = ?", activeIDs, "running").Updates(map[string]any{"status": "interrupted", "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&IssueValidation{}).Where("status = ?", "running").Updates(map[string]any{"status": "interrupted", "error": "Aegis 服务重启，正在恢复原验收轮次"}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Issue{}).Where("status = ? AND execution_phase = ?", "in_progress", "summarizing").Updates(map[string]any{
+			"status": "cancelled", "execution_phase": "completed", "checkout_execution_id": "",
+			"objective_abandoned": true, "abandoned_at": now, "cancelled_at": now, "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		var interruptedIssues []Issue
+		if err := tx.Where("status = ? AND execution_phase NOT IN ?", "in_progress", []string{"waiting_children", "summarizing"}).Find(&interruptedIssues).Error; err != nil {
+			return err
+		}
+		for _, issue := range interruptedIssues {
+			executionID := strings.TrimSpace(issue.CheckoutExecutionID)
+			if executionID == "" {
+				executionID = strings.TrimSpace(issue.CurrentExecutionID)
+			}
+			if executionID == "" {
+				candidates := activeByIssue[issue.ID]
+				for _, candidate := range candidates {
+					if candidate.Kind != "wakeup" {
+						executionID = candidate.ID
+						break
+					}
+				}
+				if executionID == "" && len(candidates) > 0 {
+					executionID = candidates[0].ID
+				}
+			}
+			var recoveryExecution Execution
+			if executionID != "" {
+				_ = tx.First(&recoveryExecution, "id = ? AND issue_id = ?", executionID, issue.ID).Error
+			}
+			if recoveryExecution.ID != "" && recoveryExecution.Status == "completed" &&
+				slices.Contains([]string{"work", "rework", "continuation"}, recoveryExecution.Kind) &&
+				strings.TrimSpace(recoveryExecution.Result) != "" {
+				if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+					"status": "todo", "execution_phase": "recovering", "checkout_execution_id": "",
+					"current_execution_id": executionID, "recovery_execution_id": executionID,
+					"recovery_phase": "settled", "recovery_requested_at": now, "updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			updates := map[string]any{
+				"status": "todo", "checkout_execution_id": "", "updated_at": now,
+			}
+			if executionID == "" {
+				updates["execution_phase"] = "active"
+				updates["current_execution_id"] = ""
+			} else {
+				updates["execution_phase"] = "recovering"
+				updates["recovery_execution_id"] = executionID
+				updates["recovery_phase"] = issue.ExecutionPhase
+				updates["recovery_requested_at"] = now
+				updates["current_execution_id"] = executionID
+				if err := tx.Model(&Execution{}).Where("id = ? AND status NOT IN ?", executionID, []string{"cancelled", "failed"}).Updates(map[string]any{
+					"status": "disconnected", "pid": 0, "finished_at": now, "updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		return nil, err
 	}
@@ -176,6 +277,14 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	input.AuthMode = strings.TrimSpace(input.AuthMode)
 	input.Workspace = strings.TrimSpace(input.Workspace)
 	input.ApprovalMode = strings.TrimSpace(input.ApprovalMode)
+	input.ReworkApprovalMode = strings.TrimSpace(input.ReworkApprovalMode)
+	input.ValidationMode = strings.TrimSpace(input.ValidationMode)
+	if input.ReworkApprovalMode == "" {
+		input.ReworkApprovalMode = "all"
+	}
+	if input.ValidationMode == "" {
+		input.ValidationMode = "fixed"
+	}
 	if input.NodePath == "" || input.PiPath == "" {
 		return ConfigView{}, errors.New("Node.js 和 Pi CLI 路径不能为空")
 	}
@@ -205,6 +314,13 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	if !slices.Contains([]string{"all", "risky", "none"}, input.ApprovalMode) {
 		return ConfigView{}, errors.New("不支持的审批模式")
 	}
+	if !slices.Contains([]string{"all", "none"}, input.ReworkApprovalMode) {
+		return ConfigView{}, errors.New("不支持的返工审批模式")
+	}
+	if !slices.Contains([]string{"fixed", "automatic"}, input.ValidationMode) {
+		return ConfigView{}, errors.New("不支持的验收策略")
+	}
+	input.ValidationMode, input.MaxValidationAttempts = normalizeValidationPolicy(input.ValidationMode, input.MaxValidationAttempts)
 	if input.Concurrency < 1 {
 		input.Concurrency = 1
 	}
@@ -223,7 +339,7 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 		return ConfigView{}, errors.New("API Key 认证需要填写密钥")
 	}
 	now := time.Now()
-	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, UpdatedAt: now}
+	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, UpdatedAt: now}
 	if err := s.db.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
 		return ConfigView{}, err
 	}
@@ -233,7 +349,22 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 }
 
 func configView(c Config) ConfigView {
-	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, UpdatedAt: c.UpdatedAt}
+	mode, attempts := normalizeValidationPolicy(c.ValidationMode, c.MaxValidationAttempts)
+	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, UpdatedAt: c.UpdatedAt}
+}
+
+func normalizeValidationPolicy(mode string, attempts int) (string, int) {
+	mode = strings.TrimSpace(mode)
+	if mode != "automatic" {
+		mode = "fixed"
+	}
+	if attempts < 1 {
+		attempts = 3
+	}
+	if attempts > 20 {
+		attempts = 20
+	}
+	return mode, attempts
 }
 func (s *Store) SetRuntimeProbe(p RuntimeProbe) {
 	s.mu.Lock()
@@ -256,6 +387,12 @@ func (s *Store) stateViewLocked() StateView {
 	s.db.Order("created_at asc").Find(&relations)
 	s.db.Order("started_at desc").Limit(300).Find(&executions)
 	s.db.Order("created_at desc").Limit(200).Find(&approvals)
+	for index := range issues {
+		issues[index] = compactIssueForState(issues[index])
+	}
+	for index := range executions {
+		executions[index] = compactExecution(executions[index])
+	}
 	return StateView{Configured: s.config.Configured, Config: configView(s.config), Runtime: s.runtime, Projects: projects, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
 }
 func (s *Store) Subscribe() (<-chan StateView, func()) {
@@ -275,6 +412,9 @@ func (s *Store) Subscribe() (<-chan StateView, func()) {
 	}
 }
 func (s *Store) broadcastLocked() {
+	if len(s.subscribers) == 0 {
+		return
+	}
 	view := s.stateViewLocked()
 	for ch := range s.subscribers {
 		select {
@@ -290,6 +430,10 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	input.Title, err = normalizeIssueTitle(input.Title)
 	if err != nil {
 		return Issue{}, err
+	}
+	input.Objective = strings.TrimSpace(input.Objective)
+	if input.Objective == "" {
+		return Issue{}, errors.New("目标必填")
 	}
 	if input.Priority == "" {
 		input.Priority = "medium"
@@ -357,13 +501,14 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, errors.New("invalid issue status")
 	}
 	var issue Issue
+	validationMode, maxValidationAttempts := normalizeValidationPolicy(s.config.ValidationMode, s.config.MaxValidationAttempts)
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		var max int64
 		if err := tx.Model(&Issue{}).Select("coalesce(max(number),0)").Scan(&max).Error; err != nil {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, Title: input.Title, Description: strings.TrimSpace(input.Description), AcceptanceCriteria: strings.TrimSpace(input.AcceptanceCriteria), Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -373,6 +518,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 				return fmt.Errorf("Issue 已达到最大层级 %d", maxIssueDepth)
 			}
 			issue.RequestDepth = parent.RequestDepth + 1
+			issue.ValidationMode, issue.MaxValidationAttempts = normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
 		}
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
@@ -408,7 +554,7 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}}
+	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Broadcasts: []TaskBroadcast{}}
 	d.Decompositions = []IssueDecomposition{}
 	s.db.Where("parent_id = ?", issue.ID).Order("number asc").Find(&d.Children)
 	var incoming, outgoing []IssueRelation
@@ -427,6 +573,9 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 		}
 	}
 	s.db.Where("issue_id = ?", issue.ID).Order("started_at desc").Find(&d.Executions)
+	for index := range d.Executions {
+		d.Executions[index] = compactExecution(d.Executions[index])
+	}
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at asc").Find(&d.Comments)
 	var attachments []IssueAttachment
 	s.db.Where("issue_id = ? AND comment_id <> ''", issue.ID).Order("created_at asc").Find(&attachments)
@@ -440,12 +589,31 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 			d.Comments[index].Attachments = []IssueAttachment{}
 		}
 	}
-	s.db.Where("issue_id = ?", issue.ID).Order("created_at asc").Find(&d.Messages)
-	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Events)
+	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Limit(issueDetailEventLimit).Find(&d.Events)
+	for index := range d.Events {
+		d.Events[index] = compactExecutionEvent(d.Events[index])
+	}
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Approvals)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Wakeups)
 	s.db.Where("parent_issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Decompositions)
+	s.db.Where("issue_id = ?", issue.ID).Order("attempt desc").Find(&d.Validations)
+	root, err := s.taskRoot(issue)
+	if err != nil {
+		return IssueDetail{}, err
+	}
+	d.Broadcasts, err = s.taskBroadcasts(root.ID, 100)
+	if err != nil {
+		return IssueDetail{}, err
+	}
 	return d, nil
+}
+
+func (s *Store) GetExecutionEvent(id string) (ExecutionEvent, error) {
+	var event ExecutionEvent
+	if err := s.db.First(&event, "id = ?", id).Error; err != nil {
+		return ExecutionEvent{}, errors.New("execution event not found")
+	}
+	return event, nil
 }
 
 func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
@@ -474,8 +642,12 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if input.Description != nil {
 		updates["description"] = strings.TrimSpace(*input.Description)
 	}
-	if input.AcceptanceCriteria != nil {
-		updates["acceptance_criteria"] = strings.TrimSpace(*input.AcceptanceCriteria)
+	if input.Objective != nil {
+		objective := strings.TrimSpace(*input.Objective)
+		if objective == "" {
+			return Issue{}, errors.New("目标必填")
+		}
+		updates["objective"] = objective
 	}
 	if input.Priority != nil {
 		if !slices.Contains([]string{"critical", "high", "medium", "low"}, *input.Priority) {
@@ -805,10 +977,26 @@ func (s *Store) createExecution(issue Issue, agentID, kind string) (Execution, e
 	if err != nil {
 		return Execution{}, err
 	}
+	return s.createExecutionRecord(issue, agent, kind)
+}
+
+func (s *Store) createInternalExecution(issue Issue, agentID, kind string) (Execution, AgentDefinition, error) {
+	agent, err := s.GetAgent(agentID)
+	if err != nil {
+		return Execution{}, AgentDefinition{}, err
+	}
+	if !agent.Enabled || !agent.Internal {
+		return Execution{}, AgentDefinition{}, errors.New("internal agent is unavailable")
+	}
+	execution, err := s.createExecutionRecord(issue, agent, kind)
+	return execution, agent, err
+}
+
+func (s *Store) createExecutionRecord(issue Issue, agent AgentDefinition, kind string) (Execution, error) {
 	cfg := s.effectiveAgentConfig(agent)
 	now := time.Now()
-	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agentID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: nextID("pi-session"), SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
-	err = s.db.Create(&e).Error
+	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agent.ID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: nextID("pi-session"), SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
+	err := s.db.Create(&e).Error
 	return e, err
 }
 func (s *Store) updateExecution(id string, updates map[string]any) error {
@@ -830,7 +1018,26 @@ func (s *Store) addEvent(executionID, issueID, kind, title, detail string) {
 	_ = s.db.Create(&ExecutionEvent{ID: nextID("event"), ExecutionID: executionID, IssueID: issueID, Type: kind, Title: title, Detail: detail, CreatedAt: time.Now()}).Error
 	s.notify()
 }
-func (s *Store) notify() { s.mu.Lock(); s.changedLocked(); s.mu.Unlock() }
+func (s *Store) notify() {
+	s.mu.Lock()
+	s.updatedAt = time.Now()
+	if len(s.subscribers) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	if s.broadcastPending {
+		s.mu.Unlock()
+		return
+	}
+	s.broadcastPending = true
+	s.mu.Unlock()
+	time.AfterFunc(500*time.Millisecond, func() {
+		s.mu.Lock()
+		s.broadcastPending = false
+		s.broadcastLocked()
+		s.mu.Unlock()
+	})
+}
 
 func nextID(prefix string) string {
 	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixMilli(), sequence.Add(1))

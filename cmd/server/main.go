@@ -64,6 +64,22 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(200, v)
 	})
+	api.GET("/execution-events/:id", func(c *gin.Context) {
+		v, err := store.GetExecutionEvent(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/tasks/:id/timeline", func(c *gin.Context) {
+		v, err := store.TaskTimeline(c.Param("id"))
+		if err != nil {
+			writeError(c, 404, err)
+			return
+		}
+		c.JSON(200, v)
+	})
 	api.POST("/issues", func(c *gin.Context) {
 		var in control.CreateIssueInput
 		if !bindJSON(c, &in) {
@@ -123,6 +139,94 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusCreated, result)
 	})
+	api.POST("/internal/executions/:id/progress", func(c *gin.Context) {
+		var in control.ReportExecutionProgressInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.ReportExecutionProgress(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
+	api.POST("/internal/executions/:id/broadcasts", func(c *gin.Context) {
+		var in control.BroadcastMessageInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.BroadcastExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
+	api.GET("/internal/executions/:id/broadcasts", func(c *gin.Context) {
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		limit, err := strconv.Atoi(fallbackQuery(c.Query("limit"), "20"))
+		if err != nil || limit < 1 || limit > 50 {
+			writeError(c, http.StatusBadRequest, errors.New("invalid broadcast history limit"))
+			return
+		}
+		result, err := manager.ExecutionBroadcastHistory(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), limit)
+		if err != nil {
+			writeError(c, http.StatusUnauthorized, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"broadcasts": result})
+	})
+	api.GET("/internal/executions/:id/validation/attachments", func(c *gin.Context) {
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.ValidationAttachments(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")))
+		if err != nil {
+			writeError(c, http.StatusUnauthorized, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"attachments": result})
+	})
+	api.GET("/internal/executions/:id/validation/attachments/:attachmentId", func(c *gin.Context) {
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		offset, err := strconv.ParseInt(fallbackQuery(c.Query("offset"), "0"), 10, 64)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, errors.New("invalid attachment offset"))
+			return
+		}
+		limit, err := strconv.Atoi(fallbackQuery(c.Query("limit"), "16384"))
+		if err != nil {
+			writeError(c, http.StatusBadRequest, errors.New("invalid attachment limit"))
+			return
+		}
+		result, err := manager.ReadValidationAttachment(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), c.Param("attachmentId"), offset, limit)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
 	api.POST("/internal/executions/:id/knowledge/search", func(c *gin.Context) {
 		var in control.KnowledgeSearchInput
 		if !bindJSON(c, &in) {
@@ -139,6 +243,53 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.JSON(http.StatusOK, result)
+	})
+	api.GET("/internal/executions/:id/memo", func(c *gin.Context) {
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.ExecutionAgentMemo(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")))
+		if err != nil {
+			writeError(c, http.StatusUnauthorized, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.PUT("/internal/executions/:id/memo", func(c *gin.Context) {
+		var in control.UpdateAgentMemoInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.UpdateExecutionAgentMemo(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/rework", func(c *gin.Context) {
+		var in control.RequestIssueReworkInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.RequestExecutionRework(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, result)
 	})
 	api.GET("/attachments/:id", func(c *gin.Context) {
 		attachment, file, err := store.AttachmentFile(c.Param("id"))
@@ -188,6 +339,30 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.JSON(200, result)
+	})
+	api.POST("/issues/:id/abandon", func(c *gin.Context) {
+		var in control.AbandonIssueInput
+		if c.Request.ContentLength > 0 && !bindJSON(c, &in) {
+			return
+		}
+		issue, err := manager.AbandonIssue(c.Param("id"), in.Reason)
+		if err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.JSON(http.StatusOK, issue)
+	})
+	api.PUT("/issues/:id/validation", func(c *gin.Context) {
+		var in control.IssueValidationControlInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		issue, err := manager.SetIssueValidationDisabled(c.Param("id"), in.Disabled)
+		if err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.JSON(http.StatusOK, issue)
 	})
 	api.POST("/issues/:id/relations", func(c *gin.Context) {
 		var in control.CreateRelationInput
@@ -594,6 +769,13 @@ func bindJSON(c *gin.Context, target any) bool {
 }
 func writeError(c *gin.Context, status int, err error) {
 	c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
+}
+
+func fallbackQuery(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 func envOr(k, v string) string {
 	if x := strings.TrimSpace(os.Getenv(k)); x != "" {

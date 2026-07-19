@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestAttachmentToolIsMigratedOntoExistingAgents(t *testing.T) {
@@ -50,7 +52,7 @@ func TestAttachmentToolIsMigratedOntoExistingAgents(t *testing.T) {
 func TestAttachmentIsCopiedAndBoundToCompletionComment(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Generate report", Priority: "medium", WorkMode: "autonomous",
+		Title: "Generate report", Objective: "A verified report is generated.", Priority: "medium", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
@@ -114,10 +116,94 @@ func TestAttachmentIsCopiedAndBoundToCompletionComment(t *testing.T) {
 	}
 }
 
+func TestValidationAgentCanReadOnlySourceExecutionAttachmentsInChunks(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Validate attached report", Objective: "The attached report contains verified evidence.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := "# Security report\n\nFinding A is verified with concrete evidence.\n"
+	path := filepath.Join(issue.Workspace, "security-report.md")
+	if err = os.WriteFile(path, []byte(report), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := store.captureAttachment(issue, source.ID, PublishAttachmentInput{Path: path, Description: "Complete report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	validationExecution, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validation := IssueValidation{
+		ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID,
+		ValidationExecutionID: validationExecution.ID, Attempt: 1, Objective: issue.Objective,
+		CandidateResult: "The complete report is attached.", Status: "running", CreatedAt: time.Now(),
+	}
+	if err = store.db.Create(&validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, controlURL: "http://127.0.0.1:8080", sessions: map[string]*PiSession{}}
+	manager.sessions[validationExecution.ID] = &PiSession{
+		executionID: validationExecution.ID, issueID: issue.ID, agentID: "acceptance-validator",
+		kind: "validation", controlToken: "validation-secret",
+	}
+	if _, err = manager.ValidationAttachments(validationExecution.ID, "wrong-secret"); err == nil {
+		t.Fatal("expected invalid validation token to be rejected")
+	}
+	attachments, err := manager.ValidationAttachments(validationExecution.ID, "validation-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attachments) != 1 || attachments[0].ID != attachment.ID || !attachments[0].Readable || !strings.Contains(attachments[0].DownloadURL, attachment.ID) {
+		t.Fatalf("unexpected validation attachments: %+v", attachments)
+	}
+	first, err := manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", attachment.ID, 0, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EOF || first.NextOffset != 12 || first.Content != report[:12] {
+		t.Fatalf("unexpected first attachment chunk: %+v", first)
+	}
+	second, err := manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", attachment.ID, first.NextOffset, 32768)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.EOF || first.Content+second.Content != report {
+		t.Fatalf("unexpected complete attachment content: first=%+v second=%+v", first, second)
+	}
+
+	otherIssue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Other report", Objective: "Keep unrelated evidence isolated.", Priority: "low", WorkMode: "autonomous",
+		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPath := filepath.Join(otherIssue.Workspace, "other-report.md")
+	if err = os.WriteFile(otherPath, []byte("unrelated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.captureAttachment(otherIssue, "other-execution", PublishAttachmentInput{Path: otherPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", other.ID, 0, 100); err == nil {
+		t.Fatal("validator should not read an attachment from another source Execution")
+	}
+}
+
 func TestAttachmentRejectsPathOutsideWorkspace(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Unsafe report", Priority: "medium", WorkMode: "autonomous",
+		Title: "Unsafe report", Objective: "A report is generated within the workspace.", Priority: "medium", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
@@ -135,7 +221,7 @@ func TestAttachmentRejectsPathOutsideWorkspace(t *testing.T) {
 func TestSuccessfulWriteIsCollectedAsAttachment(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Write artifact", Priority: "medium", WorkMode: "autonomous",
+		Title: "Write artifact", Objective: "The output artifact exists.", Priority: "medium", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {

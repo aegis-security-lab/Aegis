@@ -8,7 +8,7 @@ Aegis 是一个由真实 Pi Agent 驱动的本地任务控制台。它把可复�
 - 多页面后台：总览、任务、Issues、Agents、Skills、Sessions、审批中心与设置
 - Gin HTTP API 与 SSE 实时状态流
 - SQLite + GORM 标准化持久化 Project、Issue、IssueRelation、Execution、消息、评论、审批与 Agent Wakeup
-- Pi JSONL RPC Runtime，支持真实 session、流式消息、工具调用和 session 统计
+- Pi JSONL RPC Runtime，支持真实 session、流式消息、工具调用、阶段进度和 session 统计
 - Agent 是独立的模型覆盖、系统提示词、工具集、Skills 和权限边界组合；模型留空时继承全局配置
 - 首次启动自动创建 Orchestrator、后端工程师、前端工程师和红队攻防工程师，并为三个专业 Agent 分配不同 Skills
 - Skill 管理支持标准 `SKILL.md` 的新增、编辑、ZIP/Markdown 导入、ZIP 导出与本地路径安装
@@ -21,7 +21,8 @@ Aegis 是一个由真实 Pi Agent 驱动的本地任务控制台。它把可复�
 - 一个 Issue 可以保留多次 Execution；每次 Execution 对应独立 Pi Session、消息、事件、统计和审批
 - Issue 评论支持稳定 Agent ID mention；调度器把 mention 转成持久化 Wakeup 并启动目标 Agent 的真实 Execution
 - Agent 回复可以继续 mention 另一个 Agent，形成真实的链式协作
-- guided / autonomous 两种运行模式，以及 all / risky / none 三种审批策略
+- 普通 Agent 可以通过任务树级广播同步跨 Issue 的关键发现；广播持久化后会实时投递给同一任务中正在执行的其他 Worker，并可由后续 Agent 查询历史
+- guided / autonomous 两种运行模式；工具调用与 Issue 返工使用独立审批类型和全局策略，Agent 可分别覆盖默认值
 - Execution 停止；Issue 人工复核；运行中 Agent 对话；Session 消息和事件调试
 - React 19、Tailwind CSS v4、shadcn/ui Base Nova；桌面与移动端布局
 
@@ -70,9 +71,9 @@ Agent 是可复用定义，Issue 是工作对象，Execution 是一次执行尝�
 
 - `/agents` 编辑每个 Agent 自己的模型覆盖、系统提示词、工具、Skills 与权限边界。
 - `/skills` 管理 `SKILL.md` 能力包以及它们与 Agent 的引用关系。
-- `/sessions` 查看 Pi session ID、Execution、PID、模型快照、消息、事件和 token/cost 统计。
+- `/sessions` 查看 Pi session ID、Execution、PID、模型快照、阶段进度、消息、事件和 token/cost 统计。
 
-全局设置只提供默认模型；Agent 的模型字段留空时继承全局 Provider、Model、Base URL 和 Thinking。工具集不会从全局共享，每个 Agent 都保存自己的独立列表；`aegis_create_subissues` 是所有 Agent 固有的控制面能力，不能移除。
+全局设置只提供默认模型；Agent 的模型字段留空时继承全局 Provider、Model、Base URL 和 Thinking。工具集不会从全局共享，每个 Agent 都保存自己的独立列表；`aegis_create_subissues`、`aegis_report_progress`、`aegis_broadcast`、`aegis_list_broadcasts` 等 Aegis 控制面工具是所有普通 Agent 的固有能力，不能移除。Agent 在完成调查、设计、实现或验证等实质阶段后会被要求调用 `aegis_report_progress`；发现可能影响其他 Issues 的接口、约束、证据、风险或阻塞时则使用任务广播。
 
 ### Issue 评论与 Agent-to-Agent 调用
 
@@ -82,9 +83,11 @@ Agent 是可复用定义，Issue 是工作对象，Execution 是一次执行尝�
 [@红队攻防工程师](agent://red-team-engineer) 请独立复核这个结果。
 ```
 
-调度器会持久化一条 `issue_comment_mentioned` Wakeup，并为该 Agent 创建真实的 mention Execution 与 Pi RPC session。目标 Agent 的回复会写回原 Issue 评论线程；回复中包含另一个有效的结构化 mention 时，会继续为下一个 Agent 创建 Wakeup。普通的 `@red-team-engineer` 文本不会触发唤醒，避免误调用。
+调度器会持久化一条 `issue_comment_mentioned` Wakeup，并优先续接该 Issue 下该 Agent 最近的 Pi RPC session：会话仍在线时直接投递，进程已退出时使用原 session ID 恢复；只有该 Agent 从未处理过此 Issue 时才创建新的 mention Execution。目标 Agent 的回复会写回原 Issue 评论线程；回复中包含另一个有效的结构化 mention 时，会继续为下一个 Agent 创建 Wakeup。普通的 `@red-team-engineer` 文本不会触发唤醒，避免误调用。
 
 Mention 不会改变 Issue 所有权，也不会重新打开已经完成的 Issue。这里的 Agent ID 是定义 ID，Execution ID 和 Pi Session ID 只用于运行时诊断。
+
+已完成或待复核的 Issue 收到明确的补做、重新拆解或重新执行要求时，Agent 可以调用 `aegis_request_rework` 发起 `issue_rework` 审批。批准后 Aegis 创建新的工作 Execution、重新取得该 Issue 的 checkout，并将批准的返工要求作为新一轮 Prompt；若该类型配置为自动批准则直接启动。工具调用与 Issue 返工可分别配置全局审批策略，每个 Agent 的对应配置留空时继承全局，非空时覆盖。
 
 ### 运行时递归拆解
 

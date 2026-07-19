@@ -21,19 +21,19 @@ var _ io.WriteCloser = (*trackedWriteCloser)(nil)
 
 func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	store := configuredStore(t)
-	task, err := store.CreateIssue(CreateIssueInput{Title: "Task", Priority: "high", WorkMode: "autonomous"})
+	task, err := store.CreateIssue(CreateIssueInput{Title: "Task", Objective: "Complete the task tree.", Priority: "high", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Child", Objective: "Complete the child.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	grandchild, err := store.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Grandchild", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	grandchild, err := store.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Grandchild", Objective: "Complete the grandchild.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	doneChild, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Already done", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	doneChild, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Already done", Objective: "Remain complete.", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

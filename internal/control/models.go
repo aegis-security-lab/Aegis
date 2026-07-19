@@ -3,37 +3,43 @@ package control
 import "time"
 
 type Config struct {
-	Configured   bool         `json:"configured"`
-	NodePath     string       `json:"nodePath"`
-	PiPath       string       `json:"piPath"`
-	Provider     string       `json:"provider"`
-	Model        string       `json:"model"`
-	Pricing      ModelPricing `json:"pricing"`
-	BaseURL      string       `json:"baseUrl"`
-	Thinking     string       `json:"thinking"`
-	AuthMode     string       `json:"authMode"`
-	APIKey       string       `json:"apiKey,omitempty"`
-	Workspace    string       `json:"workspace"`
-	Concurrency  int          `json:"concurrency"`
-	ApprovalMode string       `json:"approvalMode"`
-	UpdatedAt    time.Time    `json:"updatedAt"`
+	Configured            bool         `json:"configured"`
+	NodePath              string       `json:"nodePath"`
+	PiPath                string       `json:"piPath"`
+	Provider              string       `json:"provider"`
+	Model                 string       `json:"model"`
+	Pricing               ModelPricing `json:"pricing"`
+	BaseURL               string       `json:"baseUrl"`
+	Thinking              string       `json:"thinking"`
+	AuthMode              string       `json:"authMode"`
+	APIKey                string       `json:"apiKey,omitempty"`
+	Workspace             string       `json:"workspace"`
+	Concurrency           int          `json:"concurrency"`
+	ApprovalMode          string       `json:"approvalMode"`
+	ReworkApprovalMode    string       `json:"reworkApprovalMode"`
+	ValidationMode        string       `json:"validationMode"`
+	MaxValidationAttempts int          `json:"maxValidationAttempts"`
+	UpdatedAt             time.Time    `json:"updatedAt"`
 }
 
 type ConfigView struct {
-	Configured   bool         `json:"configured"`
-	NodePath     string       `json:"nodePath"`
-	PiPath       string       `json:"piPath"`
-	Provider     string       `json:"provider"`
-	Model        string       `json:"model"`
-	Pricing      ModelPricing `json:"pricing"`
-	BaseURL      string       `json:"baseUrl"`
-	Thinking     string       `json:"thinking"`
-	AuthMode     string       `json:"authMode"`
-	HasAPIKey    bool         `json:"hasApiKey"`
-	Workspace    string       `json:"workspace"`
-	Concurrency  int          `json:"concurrency"`
-	ApprovalMode string       `json:"approvalMode"`
-	UpdatedAt    time.Time    `json:"updatedAt"`
+	Configured            bool         `json:"configured"`
+	NodePath              string       `json:"nodePath"`
+	PiPath                string       `json:"piPath"`
+	Provider              string       `json:"provider"`
+	Model                 string       `json:"model"`
+	Pricing               ModelPricing `json:"pricing"`
+	BaseURL               string       `json:"baseUrl"`
+	Thinking              string       `json:"thinking"`
+	AuthMode              string       `json:"authMode"`
+	HasAPIKey             bool         `json:"hasApiKey"`
+	Workspace             string       `json:"workspace"`
+	Concurrency           int          `json:"concurrency"`
+	ApprovalMode          string       `json:"approvalMode"`
+	ReworkApprovalMode    string       `json:"reworkApprovalMode"`
+	ValidationMode        string       `json:"validationMode"`
+	MaxValidationAttempts int          `json:"maxValidationAttempts"`
+	UpdatedAt             time.Time    `json:"updatedAt"`
 }
 
 type RuntimeProbe struct {
@@ -59,33 +65,44 @@ type Project struct {
 
 // Issue is the single source of truth for work. Top-level issues are Tasks; children are execution units.
 type Issue struct {
-	ID                  string     `json:"id" gorm:"primaryKey"`
-	Number              int64      `json:"number" gorm:"uniqueIndex"`
-	Identifier          string     `json:"identifier" gorm:"uniqueIndex"`
-	ProjectID           string     `json:"projectId" gorm:"index"`
-	ParentID            string     `json:"parentId,omitempty" gorm:"index"`
-	Title               string     `json:"title"`
-	Description         string     `json:"description"`
-	AcceptanceCriteria  string     `json:"acceptanceCriteria"`
-	Status              string     `json:"status" gorm:"index"`
-	Priority            string     `json:"priority" gorm:"index"`
-	WorkMode            string     `json:"workMode"`
-	ExecutionPhase      string     `json:"executionPhase" gorm:"index"`
-	RequestDepth        int        `json:"requestDepth"`
-	AssigneeAgentID     string     `json:"assigneeAgentId,omitempty" gorm:"index"`
-	CheckoutExecutionID string     `json:"checkoutExecutionId,omitempty" gorm:"index"`
-	CurrentExecutionID  string     `json:"currentExecutionId,omitempty" gorm:"index"`
-	Workspace           string     `json:"workspace"`
-	Context             string     `json:"context,omitempty"`
-	Constraints         string     `json:"constraints,omitempty"`
-	Result              string     `json:"result,omitempty"`
-	Error               string     `json:"error,omitempty"`
-	CreatedBy           string     `json:"createdBy"`
-	StartedAt           *time.Time `json:"startedAt,omitempty"`
-	CompletedAt         *time.Time `json:"completedAt,omitempty"`
-	CancelledAt         *time.Time `json:"cancelledAt,omitempty"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                    string     `json:"id" gorm:"primaryKey"`
+	Number                int64      `json:"number" gorm:"uniqueIndex"`
+	Identifier            string     `json:"identifier" gorm:"uniqueIndex"`
+	ProjectID             string     `json:"projectId" gorm:"index"`
+	ParentID              string     `json:"parentId,omitempty" gorm:"index"`
+	Title                 string     `json:"title"`
+	Description           string     `json:"description"`
+	Objective             string     `json:"objective" gorm:"type:text"`
+	Status                string     `json:"status" gorm:"index"`
+	Priority              string     `json:"priority" gorm:"index"`
+	WorkMode              string     `json:"workMode"`
+	ExecutionPhase        string     `json:"executionPhase" gorm:"index"`
+	RequestDepth          int        `json:"requestDepth"`
+	AssigneeAgentID       string     `json:"assigneeAgentId,omitempty" gorm:"index"`
+	CheckoutExecutionID   string     `json:"checkoutExecutionId,omitempty" gorm:"index"`
+	CurrentExecutionID    string     `json:"currentExecutionId,omitempty" gorm:"index"`
+	ValidationExecutionID string     `json:"validationExecutionId,omitempty" gorm:"index"`
+	ValidationMode        string     `json:"validationMode" gorm:"default:fixed"`
+	MaxValidationAttempts int        `json:"maxValidationAttempts" gorm:"default:3"`
+	ValidationDisabled    bool       `json:"validationDisabled" gorm:"index"`
+	RecoveryExecutionID   string     `json:"recoveryExecutionId,omitempty" gorm:"index"`
+	RecoveryPhase         string     `json:"recoveryPhase,omitempty"`
+	RecoveryRequestedAt   *time.Time `json:"recoveryRequestedAt,omitempty"`
+	Workspace             string     `json:"workspace"`
+	Context               string     `json:"context,omitempty"`
+	Constraints           string     `json:"constraints,omitempty"`
+	Result                string     `json:"result,omitempty"`
+	Error                 string     `json:"error,omitempty"`
+	ObjectiveAbandoned    bool       `json:"objectiveAbandoned" gorm:"index"`
+	AbandonmentReason     string     `json:"abandonmentReason,omitempty" gorm:"type:text"`
+	AbandonRequestedAt    *time.Time `json:"abandonRequestedAt,omitempty"`
+	AbandonedAt           *time.Time `json:"abandonedAt,omitempty"`
+	CreatedBy             string     `json:"createdBy"`
+	StartedAt             *time.Time `json:"startedAt,omitempty"`
+	CompletedAt           *time.Time `json:"completedAt,omitempty"`
+	CancelledAt           *time.Time `json:"cancelledAt,omitempty"`
+	CreatedAt             time.Time  `json:"createdAt"`
+	UpdatedAt             time.Time  `json:"updatedAt"`
 }
 
 // IssueRelation keeps dependency edges independent from the parent/child hierarchy.
@@ -111,6 +128,8 @@ type Execution struct {
 	SessionID        string         `json:"sessionId" gorm:"uniqueIndex"`
 	PID              int            `json:"pid,omitempty" gorm:"column:pid"`
 	CurrentTool      string         `json:"currentTool,omitempty"`
+	Checkpoint       string         `json:"checkpoint,omitempty" gorm:"type:text"`
+	CheckpointAt     *time.Time     `json:"checkpointAt,omitempty"`
 	InitialPrompt    string         `json:"initialPrompt,omitempty" gorm:"type:text"`
 	SystemPrompt     string         `json:"systemPrompt,omitempty" gorm:"type:text"`
 	ToolsSnapshot    []ToolSnapshot `json:"toolsSnapshot" gorm:"serializer:json;type:text"`
@@ -126,6 +145,27 @@ type Execution struct {
 	StartedAt        time.Time      `json:"startedAt"`
 	UpdatedAt        time.Time      `json:"updatedAt"`
 	FinishedAt       *time.Time     `json:"finishedAt,omitempty"`
+}
+
+// IssueValidation is the durable hand-off between a worker Execution and the
+// read-only acceptance Agent. It snapshots both sides of the decision so a
+// later model or prompt change cannot rewrite the audit trail.
+type IssueValidation struct {
+	ID                    string     `json:"id" gorm:"primaryKey"`
+	IssueID               string     `json:"issueId" gorm:"index"`
+	SourceExecutionID     string     `json:"sourceExecutionId" gorm:"index"`
+	ValidationExecutionID string     `json:"validationExecutionId" gorm:"index"`
+	Attempt               int        `json:"attempt"`
+	Objective             string     `json:"objective" gorm:"type:text"`
+	CandidateResult       string     `json:"candidateResult" gorm:"type:text"`
+	Status                string     `json:"status" gorm:"index"`
+	Passed                bool       `json:"passed"`
+	Summary               string     `json:"summary" gorm:"type:text"`
+	Feedback              string     `json:"feedback" gorm:"type:text"`
+	AbandonmentProof      string     `json:"abandonmentProof,omitempty" gorm:"type:text"`
+	Error                 string     `json:"error,omitempty" gorm:"type:text"`
+	CreatedAt             time.Time  `json:"createdAt"`
+	CompletedAt           *time.Time `json:"completedAt,omitempty"`
 }
 
 type ToolSnapshot struct {
@@ -161,6 +201,40 @@ type ExecutionEvent struct {
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
+
+// ExecutionProgress is an immutable, Agent-authored milestone within one Pi
+// Session. It is stored separately from raw tool events so the Session UI can
+// present a concise work log without interpreting provider-specific payloads.
+type ExecutionProgress struct {
+	ID              string    `json:"id" gorm:"primaryKey"`
+	ExecutionID     string    `json:"executionId" gorm:"index"`
+	IssueID         string    `json:"issueId" gorm:"index"`
+	Stage           string    `json:"stage"`
+	Summary         string    `json:"summary" gorm:"type:text"`
+	CurrentActivity string    `json:"currentActivity" gorm:"type:text"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+// TaskBroadcast is a durable peer-to-peer coordination message scoped to one
+// top-level Task tree. Runtime delivery is best-effort; the history remains
+// available to Agents that start after the broadcast was created.
+type TaskBroadcast struct {
+	ID                    string    `json:"id" gorm:"primaryKey"`
+	TaskID                string    `json:"taskId" gorm:"index"`
+	SourceIssueID         string    `json:"sourceIssueId" gorm:"index"`
+	SourceIssueIdentifier string    `json:"sourceIssueIdentifier"`
+	SourceIssueTitle      string    `json:"sourceIssueTitle"`
+	SourceExecutionID     string    `json:"sourceExecutionId" gorm:"index"`
+	SourceAgentID         string    `json:"sourceAgentId" gorm:"index"`
+	SourceAgentName       string    `json:"sourceAgentName"`
+	Subject               string    `json:"subject"`
+	Message               string    `json:"message" gorm:"type:text"`
+	Importance            string    `json:"importance" gorm:"index"`
+	DeliveredCount        int       `json:"deliveredCount"`
+	RecipientExecutionIDs []string  `json:"recipientExecutionIds" gorm:"serializer:json;type:text"`
+	CreatedAt             time.Time `json:"createdAt"`
+}
+
 type Message struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
 	ExecutionID string    `json:"executionId" gorm:"index"`
@@ -176,6 +250,7 @@ type Approval struct {
 	ExecutionID string     `json:"executionId" gorm:"index"`
 	IssueID     string     `json:"issueId,omitempty" gorm:"index"`
 	RequestID   string     `json:"-"`
+	Type        string     `json:"type" gorm:"index"`
 	Title       string     `json:"title"`
 	Detail      string     `json:"detail"`
 	Status      string     `json:"status" gorm:"index"`
@@ -212,6 +287,25 @@ type PublishAttachmentInput struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
+
+type ValidationAttachmentInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType"`
+	Size        int64  `json:"size"`
+	DownloadURL string `json:"downloadUrl"`
+	Readable    bool   `json:"readable"`
+}
+
+type ValidationAttachmentChunk struct {
+	Attachment ValidationAttachmentInfo `json:"attachment"`
+	Offset     int64                    `json:"offset"`
+	NextOffset int64                    `json:"nextOffset"`
+	Content    string                   `json:"content"`
+	EOF        bool                     `json:"eof"`
+}
+
 type AgentWakeup struct {
 	ID          string     `json:"id" gorm:"primaryKey"`
 	IssueID     string     `json:"issueId" gorm:"index"`
@@ -237,12 +331,12 @@ type IssueDecomposition struct {
 }
 
 type SubIssueSpec struct {
-	Title              string `json:"title"`
-	Description        string `json:"description"`
-	AcceptanceCriteria string `json:"acceptanceCriteria"`
-	Priority           string `json:"priority"`
-	AgentID            string `json:"agentId"`
-	DependsOn          []int  `json:"dependsOn"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Objective   string `json:"objective"`
+	Priority    string `json:"priority"`
+	AgentID     string `json:"agentId"`
+	DependsOn   []int  `json:"dependsOn"`
 }
 
 type DecomposeIssueInput struct {
@@ -273,11 +367,12 @@ type ModelPricing struct {
 	CacheWrite float64 `json:"cacheWrite"`
 }
 type PermissionBoundary struct {
-	WorkspaceScope string `json:"workspaceScope"`
-	AllowNetwork   bool   `json:"allowNetwork"`
-	AllowShell     bool   `json:"allowShell"`
-	AllowWrite     bool   `json:"allowWrite"`
-	ApprovalMode   string `json:"approvalMode"`
+	WorkspaceScope     string `json:"workspaceScope"`
+	AllowNetwork       bool   `json:"allowNetwork"`
+	AllowShell         bool   `json:"allowShell"`
+	AllowWrite         bool   `json:"allowWrite"`
+	ApprovalMode       string `json:"approvalMode"`
+	ReworkApprovalMode string `json:"reworkApprovalMode"`
 }
 type AgentDefinition struct {
 	ID               string             `json:"id"`
@@ -290,6 +385,7 @@ type AgentDefinition struct {
 	Internal         bool               `json:"internal"`
 	Model            AgentModelConfig   `json:"model"`
 	SystemPrompt     string             `json:"systemPrompt"`
+	Memo             string             `json:"memo" gorm:"type:text"`
 	Tools            []string           `json:"tools"`
 	SkillIDs         []string           `json:"skillIds"`
 	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds"`
@@ -319,10 +415,43 @@ type SaveAgentInput struct {
 	Internal         bool               `json:"internal"`
 	Model            AgentModelConfig   `json:"model"`
 	SystemPrompt     string             `json:"systemPrompt"`
+	Memo             string             `json:"memo"`
 	Tools            []string           `json:"tools"`
 	SkillIDs         []string           `json:"skillIds"`
 	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds"`
 	Permissions      PermissionBoundary `json:"permissions"`
+}
+
+type UpdateAgentMemoInput struct {
+	Content string `json:"content"`
+}
+
+type RequestIssueReworkInput struct {
+	Reason           string `json:"reason"`
+	RequestedOutcome string `json:"requestedOutcome"`
+}
+
+type IssueReworkRequestResult struct {
+	Status      string `json:"status"`
+	ApprovalID  string `json:"approvalId,omitempty"`
+	ExecutionID string `json:"executionId,omitempty"`
+}
+
+type AgentMemoResult struct {
+	AgentID string `json:"agentId"`
+	Content string `json:"content"`
+}
+
+type ReportExecutionProgressInput struct {
+	Stage           string `json:"stage"`
+	Summary         string `json:"summary"`
+	CurrentActivity string `json:"currentActivity"`
+}
+
+type BroadcastMessageInput struct {
+	Subject    string `json:"subject"`
+	Message    string `json:"message"`
+	Importance string `json:"importance"`
 }
 type SaveSkillInput struct {
 	ID          string `json:"id"`
@@ -346,6 +475,8 @@ type IssueDetail struct {
 	Approvals      []Approval           `json:"approvals"`
 	Wakeups        []AgentWakeup        `json:"wakeups"`
 	Decompositions []IssueDecomposition `json:"decompositions"`
+	Validations    []IssueValidation    `json:"validations"`
+	Broadcasts     []TaskBroadcast      `json:"broadcasts"`
 }
 type SessionSummary struct {
 	Execution       Execution `json:"execution"`
@@ -354,10 +485,11 @@ type SessionSummary struct {
 	AgentName       string    `json:"agentName"`
 }
 type SessionDetail struct {
-	Session   SessionSummary   `json:"session"`
-	Messages  []Message        `json:"messages"`
-	Events    []ExecutionEvent `json:"events"`
-	Approvals []Approval       `json:"approvals"`
+	Session         SessionSummary      `json:"session"`
+	Messages        []Message           `json:"messages"`
+	Events          []ExecutionEvent    `json:"events"`
+	ProgressUpdates []ExecutionProgress `json:"progressUpdates"`
+	Approvals       []Approval          `json:"approvals"`
 }
 type StateView struct {
 	Configured     bool              `json:"configured"`
@@ -436,32 +568,40 @@ type KnowledgeSearchResult struct {
 }
 
 type CreateIssueInput struct {
-	ProjectID          string   `json:"projectId"`
-	ParentID           string   `json:"parentId"`
-	Title              string   `json:"title"`
-	Description        string   `json:"description"`
-	AcceptanceCriteria string   `json:"acceptanceCriteria"`
-	Priority           string   `json:"priority"`
-	Status             string   `json:"status"`
-	WorkMode           string   `json:"workMode"`
-	AssigneeAgentID    string   `json:"assigneeAgentId"`
-	Workspace          string   `json:"workspace"`
-	Context            string   `json:"context"`
-	Constraints        string   `json:"constraints"`
-	BlockedBy          []string `json:"blockedBy"`
+	ProjectID       string   `json:"projectId"`
+	ParentID        string   `json:"parentId"`
+	Title           string   `json:"title"`
+	Description     string   `json:"description"`
+	Objective       string   `json:"objective"`
+	Priority        string   `json:"priority"`
+	Status          string   `json:"status"`
+	WorkMode        string   `json:"workMode"`
+	AssigneeAgentID string   `json:"assigneeAgentId"`
+	Workspace       string   `json:"workspace"`
+	Context         string   `json:"context"`
+	Constraints     string   `json:"constraints"`
+	BlockedBy       []string `json:"blockedBy"`
 }
 type UpdateIssueInput struct {
-	Title              *string `json:"title"`
-	Description        *string `json:"description"`
-	AcceptanceCriteria *string `json:"acceptanceCriteria"`
-	Priority           *string `json:"priority"`
-	Status             *string `json:"status"`
-	AssigneeAgentID    *string `json:"assigneeAgentId"`
-	ParentID           *string `json:"parentId"`
+	Title           *string `json:"title"`
+	Description     *string `json:"description"`
+	Objective       *string `json:"objective"`
+	Priority        *string `json:"priority"`
+	Status          *string `json:"status"`
+	AssigneeAgentID *string `json:"assigneeAgentId"`
+	ParentID        *string `json:"parentId"`
 }
 
 type CancelTaskInput struct {
 	Reason string `json:"reason"`
+}
+
+type AbandonIssueInput struct {
+	Reason string `json:"reason"`
+}
+
+type IssueValidationControlInput struct {
+	Disabled bool `json:"disabled"`
 }
 
 type TaskCancellationResult struct {
@@ -471,6 +611,31 @@ type TaskCancellationResult struct {
 	CancelledExecutions int64 `json:"cancelledExecutions"`
 	ExpiredApprovals    int64 `json:"expiredApprovals"`
 	CancelledWakeups    int64 `json:"cancelledWakeups"`
+}
+
+// TaskTimeline is a read model for observing the important lifecycle events of
+// an entire top-level task and all Issues below it.
+type TaskTimeline struct {
+	Task       Issue               `json:"task"`
+	IssueCount int                 `json:"issueCount"`
+	Events     []TaskTimelineEvent `json:"events"`
+}
+
+type TaskTimelineEvent struct {
+	ID              string    `json:"id"`
+	Kind            string    `json:"kind"`
+	IssueID         string    `json:"issueId"`
+	IssueIdentifier string    `json:"issueIdentifier"`
+	IssueTitle      string    `json:"issueTitle"`
+	ExecutionID     string    `json:"executionId,omitempty"`
+	ActorType       string    `json:"actorType"`
+	ActorID         string    `json:"actorId,omitempty"`
+	ActorName       string    `json:"actorName"`
+	Title           string    `json:"title"`
+	Summary         string    `json:"summary,omitempty"`
+	Detail          string    `json:"detail,omitempty"`
+	Status          string    `json:"status,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type CheckoutIssueInput struct {
@@ -484,18 +649,21 @@ type CreateRelationInput struct {
 }
 
 type SaveConfigInput struct {
-	NodePath     string       `json:"nodePath"`
-	PiPath       string       `json:"piPath"`
-	Provider     string       `json:"provider"`
-	Model        string       `json:"model"`
-	Pricing      ModelPricing `json:"pricing"`
-	BaseURL      string       `json:"baseUrl"`
-	Thinking     string       `json:"thinking"`
-	AuthMode     string       `json:"authMode"`
-	APIKey       string       `json:"apiKey"`
-	Workspace    string       `json:"workspace"`
-	Concurrency  int          `json:"concurrency"`
-	ApprovalMode string       `json:"approvalMode"`
+	NodePath              string       `json:"nodePath"`
+	PiPath                string       `json:"piPath"`
+	Provider              string       `json:"provider"`
+	Model                 string       `json:"model"`
+	Pricing               ModelPricing `json:"pricing"`
+	BaseURL               string       `json:"baseUrl"`
+	Thinking              string       `json:"thinking"`
+	AuthMode              string       `json:"authMode"`
+	APIKey                string       `json:"apiKey"`
+	Workspace             string       `json:"workspace"`
+	Concurrency           int          `json:"concurrency"`
+	ApprovalMode          string       `json:"approvalMode"`
+	ReworkApprovalMode    string       `json:"reworkApprovalMode"`
+	ValidationMode        string       `json:"validationMode"`
+	MaxValidationAttempts int          `json:"maxValidationAttempts"`
 }
 
 // Finding represents a security finding discovered during reconnaissance or vulnerability analysis.

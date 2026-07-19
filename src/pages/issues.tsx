@@ -124,6 +124,7 @@ export function IssuesPage() {
               issues={treeIssues}
               relations={state?.relations ?? []}
               agents={state?.agents ?? []}
+              executions={state?.executions ?? []}
             />
           </Card>
         </TabsContent>
@@ -170,7 +171,7 @@ export function IssuesPage() {
                           {issue.title}
                         </Link>
                         <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
-                          {issue.acceptanceCriteria || issue.description}
+                          {issue.objective || issue.description}
                         </p>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">

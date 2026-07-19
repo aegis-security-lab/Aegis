@@ -17,7 +17,13 @@ import { Link } from "react-router-dom"
 import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
@@ -29,9 +35,10 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { formatTime } from "@/lib/format"
+import { fetchExecutionEvent } from "@/lib/api"
 import type { ExecutionEvent, Issue } from "@/types"
 
 type JsonRecord = Record<string, unknown>
@@ -88,13 +95,34 @@ function EventCard({
   issues: Issue[]
 }) {
   const [open, setOpen] = React.useState(false)
-  const tool = toolData(event)
+  const [fullEvent, setFullEvent] = React.useState<ExecutionEvent | null>(null)
+  const [detailError, setDetailError] = React.useState("")
+  const [loadingDetail, setLoadingDetail] = React.useState(false)
+  const resolvedEvent = fullEvent
+    ? { ...fullEvent, status: event.status, updatedAt: event.updatedAt }
+    : event
+  const tool = toolData(resolvedEvent)
   const summary = tool ? summarizeTool(tool) : null
-  const icon = summary?.icon ?? eventIcon(event)
-  const status = tool?.status || event.status
+  const purpose = tool ? toolPurpose(tool) : ""
+  const icon = summary?.icon ?? eventIcon(resolvedEvent)
+  const status = tool?.status || resolvedEvent.status
+  const toggle = (next: boolean) => {
+    setOpen(next)
+    if (!next || fullEvent || loadingDetail) return
+    setDetailError("")
+    setLoadingDetail(true)
+    void fetchExecutionEvent(event.id)
+      .then(setFullEvent)
+      .catch((reason) =>
+        setDetailError(
+          reason instanceof Error ? reason.message : "读取事件详情失败"
+        )
+      )
+      .finally(() => setLoadingDetail(false))
+  }
   return (
     <Card className="gap-0 overflow-hidden py-0">
-      <Collapsible open={open} onOpenChange={setOpen}>
+      <Collapsible open={open} onOpenChange={toggle}>
         <CollapsibleTrigger className="w-full text-left">
           <CardHeader className="flex flex-row items-center gap-3 px-4 py-3">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
@@ -102,7 +130,7 @@ function EventCard({
             </span>
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <CardTitle className="truncate text-sm font-medium">
-                {summary?.title ?? event.title}
+                {purpose || summary?.title || event.title}
               </CardTitle>
               {summary?.meta ? (
                 <span className="shrink-0 text-xs text-muted-foreground">
@@ -112,7 +140,7 @@ function EventCard({
             </div>
             {status ? <StatusBadge status={status} /> : null}
             <time className="hidden shrink-0 text-xs text-muted-foreground sm:block">
-              {formatTime(event.createdAt)}
+              {formatTime(resolvedEvent.createdAt)}
             </time>
             <ChevronRight
               className={cn(
@@ -125,10 +153,22 @@ function EventCard({
         <CollapsibleContent>
           <CardContent className="border-t px-4 py-4">
             {tool ? (
-              <ToolDetails tool={tool} issues={issues} />
+              <div className="flex flex-col gap-5">
+                <ToolDetails tool={tool} issues={issues} />
+                {fullEvent ? (
+                  <JSONSection label="原始参数" value={tool.input} />
+                ) : loadingDetail ? (
+                  <p className="text-xs text-muted-foreground">
+                    正在读取原始参数…
+                  </p>
+                ) : null}
+              </div>
             ) : (
-              <EventDetails event={event} />
+              <EventDetails event={resolvedEvent} />
             )}
+            {detailError ? (
+              <p className="mt-3 text-xs text-destructive">{detailError}</p>
+            ) : null}
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
@@ -168,21 +208,26 @@ function summarizeTool(tool: ToolData) {
       }
     case "write": {
       const content = stringValue(tool.input.content)
+      const lines = Number(tool.input._lineCount) || lineCount(content)
       return {
         title: `写入 · ${path || "文件"}`,
-        meta: `${lineCount(content)} 行`,
+        meta: `${lines} 行`,
         icon: "edit" as const,
       }
     }
     case "edit": {
       const edits = asArray(tool.input.edits)
-      const lines = edits.reduce<number>(
-        (total, edit) => total + lineCount(stringValue(asRecord(edit).newText)),
-        0
-      )
+      const lines =
+        Number(tool.input._lineCount) ||
+        edits.reduce<number>(
+          (total, edit) =>
+            total + lineCount(stringValue(asRecord(edit).newText)),
+          0
+        )
+      const editCount = Number(tool.input._editCount) || edits.length || 1
       return {
         title: `编辑 · ${path || "文件"}`,
-        meta: `${edits.length || 1} 处 · ${lines} 行`,
+        meta: `${editCount} 处 · ${lines} 行`,
         icon: "edit" as const,
       }
     }
@@ -194,11 +239,35 @@ function summarizeTool(tool: ToolData) {
       }
     case "aegis_create_subissues": {
       const count =
-        asArray(tool.input.children).length || createdChildren(tool).length
+        Number(tool.input._childCount) ||
+        asArray(tool.input.children).length ||
+        createdChildren(tool).length
       return {
         title: "创建子 Issues",
         meta: `${count} 个`,
         icon: "subissues" as const,
+      }
+    }
+    case "aegis_report_progress":
+      return {
+        title: `进度 · ${stringValue(tool.input.stage) || "阶段更新"}`,
+        meta: oneLine(stringValue(tool.input.currentActivity)),
+        icon: "info" as const,
+      }
+    case "aegis_broadcast": {
+      const delivered = Number(asRecord(tool.output.details).deliveredCount)
+      return {
+        title: `广播 · ${stringValue(tool.input.subject) || "任务信息"}`,
+        meta: Number.isFinite(delivered) ? `投递 ${delivered}` : "",
+        icon: "info" as const,
+      }
+    }
+    case "aegis_list_broadcasts": {
+      const count = asArray(asRecord(tool.output.details).broadcasts).length
+      return {
+        title: "读取广播历史",
+        meta: count ? `${count} 条` : "",
+        icon: "info" as const,
       }
     }
     case "grep":
@@ -246,24 +315,101 @@ function ToolDetails({ tool, issues }: { tool: ToolData; issues: Issue[] }) {
     case "bash":
       return (
         <div className="flex flex-col gap-4">
-          <CodeSection label="执行命令" value={toolCommand(tool)} />
+          <CodeSection
+            label="执行命令"
+            value={toolCommand(tool)}
+            maxVisibleLines={12}
+          />
           <CodeSection
             label={tool.isError ? "错误输出" : "命令输出"}
             value={output}
             empty="命令没有输出"
+            maxVisibleLines={16}
           />
         </div>
       )
     case "aegis_create_subissues":
       return <SubIssueDetails tool={tool} issues={issues} />
-    default:
+    case "aegis_report_progress":
       return (
         <div className="flex flex-col gap-4">
-          <JSONSection label="参数" value={tool.input} />
-          <JSONSection label="结果" value={tool.output} />
+          <div className="flex flex-col gap-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              阶段结果
+            </p>
+            <MarkdownContent>
+              {stringValue(tool.input.summary) || "没有阶段总结"}
+            </MarkdownContent>
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              现在正在进行
+            </p>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">
+              {stringValue(tool.input.currentActivity) || "未说明"}
+            </p>
+          </div>
         </div>
       )
+    case "aegis_broadcast":
+      return <BroadcastDetails tool={tool} />
+    case "aegis_list_broadcasts":
+      return <BroadcastHistoryDetails tool={tool} />
+    default:
+      return <JSONSection label="结果" value={tool.output} />
   }
+}
+
+function BroadcastDetails({ tool }: { tool: ToolData }) {
+  const details = asRecord(tool.output.details)
+  const delivered = Number(details.deliveredCount)
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-2">
+        <Badge variant="secondary">
+          {stringValue(tool.input.importance) || "normal"}
+        </Badge>
+        {Number.isFinite(delivered) ? (
+          <Badge variant="outline">已投递 {delivered}</Badge>
+        ) : null}
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium text-muted-foreground">广播内容</p>
+        <MarkdownContent>
+          {stringValue(tool.input.message) || "没有广播内容"}
+        </MarkdownContent>
+      </div>
+    </div>
+  )
+}
+
+function BroadcastHistoryDetails({ tool }: { tool: ToolData }) {
+  const items = asArray(asRecord(tool.output.details).broadcasts).map(asRecord)
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">没有历史广播。</p>
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {items.map((item, index) => (
+        <Card key={stringValue(item.id) || index} size="sm">
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <CardTitle>{stringValue(item.subject) || "任务广播"}</CardTitle>
+              <Badge variant="outline">
+                {stringValue(item.importance) || "normal"}
+              </Badge>
+            </div>
+            <CardDescription>
+              {stringValue(item.sourceAgentId)} · {stringValue(item.createdAt)}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <MarkdownContent>{stringValue(item.message)}</MarkdownContent>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
 }
 
 function EditDetails({ tool }: { tool: ToolData }) {
@@ -354,9 +500,9 @@ function SubIssueDetails({
                 {title || "未命名 Issue"}
               </p>
             )}
-            {stringValue(spec.acceptanceCriteria) ? (
+            {stringValue(spec.objective) ? (
               <MarkdownContent className="text-xs leading-5 text-muted-foreground">
-                {stringValue(spec.acceptanceCriteria)}
+                {stringValue(spec.objective)}
               </MarkdownContent>
             ) : null}
           </article>
@@ -396,19 +542,27 @@ function CodeSection({
   label,
   value,
   empty = "没有内容",
+  maxVisibleLines = 16,
 }: {
   label: string
   value: string
   empty?: string
+  maxVisibleLines?: number
 }) {
+  const visibleLines = Math.min(Math.max(lineCount(value), 1), maxVisibleLines)
+  const viewportHeight = visibleLines * 20 + 34
   return (
     <section className="flex min-w-0 flex-col gap-2">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
       {value ? (
-        <ScrollArea className="max-h-80 rounded-lg border bg-muted/30">
-          <pre className="min-w-max p-4 font-mono text-xs leading-5 whitespace-pre-wrap">
+        <ScrollArea
+          className="w-full overflow-hidden rounded-lg border bg-muted/30"
+          style={{ height: viewportHeight }}
+        >
+          <pre className="w-max min-w-full p-4 font-mono text-xs leading-5 whitespace-pre">
             {value}
           </pre>
+          <ScrollBar orientation="horizontal" />
         </ScrollArea>
       ) : (
         <p className="text-sm text-muted-foreground">{empty}</p>
@@ -467,6 +621,10 @@ function EventIcon({ name }: { name: EventIconName }) {
 
 function toolPath(tool: ToolData) {
   return stringValue(tool.input.path)
+}
+
+function toolPurpose(tool: ToolData) {
+  return oneLine(stringValue(tool.input.description))
 }
 
 function toolCommand(tool: ToolData) {

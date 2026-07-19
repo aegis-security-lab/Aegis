@@ -72,7 +72,7 @@ export function TaskNewPage() {
     projectId: state?.projects[0]?.id,
     title: "",
     description: "",
-    acceptanceCriteria: "",
+    objective: "",
     priority: "high",
     workMode: "guided",
     workspace: state?.config.workspace ?? "",
@@ -160,7 +160,7 @@ export function TaskNewPage() {
           <CardContent>
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="title">任务目标</FieldLabel>
+                <FieldLabel htmlFor="title">任务标题</FieldLabel>
                 <Textarea
                   id="title"
                   required
@@ -173,7 +173,7 @@ export function TaskNewPage() {
                 />
                 <FieldDescription className="flex justify-between gap-4">
                   <span>
-                    这是顶层 Issue 的标题，也是所选 Agent 的执行目标。
+                    用一句话概括任务，详细完成条件请写在目标中。
                   </span>
                   <span className="shrink-0 tabular-nums">
                     {issueTitleLength(form.title)} / {ISSUE_TITLE_MAX_LENGTH}
@@ -191,16 +191,20 @@ export function TaskNewPage() {
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="acceptance">总体验收标准</FieldLabel>
+                <FieldLabel htmlFor="objective">目标</FieldLabel>
                 <Textarea
-                  id="acceptance"
-                  rows={3}
-                  value={form.acceptanceCriteria}
+                  id="objective"
+                  required
+                  rows={5}
+                  value={form.objective}
                   onChange={(event) =>
-                    update("acceptanceCriteria", event.target.value)
+                    update("objective", event.target.value)
                   }
-                  placeholder="完成的明确判定条件…"
+                  placeholder="描述最终需要达成的结果，以及可用于判断完成的证据…"
                 />
+                <FieldDescription>
+                  Worker 每次结束后，验收 Agent 都会把实际产出与此目标对比；未达成会自动反馈并续作。
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="workspace">工作目录</FieldLabel>
@@ -232,6 +236,7 @@ export function TaskNewPage() {
                 busy ||
                 !selectedAgentId ||
                 !form.title.trim() ||
+                !form.objective.trim() ||
                 !form.workspace.trim()
               }
             >

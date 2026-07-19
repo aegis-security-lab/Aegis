@@ -79,6 +79,9 @@ const TaskNewPage = React.lazy(() =>
 const TasksPage = React.lazy(() =>
   import("@/pages/tasks").then((module) => ({ default: module.TasksPage }))
 )
+const TimelinePage = React.lazy(() =>
+  import("@/pages/timeline").then((module) => ({ default: module.TimelinePage }))
+)
 
 export function App() {
   const { state, loading, error, refresh } = useAppState()
@@ -116,6 +119,7 @@ export function App() {
           <Route path="tasks" element={<TasksPage />} />
           <Route path="tasks/new" element={<TaskNewPage />} />
           <Route path="tasks/:issueId" element={<IssueDetailPage />} />
+          <Route path="timeline" element={<TimelinePage />} />
           <Route path="issues" element={<IssuesPage />} />
           <Route path="issues/:issueId" element={<IssueDetailPage />} />
           <Route path="agents" element={<AgentsPage />} />

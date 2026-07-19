@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { probeRuntime, saveSettings, testConnection } from "@/lib/api"
 import { useAppState } from "@/lib/state"
 import type { SaveConfigInput } from "@/types"
@@ -346,7 +347,7 @@ export function SettingsPage() {
                   </Select>
                 </Field>
                 <Field>
-                  <FieldLabel>自治审批</FieldLabel>
+                  <FieldLabel>工具调用审批</FieldLabel>
                   <Select
                     value={form.approvalMode}
                     onValueChange={(value) =>
@@ -365,6 +366,64 @@ export function SettingsPage() {
                       <SelectItem value="none">不审批</SelectItem>
                     </SelectContent>
                   </Select>
+                </Field>
+                <Field>
+                  <FieldLabel>Issue 返工审批</FieldLabel>
+                  <Select value={form.reworkApprovalMode} onValueChange={(value) => update("reworkApprovalMode", value as SaveConfigInput["reworkApprovalMode"])}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">始终需要人工批准</SelectItem>
+                      <SelectItem value="none">自动批准并重新执行</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel>目标验收策略</FieldLabel>
+                  <ToggleGroup
+                    value={[form.validationMode]}
+                    onValueChange={(value) => {
+                      if (value[0])
+                        update(
+                          "validationMode",
+                          value[0] as SaveConfigInput["validationMode"]
+                        )
+                    }}
+                    variant="outline"
+                    className="w-full"
+                    aria-label="选择目标验收策略"
+                  >
+                    <ToggleGroupItem className="flex-1" value="fixed">
+                      固定次数
+                    </ToggleGroupItem>
+                    <ToggleGroupItem className="flex-1" value="automatic">
+                      自动判断
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <FieldDescription>
+                    每个 Issue 使用一个固定验收会话，因此后续轮次能看到此前的验收结论。
+                  </FieldDescription>
+                </Field>
+                <Field data-disabled={form.validationMode === "automatic"}>
+                  <FieldLabel htmlFor="settings-validation-attempts">
+                    最大常规验收次数
+                  </FieldLabel>
+                  <Input
+                    id="settings-validation-attempts"
+                    type="number"
+                    min={1}
+                    max={20}
+                    disabled={form.validationMode === "automatic"}
+                    value={form.maxValidationAttempts}
+                    onChange={(event) =>
+                      update(
+                        "maxValidationAttempts",
+                        Number(event.target.value)
+                      )
+                    }
+                  />
+                  <FieldDescription>
+                    固定模式耗尽后再验收一次：可以通过、基于证明放弃，或转为人工处理。
+                  </FieldDescription>
                 </Field>
               </FieldGroup>
             </CardContent>
@@ -406,5 +465,8 @@ function fromConfig(
     workspace: config.workspace,
     concurrency: config.concurrency || 3,
     approvalMode: config.approvalMode || "risky",
+    reworkApprovalMode: config.reworkApprovalMode || "all",
+    validationMode: config.validationMode || "fixed",
+    maxValidationAttempts: config.maxValidationAttempts || 3,
   }
 }

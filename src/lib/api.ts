@@ -6,6 +6,7 @@ import type {
   CreateIssueInput,
   Finding,
   FindingList,
+  ExecutionEvent,
   Issue,
   IssueComment,
   IssueDetail,
@@ -18,6 +19,7 @@ import type {
   SessionDetail,
   SkillDefinition,
   TaskCancellationResult,
+  TaskTimeline,
 } from "@/types"
 export type SaveAgentInput = Omit<
   AgentDefinition,
@@ -72,6 +74,8 @@ export const saveSettings = (input: SaveConfigInput) =>
   })
 export const fetchIssue = (id: string) =>
   request<IssueDetail>(`/api/issues/${encodeURIComponent(id)}`)
+export const fetchExecutionEvent = (id: string) =>
+  request<ExecutionEvent>(`/api/execution-events/${encodeURIComponent(id)}`)
 export const createIssue = (input: CreateIssueInput) =>
   request<Issue>("/api/issues", { method: "POST", body: JSON.stringify(input) })
 export const updateIssue = (id: string, input: Partial<Issue>) =>
@@ -89,6 +93,18 @@ export const cancelTask = (id: string, reason = "") =>
     `/api/tasks/${encodeURIComponent(id)}/cancel`,
     { method: "POST", body: JSON.stringify({ reason }) }
   )
+export const abandonIssue = (id: string, reason = "") =>
+  request<Issue>(`/api/issues/${encodeURIComponent(id)}/abandon`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+export const setIssueValidationDisabled = (id: string, disabled: boolean) =>
+  request<Issue>(`/api/issues/${encodeURIComponent(id)}/validation`, {
+    method: "PUT",
+    body: JSON.stringify({ disabled }),
+  })
+export const fetchTaskTimeline = (id: string) =>
+  request<TaskTimeline>(`/api/tasks/${encodeURIComponent(id)}/timeline`)
 export const createIssueComment = (id: string, body: string) =>
   request<IssueComment>(`/api/issues/${encodeURIComponent(id)}/comments`, {
     method: "POST",

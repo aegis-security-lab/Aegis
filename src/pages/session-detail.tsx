@@ -3,12 +3,14 @@ import * as React from "react"
 import {
   ArrowLeft,
   Bot,
+  CircleCheckBig,
   ChevronDown,
   ChevronUp,
   Clock3,
   Coins,
   ExternalLink,
   FileText,
+  ListChecks,
   MessagesSquare,
   ScrollText,
   SquareTerminal,
@@ -55,6 +57,7 @@ import {
 import { useAppState } from "@/lib/state"
 import type {
   SessionDetail,
+  ExecutionProgress,
   ToolParameterSnapshot,
   ToolSnapshot,
 } from "@/types"
@@ -160,6 +163,10 @@ export function SessionDetailPage() {
             <SquareTerminal />
             事件 {detail.events.length}
           </TabsTrigger>
+          <TabsTrigger value="progress">
+            <ListChecks />
+            进度 {detail.progressUpdates.length}
+          </TabsTrigger>
           <TabsTrigger value="prompts">
             <ScrollText />
             提示词
@@ -202,6 +209,10 @@ export function SessionDetailPage() {
           />
         </TabsContent>
 
+        <TabsContent value="progress" className="pt-4">
+          <WorkProgressPanel updates={detail.progressUpdates} />
+        </TabsContent>
+
         <TabsContent value="prompts" className="pt-4">
           <div className="grid gap-4 xl:grid-cols-2">
             <PromptCard
@@ -241,7 +252,21 @@ export function SessionDetailPage() {
                 ["Provider", execution.provider],
                 ["Model", execution.model],
                 ["Thinking", execution.thinking],
+              ]}
+            />
+            <MetaCard
+              icon={Clock3}
+              title="执行检查点"
+              items={[
+                ["Status", execution.status],
                 ["Current tool", execution.currentTool || "—"],
+                ["Checkpoint", execution.checkpoint || "尚未记录"],
+                [
+                  "Checkpoint time",
+                  execution.checkpointAt
+                    ? formatTime(execution.checkpointAt)
+                    : "—",
+                ],
               ]}
             />
             <MetaCard
@@ -285,6 +310,79 @@ export function SessionDetailPage() {
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+function WorkProgressPanel({ updates }: { updates: ExecutionProgress[] }) {
+  return (
+    <Card className="h-[calc(100svh-17rem)] min-h-[520px] gap-0 py-0">
+      <CardHeader className="shrink-0 border-b py-4">
+        <CardTitle className="flex items-center gap-2">
+          <ListChecks className="size-4" />
+          工作进度
+        </CardTitle>
+        <CardDescription>
+          Agent 完成阶段性工作后主动记录；最后一项表示它当前正在进行的工作。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 p-0">
+        {updates.length === 0 ? (
+          <Empty className="h-full border-0">
+            <EmptyHeader>
+              <EmptyTitle>还没有阶段进度</EmptyTitle>
+              <EmptyDescription>
+                Agent 完成第一个实质阶段并调用进度工具后，这里会出现记录。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <ScrollArea className="h-full">
+            <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 p-4 sm:p-6">
+              {updates.map((update, index) => {
+                const latest = index === updates.length - 1
+                return (
+                  <Card key={update.id} size="sm">
+                    <CardHeader>
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <CircleCheckBig className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <CardTitle>{update.stage}</CardTitle>
+                            <CardDescription>
+                              阶段 {index + 1} · {formatTime(update.createdAt)}
+                            </CardDescription>
+                          </div>
+                        </div>
+                        {latest ? <Badge variant="secondary">当前</Badge> : null}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          阶段结果
+                        </p>
+                        <MarkdownContent>{update.summary}</MarkdownContent>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            {latest ? "现在正在进行" : "随后开始"}
+                          </p>
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                            {update.currentActivity}
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          </ScrollArea>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

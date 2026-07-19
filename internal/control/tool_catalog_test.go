@@ -1,6 +1,9 @@
 package control
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSnapshotToolsPreservesOrderDeduplicatesAndRetainsUnknownTools(t *testing.T) {
 	tools := snapshotTools([]string{"bash", "custom_tool", "bash", "read"})
@@ -25,5 +28,47 @@ func TestSnapshotToolsReturnsNonNilEmptySnapshot(t *testing.T) {
 	}
 	if len(tools) != 0 {
 		t.Fatalf("expected no tools, got %d", len(tools))
+	}
+}
+
+func TestProgressToolSnapshotHasStructuredParameters(t *testing.T) {
+	tools := snapshotTools([]string{"aegis_report_progress"})
+	if len(tools) != 1 || tools[0].Source != "aegis_extension" {
+		t.Fatalf("progress tool snapshot=%+v", tools)
+	}
+	if len(tools[0].Parameters) != 4 || tools[0].Parameters[0].Name != "description" || tools[0].Parameters[3].Name != "currentActivity" {
+		t.Fatalf("progress parameters=%+v", tools[0].Parameters)
+	}
+}
+
+func TestBroadcastToolSnapshotsHaveStructuredParameters(t *testing.T) {
+	tools := snapshotTools([]string{"aegis_broadcast", "aegis_list_broadcasts"})
+	if len(tools) != 2 || len(tools[0].Parameters) != 4 || len(tools[1].Parameters) != 2 {
+		t.Fatalf("broadcast tool snapshots=%+v", tools)
+	}
+	importance := tools[0].Parameters[3]
+	if importance.Name != "importance" || len(importance.Enum) != 3 {
+		t.Fatalf("broadcast importance parameter=%+v", importance)
+	}
+}
+
+func TestEveryCatalogToolRequiresInvocationDescription(t *testing.T) {
+	for name, tool := range toolCatalog() {
+		if len(tool.Parameters) == 0 {
+			t.Fatalf("tool %s has no parameters", name)
+		}
+		purpose := tool.Parameters[0]
+		if purpose.Name != "description" || purpose.Type != "string" || !purpose.Required || purpose.Description == "" {
+			t.Fatalf("tool %s does not require an invocation description: %+v", name, purpose)
+		}
+	}
+}
+
+func TestAgentPromptRequiresPurposeForEveryToolCall(t *testing.T) {
+	prompt := agentToolDescriptionSystemPrompt("base")
+	for _, expected := range []string{"Every tool schema", "required description field", "purpose of this specific invocation", "one short sentence"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("tool invocation prompt missing %q: %s", expected, prompt)
+		}
 	}
 }

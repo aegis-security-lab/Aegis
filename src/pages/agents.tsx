@@ -94,10 +94,22 @@ const allTools = [
   "write",
   "aegis_create_subissues",
   "aegis_publish_attachment",
+  "aegis_report_progress",
+  "aegis_broadcast",
+  "aegis_list_broadcasts",
+  "aegis_get_memo",
+  "aegis_update_memo",
+  "aegis_request_rework",
 ]
 const requiredAgentTools = new Set([
   "aegis_create_subissues",
   "aegis_publish_attachment",
+  "aegis_report_progress",
+  "aegis_broadcast",
+  "aegis_list_broadcasts",
+  "aegis_get_memo",
+  "aegis_update_memo",
+  "aegis_request_rework",
 ])
 
 const categoryLabels: Record<string, string> = {
@@ -121,6 +133,12 @@ export function AgentsPage() {
   const customModels = agents.filter(
     (agent) => agent.model.provider || agent.model.model
   ).length
+  const editingAgent =
+    editing === "new"
+      ? "new"
+      : editing
+        ? (agents.find((agent) => agent.id === editing.id) ?? editing)
+        : null
 
   return (
     <div className="flex flex-col gap-7">
@@ -183,10 +201,10 @@ export function AgentsPage() {
         </div>
       )}
 
-      {editing ? (
+      {editingAgent ? (
         <AgentDialog
-          key={editing === "new" ? "new" : editing.id}
-          agent={editing}
+          key={editingAgent === "new" ? "new" : editingAgent.id}
+          agent={editingAgent}
           skills={skills}
           knowledgeBases={knowledgeBases}
           globalProvider={state?.config.provider ?? ""}
@@ -332,6 +350,18 @@ function AgentDialog({
   )
   const [saving, setSaving] = React.useState(false)
   const [removing, setRemoving] = React.useState(false)
+  const previousMemo = React.useRef(agent === "new" ? "" : agent.memo)
+
+  React.useEffect(() => {
+    if (agent === "new") return
+    const prior = previousMemo.current
+    previousMemo.current = agent.memo
+    setForm((current) =>
+      current.memo === prior && current.memo !== agent.memo
+        ? { ...current, memo: agent.memo }
+        : current
+    )
+  }, [agent])
 
   const set = <K extends keyof SaveAgentInput>(
     key: K,
@@ -630,6 +660,21 @@ function AgentDialog({
                     注入，不与任务提示词混合保存。
                   </FieldDescription>
                 </Field>
+                <Field>
+                  <FieldLabel htmlFor="agent-memo">Agent 备忘录</FieldLabel>
+                  <Textarea
+                    id="agent-memo"
+                    className="min-h-64 font-mono text-xs leading-5"
+                    maxLength={20000}
+                    value={form.memo}
+                    onChange={(event) => set("memo", event.target.value)}
+                    placeholder="记录稳定的用户/Leader 偏好、长期工作倾向、反复纠错和常见错误提醒。"
+                  />
+                  <FieldDescription>
+                    跨会话持久保存，并在新会话的第一条任务提示中注入。Agent
+                    也可以通过固有工具读取和更新。不要保存密码、令牌、敏感个人信息或一次性任务状态。
+                  </FieldDescription>
+                </Field>
               </FieldGroup>
             </TabsContent>
 
@@ -831,7 +876,7 @@ function AgentDialog({
                 />
                 <Field>
                   <FieldLabel htmlFor="permission-approval">
-                    审批策略
+                    工具调用审批
                   </FieldLabel>
                   <Select
                     value={form.permissions.approvalMode || "inherit"}
@@ -857,6 +902,24 @@ function AgentDialog({
                         </SelectItem>
                         <SelectItem value="risky">仅高风险 Shell</SelectItem>
                         <SelectItem value="none">不审批</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="permission-rework-approval">Issue 返工审批</FieldLabel>
+                  <Select
+                    value={form.permissions.reworkApprovalMode || "inherit"}
+                    onValueChange={(value) =>
+                      updatePermission("reworkApprovalMode", value === "inherit" ? "" : String(value) as PermissionBoundary["reworkApprovalMode"])
+                    }
+                  >
+                    <SelectTrigger id="permission-rework-approval" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="inherit">继承全局策略</SelectItem>
+                        <SelectItem value="all">始终需要人工批准</SelectItem>
+                        <SelectItem value="none">自动批准并重新执行</SelectItem>
                       </SelectGroup>
                     </SelectContent>
                   </Select>
@@ -1008,6 +1071,7 @@ function blankAgent(): SaveAgentInput {
       pricing: null,
     },
     systemPrompt: "",
+    memo: "",
     tools: [...allTools],
     skillIds: [],
     knowledgeBaseIds: [],
@@ -1017,6 +1081,7 @@ function blankAgent(): SaveAgentInput {
       allowShell: true,
       allowWrite: true,
       approvalMode: "",
+      reworkApprovalMode: "",
     },
   }
 }
@@ -1032,6 +1097,7 @@ function agentInput(agent: AgentDefinition): SaveAgentInput {
     internal: agent.internal,
     model: { ...agent.model },
     systemPrompt: agent.systemPrompt,
+    memo: agent.memo ?? "",
     tools: [...agent.tools],
     skillIds: [...agent.skillIds],
     knowledgeBaseIds: [...agent.knowledgeBaseIds],

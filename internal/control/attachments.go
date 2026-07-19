@@ -15,6 +15,7 @@ import (
 )
 
 const maxAttachmentSize = 100 << 20
+const maxValidationAttachmentChunk = 32 << 10
 
 func (m *Manager) PublishExecutionAttachment(executionID, token string, input PublishAttachmentInput) (IssueAttachment, error) {
 	session := m.getSession(executionID)
@@ -32,6 +33,101 @@ func (m *Manager) PublishExecutionAttachment(executionID, token string, input Pu
 	m.store.addEvent(executionID, issue.ID, "attachment", "Agent 已发布附件", attachment.Name)
 	m.store.notify()
 	return attachment, nil
+}
+
+func (m *Manager) ValidationAttachments(executionID, token string) ([]ValidationAttachmentInfo, error) {
+	validation, err := m.validationAttachmentContext(executionID, token)
+	if err != nil {
+		return nil, err
+	}
+	return m.validationAttachmentInfos(validation.SourceExecutionID)
+}
+
+func (m *Manager) ReadValidationAttachment(executionID, token, attachmentID string, offset int64, limit int) (ValidationAttachmentChunk, error) {
+	validation, err := m.validationAttachmentContext(executionID, token)
+	if err != nil {
+		return ValidationAttachmentChunk{}, err
+	}
+	attachmentID = strings.TrimSpace(attachmentID)
+	var attachment IssueAttachment
+	if attachmentID == "" || m.store.db.First(&attachment, "id = ? AND issue_id = ? AND execution_id = ?", attachmentID, validation.IssueID, validation.SourceExecutionID).Error != nil {
+		return ValidationAttachmentChunk{}, errors.New("validation attachment not found")
+	}
+	info := m.validationAttachmentInfo(attachment)
+	if !info.Readable {
+		return ValidationAttachmentChunk{}, errors.New("该附件不是可按文本读取的格式，请根据附件元信息判断或要求 Worker 提供可读取版本")
+	}
+	if offset < 0 || offset > attachment.Size {
+		return ValidationAttachmentChunk{}, errors.New("附件读取 offset 超出范围")
+	}
+	if limit <= 0 {
+		limit = 16 << 10
+	}
+	if limit > maxValidationAttachmentChunk {
+		limit = maxValidationAttachmentChunk
+	}
+	_, file, err := m.store.AttachmentFile(attachment.ID)
+	if err != nil {
+		return ValidationAttachmentChunk{}, err
+	}
+	defer file.Close()
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		return ValidationAttachmentChunk{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)))
+	if err != nil {
+		return ValidationAttachmentChunk{}, err
+	}
+	next := offset + int64(len(data))
+	return ValidationAttachmentChunk{
+		Attachment: info, Offset: offset, NextOffset: next,
+		Content: strings.ToValidUTF8(string(data), "�"), EOF: next >= attachment.Size,
+	}, nil
+}
+
+func (m *Manager) validationAttachmentContext(executionID, token string) (IssueValidation, error) {
+	session := m.getSession(executionID)
+	if session == nil || session.kind != "validation" || token == "" || !secureEqual(token, session.controlToken) {
+		return IssueValidation{}, errors.New("invalid validation execution control token")
+	}
+	var validation IssueValidation
+	if err := m.store.db.First(&validation, "validation_execution_id = ? AND status = ?", executionID, "running").Error; err != nil {
+		return IssueValidation{}, errors.New("active validation not found")
+	}
+	return validation, nil
+}
+
+func (m *Manager) validationAttachmentInfos(sourceExecutionID string) ([]ValidationAttachmentInfo, error) {
+	var attachments []IssueAttachment
+	if err := m.store.db.Where("execution_id = ?", sourceExecutionID).Order("created_at asc").Find(&attachments).Error; err != nil {
+		return nil, err
+	}
+	infos := make([]ValidationAttachmentInfo, len(attachments))
+	for index, attachment := range attachments {
+		infos[index] = m.validationAttachmentInfo(attachment)
+	}
+	return infos, nil
+}
+
+func (m *Manager) validationAttachmentInfo(attachment IssueAttachment) ValidationAttachmentInfo {
+	return ValidationAttachmentInfo{
+		ID: attachment.ID, Name: attachment.Name, Description: attachment.Description,
+		MimeType: attachment.MimeType, Size: attachment.Size,
+		DownloadURL: strings.TrimRight(m.controlURL, "/") + "/api/attachments/" + attachment.ID,
+		Readable:    validationAttachmentReadable(attachment),
+	}
+}
+
+func validationAttachmentReadable(attachment IssueAttachment) bool {
+	if strings.HasPrefix(strings.ToLower(attachment.MimeType), "text/") {
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(attachment.Name)) {
+	case ".md", ".markdown", ".txt", ".json", ".jsonl", ".csv", ".tsv", ".xml", ".html", ".yaml", ".yml", ".log", ".sql":
+		return true
+	default:
+		return false
+	}
 }
 
 func secureEqual(left, right string) bool {

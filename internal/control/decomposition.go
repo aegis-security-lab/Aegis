@@ -35,10 +35,10 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 			return DecompositionResult{}, fmt.Errorf("子 Issue %d: %w", index+1, err)
 		}
 		item.Description = strings.TrimSpace(item.Description)
-		item.AcceptanceCriteria = strings.TrimSpace(item.AcceptanceCriteria)
+		item.Objective = strings.TrimSpace(item.Objective)
 		item.AgentID = strings.TrimSpace(item.AgentID)
-		if item.AcceptanceCriteria == "" {
-			return DecompositionResult{}, fmt.Errorf("子 Issue %d 缺少验收标准", index+1)
+		if item.Objective == "" {
+			return DecompositionResult{}, fmt.Errorf("子 Issue %d 缺少目标", index+1)
 		}
 		if !slices.Contains([]string{"critical", "high", "medium", "low"}, item.Priority) {
 			item.Priority = "medium"
@@ -48,7 +48,7 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 				return DecompositionResult{}, fmt.Errorf("子 Issue %d 的 dependsOn 只能引用更早的 1-based 索引", index+1)
 			}
 		}
-		agent, err := s.chooseAgent(Issue{Title: item.Title, Description: item.Description, AcceptanceCriteria: item.AcceptanceCriteria, AssigneeAgentID: item.AgentID})
+		agent, err := s.chooseAgent(Issue{Title: item.Title, Description: item.Description, Objective: item.Objective, AssigneeAgentID: item.AgentID})
 		if err != nil {
 			return DecompositionResult{}, err
 		}
@@ -108,14 +108,16 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 			return err
 		}
 		now := time.Now()
+		validationMode, maxValidationAttempts := normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
 		children := make([]Issue, 0, len(input.Children))
 		for _, item := range input.Children {
 			maxNumber++
 			child := Issue{
 				ID: nextID("issue"), Number: maxNumber, Identifier: fmt.Sprintf("%s-%04d", project.Key, maxNumber),
 				ProjectID: parent.ProjectID, ParentID: parent.ID, Title: item.Title, Description: item.Description,
-				AcceptanceCriteria: item.AcceptanceCriteria, Status: "todo", Priority: item.Priority,
+				Objective: item.Objective, Status: "todo", Priority: item.Priority,
 				WorkMode: parent.WorkMode, ExecutionPhase: "active", RequestDepth: parent.RequestDepth + 1,
+				ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts,
 				AssigneeAgentID: item.AgentID, Workspace: parent.Workspace, Context: parent.Context,
 				Constraints: parent.Constraints, CreatedBy: actorAgentID, CreatedAt: now, UpdatedAt: now,
 			}

@@ -131,8 +131,11 @@ func TestAgentKnowledgeRuntimeContext(t *testing.T) {
 		t.Fatalf("missing knowledge context: %s", prompt)
 	}
 	snapshot := snapshotTools([]string{"aegis_search_knowledge"})
-	if len(snapshot) != 1 || snapshot[0].Source != "aegis_extension" || len(snapshot[0].Parameters) != 3 {
+	if len(snapshot) != 1 || snapshot[0].Source != "aegis_extension" || len(snapshot[0].Parameters) != 4 {
 		t.Fatalf("unexpected tool snapshot: %+v", snapshot)
+	}
+	if snapshot[0].Parameters[0].Name != "description" || !snapshot[0].Parameters[0].Required {
+		t.Fatalf("knowledge tool purpose parameter=%+v", snapshot[0].Parameters[0])
 	}
 }
 
