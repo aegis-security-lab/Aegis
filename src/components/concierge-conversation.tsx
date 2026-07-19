@@ -52,8 +52,8 @@ export function ConciergeConversationView({
       defaultScrollPosition="last-anchor"
       autoScroll={messages.some((message) => message.streaming)}
     >
-      <MessageScroller className="flex-1">
-        <MessageScrollerViewport ref={viewportRef}>
+      <MessageScroller className="h-full min-h-0">
+        <MessageScrollerViewport ref={viewportRef} className="h-full">
           <div
             className="relative mx-auto w-full max-w-3xl"
             style={{ height: virtualizer.getTotalSize() + 48 }}

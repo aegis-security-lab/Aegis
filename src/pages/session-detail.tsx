@@ -20,6 +20,7 @@ import {
 import { Link, useParams } from "react-router-dom"
 
 import { ExecutionEvents } from "@/components/execution-events"
+import { InterruptToolButton } from "@/components/interrupt-tool-button"
 import { MarkdownContent } from "@/components/markdown-content"
 import { PageHeader } from "@/components/page-header"
 import { SessionConversation } from "@/components/session-conversation"
@@ -289,6 +290,7 @@ export function SessionDetailPage() {
               <ExternalLink data-icon="inline-start" />
               查看 Issue
             </Button>
+            <InterruptToolButton execution={execution} onInterrupted={load} />
           </>
         }
       />

@@ -1,9 +1,17 @@
 package control
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+type conciergeCaptureWriter struct {
+	bytes.Buffer
+}
+
+func (w *conciergeCaptureWriter) Close() error { return nil }
 
 func TestConciergeConversationIsDurableAndHiddenFromWorkState(t *testing.T) {
 	store := configuredStore(t)
@@ -70,6 +78,77 @@ func TestConciergeAgentUsesOnlyControlledConversationTools(t *testing.T) {
 	}
 	if agent.Permissions.AllowShell || agent.Permissions.AllowWrite || agent.Permissions.AllowNetwork {
 		t.Fatalf("concierge permissions are too broad: %+v", agent.Permissions)
+	}
+}
+
+func TestConciergeRuntimePromptIncludesOnlyAssignableAgentRoster(t *testing.T) {
+	prompt := conciergeRuntimePrompt("请实现登录页面", []AgentDefinition{
+		{ID: conciergeAgentID, Name: "管家", Enabled: true, Description: "不应出现在名册中"},
+		{ID: "frontend-engineer", Name: "前端工程师", Category: "frontend", Enabled: true, Description: "负责 React UI"},
+		{ID: "disabled-agent", Name: "已停用", Enabled: false, Description: "不应出现在名册中"},
+		{ID: "acceptance-validator", Name: "验收", Enabled: true, Internal: true, Description: "不应出现在名册中"},
+	})
+	for _, expected := range []string{"frontend-engineer", "前端工程师", "负责 React UI", "请实现登录页面"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("runtime prompt missing %q: %s", expected, prompt)
+		}
+	}
+	for _, excluded := range []string{"disabled-agent", "acceptance-validator", "不应出现在名册中"} {
+		if strings.Contains(prompt, excluded) {
+			t.Fatalf("runtime prompt leaked unavailable Agent %q: %s", excluded, prompt)
+		}
+	}
+}
+
+func TestConciergeTaskInputLimitsObjectiveAndExecutionBoundary(t *testing.T) {
+	valid := CreateConciergeTaskInput{
+		Title: "实现登录页面", Description: "完成页面与接口联调。",
+		Objective: "登录页面通过浏览器验收。", Constraints: "仅修改授权工作区并运行相关测试。",
+	}
+	if err := validateConciergeTaskInput(valid); err != nil {
+		t.Fatalf("valid concierge task input: %v", err)
+	}
+	invalid := valid
+	invalid.Constraints = strings.Repeat("界", 20001)
+	if err := validateConciergeTaskInput(invalid); err == nil || !strings.Contains(err.Error(), "执行边界") {
+		t.Fatalf("expected execution boundary length error, got %v", err)
+	}
+}
+
+func TestConciergeSessionReceivesRosterWithoutPersistingItAsUserMessage(t *testing.T) {
+	store := configuredStore(t)
+	conversation, err := store.CreateConciergeConversation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := store.GetConciergeConversation(conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := &conciergeCaptureWriter{}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	session := &PiSession{
+		manager: manager, executionID: detail.Execution.ID, issueID: conversation.IssueID,
+		agentID: conciergeAgentID, kind: "concierge", stdin: writer,
+	}
+	operatorMessage := "请开发一个 React 管理后台"
+	if _, err = manager.sendSessionPrompt(session, operatorMessage); err != nil {
+		t.Fatal(err)
+	}
+	var rpc map[string]any
+	if err = json.Unmarshal(bytes.TrimSpace(writer.Bytes()), &rpc); err != nil {
+		t.Fatal(err)
+	}
+	runtimeMessage, _ := rpc["message"].(string)
+	if !strings.Contains(runtimeMessage, "frontend-engineer") || !strings.Contains(runtimeMessage, "负责 React、Tailwind") {
+		t.Fatalf("Pi runtime message did not receive the Agent roster: %s", runtimeMessage)
+	}
+	var stored Message
+	if err = store.db.Where("execution_id = ? AND role = ?", detail.Execution.ID, "user").Order("created_at desc, id desc").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Content != operatorMessage || strings.Contains(stored.Content, "aegis_available_agents") {
+		t.Fatalf("visible user message contains internal roster context: %q", stored.Content)
 	}
 }
 

@@ -18,6 +18,7 @@ import {
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import { ExecutionEvents } from "@/components/execution-events"
+import { InterruptToolButton } from "@/components/interrupt-tool-button"
 import { IssueCommentsList } from "@/components/issue-comments-list"
 import { IssueTree } from "@/components/issue-tree"
 import { MarkdownContent } from "@/components/markdown-content"
@@ -259,6 +260,9 @@ export function IssueDetailPage() {
   const active = detail.executions.find((e) =>
     ["queued", "starting", "running", "waiting_approval"].includes(e.status)
   )
+  const activeToolExecution = detail.executions.find(
+    (execution) => execution.status === "running" && execution.currentTool
+  )
   const dispatch = async () => {
     setBusy(true)
     try {
@@ -446,6 +450,14 @@ export function IssueDetailPage() {
                   执行
                 </Button>
               )}
+            {activeToolExecution ? (
+              <InterruptToolButton
+                execution={activeToolExecution}
+                onInterrupted={async () => {
+                  await Promise.all([refresh(), load()])
+                }}
+              />
+            ) : null}
             {!issue.parentId &&
               !["done", "cancelled"].includes(issue.status) && (
                 <Button

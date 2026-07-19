@@ -46,6 +46,9 @@ type PiSession struct {
 	writeMu                                                          sync.Mutex
 	responseMu                                                       sync.Mutex
 	responseError                                                    string
+	toolMu                                                           sync.Mutex
+	currentTool                                                      string
+	toolInterruptRequested                                           bool
 	currentMessageID                                                 string
 	busy                                                             atomic.Bool
 	closed                                                           atomic.Bool
@@ -219,6 +222,10 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	if e.InitialPrompt == "" && e.Kind != "concierge" {
 		prompt = agentMemoInitialPrompt(prompt, agent.Memo)
 	}
+	runtimePrompt := prompt
+	if e.Kind == "concierge" {
+		runtimePrompt = conciergeRuntimePrompt(prompt, m.store.Agents())
+	}
 	args := []string{"--mode", "rpc", "--provider", cfg.Provider, "--model", cfg.Model, "--thinking", cfg.Thinking, "--session-dir", filepath.Join(m.store.DataDir(), "sessions"), "--session-id", e.SessionID, "--name", issue.Identifier + " · " + agent.Name, "--no-extensions", "--no-approve", "--no-skills", "--system-prompt", systemPrompt}
 	activeTools := []string{}
 	args = append(args, "--extension", m.guardPath)
@@ -312,7 +319,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	}
 	_ = m.store.db.Model(&Execution{}).Where("id = ?", e.ID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
 	m.store.notify()
-	if err := s.Send(map[string]any{"id": nextID("rpc"), "type": "prompt", "message": prompt}); err != nil {
+	if err := s.Send(map[string]any{"id": nextID("rpc"), "type": "prompt", "message": runtimePrompt}); err != nil {
 		s.Close()
 		return nil, err
 	}
@@ -323,7 +330,7 @@ func agentToolDescriptionSystemPrompt(systemPrompt string) string {
 	return fmt.Sprintf(`%s
 
 <tool_invocation_descriptions>
-Every tool schema includes a required description field. For every tool call, write one short sentence in description explaining the purpose of this specific invocation and the outcome you intend to obtain. Describe why you are calling the tool, not merely the tool name or its raw arguments. Keep it concise, concrete, and free of secrets.
+Every tool schema includes a required description field and an optional timeout field measured in seconds. For every tool call, write one short sentence in description explaining the purpose of this specific invocation and the outcome you intend to obtain. Describe why you are calling the tool, not merely the tool name or its raw arguments. Keep it concise, concrete, and free of secrets. Aegis stops a tool after 60 seconds when timeout is omitted. Before a build, scan, long command, or other operation that is expected to need more than 60 seconds, set timeout to a suitably larger value.
 </tool_invocation_descriptions>`, strings.TrimSpace(systemPrompt))
 }
 
@@ -469,10 +476,12 @@ func (m *Manager) handleRPCLine(s *PiSession, line []byte) {
 		}
 	case "tool_execution_start":
 		tool := stringValue(event["toolName"])
+		s.beginTool(tool)
 		m.checkpointExecution(s.executionID, fmt.Sprintf("正在调用 %s：%s", tool, compactJSON(event["args"], 1000)), map[string]any{"status": "running", "current_tool": tool})
 		m.store.startToolEvent(s.executionID, s.issueID, stringValue(event["toolCallId"]), tool, event["args"])
 	case "tool_execution_end":
 		tool := stringValue(event["toolName"])
+		s.finishTool()
 		isError, _ := event["isError"].(bool)
 		checkpoint := "已完成工具调用 " + tool
 		if isError {
@@ -539,6 +548,46 @@ func (s *PiSession) takeResponseError() string {
 	message := s.responseError
 	s.responseError = ""
 	return message
+}
+
+func (s *PiSession) beginTool(tool string) {
+	s.toolMu.Lock()
+	s.currentTool = strings.TrimSpace(tool)
+	s.toolInterruptRequested = false
+	s.toolMu.Unlock()
+}
+
+func (s *PiSession) finishTool() {
+	s.toolMu.Lock()
+	s.currentTool = ""
+	s.toolMu.Unlock()
+}
+
+func (s *PiSession) requestToolInterrupt() (string, bool) {
+	s.toolMu.Lock()
+	defer s.toolMu.Unlock()
+	if s.currentTool == "" || s.toolInterruptRequested {
+		return "", false
+	}
+	s.toolInterruptRequested = true
+	return s.currentTool, true
+}
+
+func (s *PiSession) cancelToolInterruptRequest(tool string) {
+	s.toolMu.Lock()
+	if s.currentTool == tool {
+		s.toolInterruptRequested = false
+	}
+	s.toolMu.Unlock()
+}
+
+func (s *PiSession) takeToolInterruptRequest() bool {
+	s.toolMu.Lock()
+	defer s.toolMu.Unlock()
+	requested := s.toolInterruptRequested
+	s.toolInterruptRequested = false
+	s.currentTool = ""
+	return requested
 }
 
 func visibleModelError(message string) string {
@@ -651,6 +700,19 @@ func (m *Manager) handleSettled(s *PiSession) {
 	}
 	var execution Execution
 	if m.store.db.First(&execution, "id = ?", s.executionID).Error != nil || issue.Status == "cancelled" || execution.Status == "cancelled" {
+		return
+	}
+	if s.takeToolInterruptRequest() {
+		s.setResponseError("")
+		now := time.Now()
+		m.checkpointExecution(s.executionID, "当前工具已由操作员中断，等待新的继续指令", map[string]any{
+			"status": "running", "error": "", "current_tool": "", "finished_at": nil, "pid": execution.PID,
+		})
+		_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+			"error": "", "updated_at": now,
+		}).Error
+		m.store.addEvent(s.executionID, issue.ID, "runtime", "当前工具已中断", "Pi Session 已保留；Issue 不会完成或进入验收，等待操作员发送新的继续指令。")
+		m.store.notify()
 		return
 	}
 	result := m.latestAssistant(s.executionID)
@@ -1534,7 +1596,8 @@ func (m *Manager) CreateTaskFromConcierge(executionID, token string, input Creat
 		Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description),
 		Objective: strings.TrimSpace(input.Objective), Priority: priority, Status: "todo",
 		WorkMode: workMode, AssigneeAgentID: strings.TrimSpace(input.AssigneeAgentID),
-		Workspace: strings.TrimSpace(input.Workspace), Context: "由管家 Agent 根据用户对话创建。",
+		Workspace: strings.TrimSpace(input.Workspace), Constraints: strings.TrimSpace(input.Constraints),
+		Context: "由管家 Agent 根据用户对话创建。",
 	})
 	if err != nil {
 		return Issue{}, err
@@ -1555,7 +1618,11 @@ func (m *Manager) sendSessionPrompt(s *PiSession, message string) (Message, erro
 	if s.busy.Load() {
 		command = "steer"
 	}
-	if err := s.Send(map[string]any{"id": nextID("rpc"), "type": command, "message": message}); err != nil {
+	runtimeMessage := message
+	if s.kind == "concierge" {
+		runtimeMessage = conciergeRuntimePrompt(message, m.store.Agents())
+	}
+	if err := s.Send(map[string]any{"id": nextID("rpc"), "type": command, "message": runtimeMessage}); err != nil {
 		return Message{}, err
 	}
 	m.store.notify()
@@ -1575,6 +1642,35 @@ func (m *Manager) StopExecution(id string) error {
 	_ = m.store.db.Model(&Issue{}).Where("checkout_execution_id = ?", id).Updates(map[string]any{"status": "todo", "execution_phase": "active", "checkout_execution_id": "", "updated_at": now}).Error
 	m.store.notify()
 	return nil
+}
+
+func (m *Manager) InterruptCurrentTool(id string) (ToolInterruptResult, error) {
+	s := m.getSession(id)
+	if s == nil || s.closed.Load() {
+		return ToolInterruptResult{}, errors.New("Pi Session 当前未连接")
+	}
+	if s.kind == "validation" || s.kind == "concierge" {
+		return ToolInterruptResult{}, errors.New("当前 Session 不支持人工中断工具")
+	}
+	var execution Execution
+	if err := m.store.db.First(&execution, "id = ?", id).Error; err != nil {
+		return ToolInterruptResult{}, errors.New("Execution 不存在")
+	}
+	if execution.Status != "running" || !s.busy.Load() {
+		return ToolInterruptResult{}, errors.New("当前没有正在执行的工具")
+	}
+	tool, requested := s.requestToolInterrupt()
+	if !requested {
+		return ToolInterruptResult{}, errors.New("当前没有可中断的工具，或中断已在进行")
+	}
+	if err := s.Send(map[string]any{"id": nextID("rpc"), "type": "abort"}); err != nil {
+		s.cancelToolInterruptRequest(tool)
+		return ToolInterruptResult{}, err
+	}
+	m.checkpointExecution(id, "操作员正在中断当前工具："+tool, map[string]any{"current_tool": ""})
+	m.store.addEvent(id, s.issueID, "runtime", "操作员请求中断工具", tool)
+	m.store.notify()
+	return ToolInterruptResult{ExecutionID: id, Tool: tool, Status: "interrupting"}, nil
 }
 
 func (m *Manager) CancelTask(id, reason string) (TaskCancellationResult, error) {

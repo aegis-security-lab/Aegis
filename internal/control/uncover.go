@@ -27,8 +27,8 @@ import (
 const (
 	defaultUncoverLimit   = 100
 	maxUncoverLimit       = 1000
-	defaultUncoverTimeout = 30
-	maxUncoverTimeout     = 120
+	defaultUncoverTimeout = 60
+	maxUncoverTimeout     = 24 * 60 * 60
 	maxUncoverQueryLength = 10_000
 	maxUncoverPreview     = 100
 )
@@ -403,8 +403,8 @@ func normalizeUncoverSearchInput(input UncoverSearchInput) (UncoverSearchInput, 
 	if input.Timeout == 0 {
 		input.Timeout = defaultUncoverTimeout
 	}
-	if input.Timeout < 5 || input.Timeout > maxUncoverTimeout {
-		return UncoverSearchInput{}, fmt.Errorf("超时时间必须在 5-%d 秒之间", maxUncoverTimeout)
+	if input.Timeout < 1 || input.Timeout > maxUncoverTimeout {
+		return UncoverSearchInput{}, fmt.Errorf("超时时间必须在 1-%d 秒之间", maxUncoverTimeout)
 	}
 	return input, nil
 }

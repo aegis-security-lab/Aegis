@@ -183,13 +183,13 @@ func TestSessionDetailIncludesPromptSnapshots(t *testing.T) {
 	if len(detail.Session.Execution.ToolsSnapshot) != 2 {
 		t.Fatalf("tools snapshot=%+v", detail.Session.Execution.ToolsSnapshot)
 	}
-	if detail.Session.Execution.ToolsSnapshot[0].Name != "read" || len(detail.Session.Execution.ToolsSnapshot[0].Parameters) != 4 {
+	if detail.Session.Execution.ToolsSnapshot[0].Name != "read" || len(detail.Session.Execution.ToolsSnapshot[0].Parameters) != 5 {
 		t.Fatalf("read snapshot=%+v", detail.Session.Execution.ToolsSnapshot[0])
 	}
 	if purpose := detail.Session.Execution.ToolsSnapshot[0].Parameters[0]; purpose.Name != "description" || !purpose.Required {
 		t.Fatalf("read purpose parameter=%+v", purpose)
 	}
-	children := detail.Session.Execution.ToolsSnapshot[1].Parameters[3].Children
+	children := detail.Session.Execution.ToolsSnapshot[1].Parameters[4].Children
 	if len(children) != 6 || children[3].Name != "priority" || len(children[3].Enum) != 4 {
 		t.Fatalf("nested tool parameters=%+v", children)
 	}

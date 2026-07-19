@@ -574,6 +574,14 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.Status(204)
 	})
+	api.POST("/executions/:id/interrupt-tool", func(c *gin.Context) {
+		result, err := manager.InterruptCurrentTool(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, result)
+	})
 	api.POST("/approvals/:id", func(c *gin.Context) {
 		var in struct {
 			Approved bool `json:"approved"`

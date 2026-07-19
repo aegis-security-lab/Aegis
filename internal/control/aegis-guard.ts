@@ -26,18 +26,60 @@ const invocationDescription = Type.String({
   maxLength: 240,
 })
 
+const defaultToolTimeoutSeconds = 60
+const maximumToolTimeoutSeconds = 24 * 60 * 60
+const toolTimeout = Type.Optional(
+  Type.Integer({
+    description:
+      "Maximum execution time for this invocation in seconds. Defaults to 60 seconds; specify a larger value before intentionally long-running work",
+    minimum: 1,
+    maximum: maximumToolTimeoutSeconds,
+  }),
+)
+
+function effectiveToolTimeout(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return defaultToolTimeoutSeconds
+  }
+  return Math.min(
+    maximumToolTimeoutSeconds,
+    Math.max(1, Math.trunc(value)),
+  )
+}
+
+function toolTimeoutError(toolName: string, timeoutSeconds: number): Error {
+  return new Error(
+    `工具 ${toolName} 执行超时：当前超时限制为 ${timeoutSeconds} 秒。`,
+  )
+}
+
+function isTimeoutFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "")
+  return /timeout|timed out|deadline exceeded|超时|超过.*秒/i.test(message)
+}
+
 function withInvocationDescription(tool: AnyToolDefinition): AnyToolDefinition {
   const parameters = tool.parameters as ObjectParameterSchema
   const properties = parameters.properties ?? {}
+  const originalHasTimeout = Object.prototype.hasOwnProperty.call(
+    properties,
+    "timeout",
+  )
   const required = Array.isArray(parameters.required)
-    ? parameters.required.filter((name: unknown) => name !== "description")
+    ? parameters.required.filter(
+        (name: unknown) => name !== "description" && name !== "timeout",
+      )
     : []
   const prepareArguments = tool.prepareArguments
   return {
     ...tool,
     parameters: {
       ...parameters,
-      properties: { description: invocationDescription, ...properties },
+      properties: {
+        description: invocationDescription,
+        ...properties,
+        timeout: toolTimeout,
+      },
       required: ["description", ...required],
     },
     prepareArguments: prepareArguments
@@ -50,6 +92,7 @@ function withInvocationDescription(tool: AnyToolDefinition): AnyToolDefinition {
           return {
             ...prepared,
             description: raw.description,
+            timeout: raw.timeout,
           }
         }
       : undefined,
@@ -57,8 +100,51 @@ function withInvocationDescription(tool: AnyToolDefinition): AnyToolDefinition {
       const toolParams = {
         ...(params as Record<string, unknown>),
       }
+      const timeoutSeconds = effectiveToolTimeout(toolParams.timeout)
       delete toolParams.description
-      return tool.execute(toolCallId, toolParams, signal, onUpdate, ctx)
+      if (originalHasTimeout) {
+        toolParams.timeout = timeoutSeconds
+      } else {
+        delete toolParams.timeout
+      }
+
+      const controller = new AbortController()
+      const forwardAbort = () => controller.abort(signal?.reason)
+      if (signal?.aborted) {
+        forwardAbort()
+      } else {
+        signal?.addEventListener("abort", forwardAbort, { once: true })
+      }
+
+      const timeoutFailure = toolTimeoutError(tool.name, timeoutSeconds)
+      let timedOut = false
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true
+          controller.abort(timeoutFailure)
+          reject(timeoutFailure)
+        }, timeoutSeconds * 1000)
+      })
+
+      try {
+        const execution = tool.execute(
+          toolCallId,
+          toolParams,
+          controller.signal,
+          onUpdate,
+          ctx,
+        )
+        return await Promise.race([execution, timeoutPromise])
+      } catch (error) {
+        if (timedOut || isTimeoutFailure(error)) {
+          throw timeoutFailure
+        }
+        throw error
+      } finally {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+        signal?.removeEventListener("abort", forwardAbort)
+      }
     },
   }
 }
@@ -185,8 +271,9 @@ const createTaskTool = defineTool({
     "Create a real scheduled Aegis Task for an explicit user request",
   promptGuidelines: [
     "Ask a concise clarification before calling when a missing decision would materially change the requested work.",
-    "Leave objective empty when the user did not define a verifiable target; Aegis will then skip acceptance validation.",
-    "Leave agentId empty unless one enabled specialist is clearly appropriate, so the scheduler can choose.",
+    "Derive a concrete, verifiable objective from the requested outcome and deliverables whenever reasonably possible. Use an empty objective only when no meaningful acceptance target can be inferred; Aegis will then skip acceptance validation.",
+    "Set a concise execution boundary covering authorized scope or targets, workspace restrictions, prohibited destructive actions, and required verification. Never broaden authorization beyond the operator's request.",
+    "Compare the request with the current system-provided Agent roster. Use the exact agentId when one enabled Agent is clearly appropriate; otherwise leave it empty for the scheduler.",
     "Never claim creation succeeded unless this tool returns a Task identifier.",
   ],
   parameters: Type.Object({
@@ -196,16 +283,19 @@ const createTaskTool = defineTool({
     }),
     taskDescription: Type.String({
       description:
-        "Execution context, requested scope, constraints, and deliverables",
+        "Execution context, requested scope, and expected deliverables",
       maxLength: 30000,
     }),
-    objective: Type.Optional(
-      Type.String({
-        description:
-          "Verifiable target for acceptance; omit or use an empty string when the user did not provide one",
-        maxLength: 20000,
-      })
-    ),
+    objective: Type.String({
+      description:
+        "Concrete and verifiable acceptance target inferred from the request and deliverables; use an empty string only when no meaningful target can be inferred",
+      maxLength: 20000,
+    }),
+    constraints: Type.String({
+      description:
+        "Concise permission and execution boundary: authorized scope or targets, workspace limits, prohibited or destructive actions, and required verification",
+      maxLength: 20000,
+    }),
     priority: Type.Union([
       Type.Literal("critical"),
       Type.Literal("high"),
@@ -216,7 +306,7 @@ const createTaskTool = defineTool({
     agentId: Type.Optional(
       Type.String({
         description:
-          "Enabled specialist Agent id; omit or use an empty string to let the scheduler choose",
+          "Exact id from the current system-provided Agent roster; omit or use an empty string only when no specialist is a clear match",
       })
     ),
     workspace: Type.Optional(
@@ -730,9 +820,9 @@ const uncoverSearchTool = defineTool({
     ),
     timeout: Type.Optional(
       Type.Integer({
-        description: "Search timeout in seconds; defaults to 30",
-        minimum: 5,
-        maximum: 120,
+        description: "Search timeout in seconds; defaults to 60",
+        minimum: 1,
+        maximum: maximumToolTimeoutSeconds,
       })
     ),
   }),

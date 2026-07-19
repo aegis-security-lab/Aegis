@@ -20,7 +20,7 @@ func TestNormalizeUncoverSearchInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if input.Engine != "shodan" || input.Query != "product:nginx" || input.Limit != 100 || input.Format != "jsonl" || input.Field != "ip:port" || input.Timeout != 30 {
+	if input.Engine != "shodan" || input.Query != "product:nginx" || input.Limit != 100 || input.Format != "jsonl" || input.Field != "ip:port" || input.Timeout != 60 {
 		t.Fatalf("unexpected normalized input: %+v", input)
 	}
 	invalid := []UncoverSearchInput{
@@ -29,7 +29,7 @@ func TestNormalizeUncoverSearchInput(t *testing.T) {
 		{Engine: "shodan", Query: "x", Limit: 1001},
 		{Engine: "shodan", Query: "x", Format: "xml"},
 		{Engine: "shodan", Query: "x", Field: "raw"},
-		{Engine: "shodan", Query: "x", Timeout: 121},
+		{Engine: "shodan", Query: "x", Timeout: maxUncoverTimeout + 1},
 	}
 	for _, candidate := range invalid {
 		if _, err = normalizeUncoverSearchInput(candidate); err == nil {

@@ -342,6 +342,12 @@ export interface TaskCancellationResult {
   removedApprovals: number
   cancelledWakeups: number
 }
+
+export interface ToolInterruptResult {
+  executionId: string
+  tool: string
+  status: "interrupting"
+}
 export type TaskTimelineEventKind =
   | "issue"
   | "execution"

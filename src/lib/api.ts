@@ -26,6 +26,7 @@ import type {
   SessionDelta,
   SkillDefinition,
   TaskCancellationResult,
+  ToolInterruptResult,
   TaskTimeline,
   UncoverEngine,
   UncoverSearchInput,
@@ -173,6 +174,11 @@ export const stopExecution = (id: string) =>
   request<void>(`/api/executions/${encodeURIComponent(id)}/stop`, {
     method: "POST",
   })
+export const interruptCurrentTool = (id: string) =>
+  request<ToolInterruptResult>(
+    `/api/executions/${encodeURIComponent(id)}/interrupt-tool`,
+    { method: "POST" }
+  )
 export const fetchSessionDetail = (id: string) =>
   request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`)
 export const fetchSessionMessages = (id: string, before?: string, limit = 50) =>
@@ -303,10 +309,9 @@ export const saveUncoverProvider = (
     { method: "PUT", body: JSON.stringify(input) }
   )
 export const deleteUncoverProvider = (engine: string) =>
-  request<void>(
-    `/api/tools/uncover/providers/${encodeURIComponent(engine)}`,
-    { method: "DELETE" }
-  )
+  request<void>(`/api/tools/uncover/providers/${encodeURIComponent(engine)}`, {
+    method: "DELETE",
+  })
 export const searchUncover = (input: UncoverSearchInput) =>
   request<UncoverSearchResult>("/api/tools/uncover/search", {
     method: "POST",

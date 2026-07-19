@@ -9,7 +9,11 @@ func snapshotTools(names []string) []ToolSnapshot {
 			continue
 		}
 		result = append(result, ToolSnapshot{
-			Name: name, Label: name, Source: "unknown", Parameters: []ToolParameterSnapshot{},
+			Name: name, Label: name, Source: "unknown",
+			Parameters: []ToolParameterSnapshot{
+				{Name: "description", Type: "string", Description: "用一句简短的话说明本次调用工具的目的和预期获得的结果。", Required: true},
+				{Name: "timeout", Type: "number", Description: "本次调用的超时限制，单位秒；默认 60 秒，需要更长时间时可显式指定。", Required: false},
+			},
 			Description: "该工具由 Pi 运行时或扩展提供，但 Aegis 没有可序列化的定义元数据。",
 		})
 	}
@@ -116,11 +120,12 @@ func toolCatalog() map[string]ToolSnapshot {
 			Description: "根据当前管家对话创建一个真实的顶层 Aegis 任务，并立即交给现有调度器选择或启动负责 Agent。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("title", "string", "清晰具体的任务标题，最多 120 个字符。", true),
-				parameter("taskDescription", "string", "执行背景、范围、约束和需要完成的工作。", true),
-				parameter("objective", "string", "可选的可验证目标；为空时任务不进入验收流程。", false),
+				parameter("taskDescription", "string", "执行背景、范围和需要完成的交付物。", true),
+				parameter("objective", "string", "根据需求和交付物提炼的具体可验证目标；确实无法形成有效目标时才为空。", true),
+				parameter("constraints", "string", "权限与执行边界：授权范围或目标、工作区限制、禁止的破坏性操作和必须完成的验证。", true),
 				{Name: "priority", Type: "enum", Description: "任务优先级。", Required: true, Enum: []string{"critical", "high", "medium", "low"}},
 				{Name: "workMode", Type: "enum", Description: "自主执行或需要引导审批。", Required: true, Enum: []string{"autonomous", "guided"}},
-				parameter("agentId", "string", "明确适合时指定启用的 Agent ID；空字符串表示由调度器选择。", false),
+				parameter("agentId", "string", "从管家当前收到的 Agent 名册中选择准确 ID；没有明确匹配时为空并由调度器选择。", false),
 				parameter("workspace", "string", "可选工作目录；为空时使用全局工作区。", false),
 			},
 		},
@@ -215,8 +220,15 @@ func toolCatalog() map[string]ToolSnapshot {
 		},
 	}
 	purpose := parameter("description", "string", "用一句简短的话说明本次调用工具的目的和预期获得的结果。", true)
+	timeout := parameter("timeout", "number", "本次调用的超时限制，单位秒；默认 60 秒，需要更长时间时可显式指定。", false)
 	for name, definition := range catalog {
-		definition.Parameters = append([]ToolParameterSnapshot{purpose}, definition.Parameters...)
+		parameters := make([]ToolParameterSnapshot, 0, len(definition.Parameters))
+		for _, current := range definition.Parameters {
+			if current.Name != "timeout" {
+				parameters = append(parameters, current)
+			}
+		}
+		definition.Parameters = append([]ToolParameterSnapshot{purpose, timeout}, parameters...)
 		catalog[name] = definition
 	}
 	return catalog

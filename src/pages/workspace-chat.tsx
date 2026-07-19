@@ -261,7 +261,7 @@ export function WorkspaceChatPage() {
   )
 
   return (
-    <div className="flex size-full min-h-0 overflow-hidden bg-background">
+    <div className="flex size-full min-h-0 max-h-full overflow-hidden bg-background">
       <aside
         className={cn(
           "min-h-0 w-full shrink-0 flex-col border-r bg-muted/20 md:flex md:w-72",
@@ -346,8 +346,8 @@ export function WorkspaceChatPage() {
 
       <section
         className={cn(
-          "min-h-0 min-w-0 flex-1 flex-col",
-          conversationId ? "flex" : "hidden md:flex"
+          "h-full min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto]",
+          conversationId ? "grid" : "hidden md:grid"
         )}
       >
         <div className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
@@ -414,7 +414,7 @@ export function WorkspaceChatPage() {
           </div>
         )}
 
-        <div className="shrink-0 px-4 pb-5">
+        <div className="border-t bg-background px-4 py-4">
           <form
             className="mx-auto max-w-3xl"
             onSubmit={(event) => {

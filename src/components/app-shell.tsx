@@ -85,9 +85,10 @@ export function AppShell() {
   const { resolvedTheme, setTheme } = useTheme()
   const pendingApprovals =
     state?.approvals.filter((item) => item.status === "pending").length ?? 0
+  const workspaceRoute = location.pathname.startsWith("/workspace")
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-svh overflow-hidden">
       <Sidebar collapsible="icon" variant="sidebar">
         <SidebarHeader className="border-b p-3">
           <SidebarMenu>
@@ -159,8 +160,8 @@ export function AppShell() {
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
-      <SidebarInset>
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur-md lg:px-6">
+      <SidebarInset className="h-svh min-h-0 overflow-hidden">
+        <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur-md lg:px-6">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
           <div className="min-w-0 flex-1">
@@ -190,14 +191,24 @@ export function AppShell() {
           </Button>
         </header>
         <div
+          data-slot="app-content-scroller"
           className={cn(
-            "w-full flex-1",
-            location.pathname.startsWith("/workspace")
-              ? "min-h-0 overflow-hidden"
-              : "mx-auto max-w-[1500px] px-4 py-6 lg:px-8 lg:py-8"
+            "min-h-0 w-full flex-1",
+            workspaceRoute
+              ? "overflow-hidden"
+              : "overflow-y-auto overscroll-y-contain"
           )}
         >
-          <Outlet />
+          <div
+            data-slot="app-content"
+            className={cn(
+              workspaceRoute
+                ? "flex size-full min-h-0"
+                : "mx-auto w-full max-w-[1500px] px-4 py-6 lg:px-8 lg:py-8"
+            )}
+          >
+            <Outlet />
+          </div>
         </div>
       </SidebarInset>
     </SidebarProvider>

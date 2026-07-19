@@ -134,6 +134,7 @@ type CreateConciergeTaskInput struct {
 	Title           string `json:"title"`
 	Description     string `json:"taskDescription"`
 	Objective       string `json:"objective"`
+	Constraints     string `json:"constraints"`
 	Priority        string `json:"priority"`
 	WorkMode        string `json:"workMode"`
 	AssigneeAgentID string `json:"agentId"`
@@ -693,6 +694,12 @@ type TaskCancellationResult struct {
 	CancelledExecutions int64 `json:"cancelledExecutions"`
 	RemovedApprovals    int64 `json:"removedApprovals"`
 	CancelledWakeups    int64 `json:"cancelledWakeups"`
+}
+
+type ToolInterruptResult struct {
+	ExecutionID string `json:"executionId"`
+	Tool        string `json:"tool"`
+	Status      string `json:"status"`
 }
 
 // TaskTimeline is a read model for observing the important lifecycle events of

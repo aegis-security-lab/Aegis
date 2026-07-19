@@ -19,6 +19,9 @@ func TestSnapshotToolsPreservesOrderDeduplicatesAndRetainsUnknownTools(t *testin
 	if tools[1].Description == "" {
 		t.Fatal("expected unknown tools to retain an explanatory description")
 	}
+	if len(tools[1].Parameters) != 2 || tools[1].Parameters[1].Name != "timeout" {
+		t.Fatalf("unknown tool must expose the common timeout parameter: %+v", tools[1].Parameters)
+	}
 }
 
 func TestSnapshotToolsReturnsNonNilEmptySnapshot(t *testing.T) {
@@ -36,19 +39,37 @@ func TestProgressToolSnapshotHasStructuredParameters(t *testing.T) {
 	if len(tools) != 1 || tools[0].Source != "aegis_extension" {
 		t.Fatalf("progress tool snapshot=%+v", tools)
 	}
-	if len(tools[0].Parameters) != 4 || tools[0].Parameters[0].Name != "description" || tools[0].Parameters[3].Name != "currentActivity" {
+	if len(tools[0].Parameters) != 5 || tools[0].Parameters[0].Name != "description" || tools[0].Parameters[1].Name != "timeout" || tools[0].Parameters[4].Name != "currentActivity" {
 		t.Fatalf("progress parameters=%+v", tools[0].Parameters)
 	}
 }
 
 func TestBroadcastToolSnapshotsHaveStructuredParameters(t *testing.T) {
 	tools := snapshotTools([]string{"aegis_broadcast", "aegis_list_broadcasts"})
-	if len(tools) != 2 || len(tools[0].Parameters) != 4 || len(tools[1].Parameters) != 2 {
+	if len(tools) != 2 || len(tools[0].Parameters) != 5 || len(tools[1].Parameters) != 3 {
 		t.Fatalf("broadcast tool snapshots=%+v", tools)
 	}
-	importance := tools[0].Parameters[3]
+	importance := tools[0].Parameters[4]
 	if importance.Name != "importance" || len(importance.Enum) != 3 {
 		t.Fatalf("broadcast importance parameter=%+v", importance)
+	}
+}
+
+func TestConciergeCreateTaskRequiresObjectiveAndExecutionBoundary(t *testing.T) {
+	tools := snapshotTools([]string{"aegis_create_task"})
+	if len(tools) != 1 {
+		t.Fatalf("create task tool snapshot=%+v", tools)
+	}
+	required := map[string]bool{}
+	for _, parameter := range tools[0].Parameters {
+		if parameter.Required {
+			required[parameter.Name] = true
+		}
+	}
+	for _, name := range []string{"objective", "constraints"} {
+		if !required[name] {
+			t.Fatalf("create task tool must require %s: %+v", name, tools[0].Parameters)
+		}
 	}
 }
 
@@ -60,6 +81,13 @@ func TestEveryCatalogToolRequiresInvocationDescription(t *testing.T) {
 		purpose := tool.Parameters[0]
 		if purpose.Name != "description" || purpose.Type != "string" || !purpose.Required || purpose.Description == "" {
 			t.Fatalf("tool %s does not require an invocation description: %+v", name, purpose)
+		}
+		if len(tool.Parameters) < 2 {
+			t.Fatalf("tool %s has no common timeout parameter", name)
+		}
+		timeout := tool.Parameters[1]
+		if timeout.Name != "timeout" || timeout.Type != "number" || timeout.Required || !strings.Contains(timeout.Description, "60") {
+			t.Fatalf("tool %s does not expose the optional 60-second timeout: %+v", name, timeout)
 		}
 		seen := map[string]bool{}
 		for _, parameter := range tool.Parameters {
@@ -73,7 +101,7 @@ func TestEveryCatalogToolRequiresInvocationDescription(t *testing.T) {
 
 func TestAgentPromptRequiresPurposeForEveryToolCall(t *testing.T) {
 	prompt := agentToolDescriptionSystemPrompt("base")
-	for _, expected := range []string{"Every tool schema", "required description field", "purpose of this specific invocation", "one short sentence"} {
+	for _, expected := range []string{"Every tool schema", "required description field", "optional timeout field", "purpose of this specific invocation", "one short sentence", "60 seconds"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("tool invocation prompt missing %q: %s", expected, prompt)
 		}
