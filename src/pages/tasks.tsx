@@ -1,5 +1,7 @@
-import { ArrowRight, ListTodo, Plus } from "lucide-react"
-import { Link } from "react-router-dom"
+import * as React from "react"
+import { ArrowRight, ListTodo, Plus, RotateCcw } from "lucide-react"
+import { Link, useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
@@ -22,14 +24,17 @@ import {
 } from "@/components/ui/empty"
 import { Progress } from "@/components/ui/progress"
 import { formatCost, formatTime } from "@/lib/format"
+import { restartTask } from "@/lib/api"
 import { useAppState } from "@/lib/state"
 import type { Issue } from "@/types"
 
 export function TasksPage() {
   const { state } = useAppState()
+  const navigate = useNavigate()
+  const [restarting, setRestarting] = React.useState<string | null>(null)
   const issues = state?.issues ?? []
   const executions = state?.executions ?? []
-  const tasks = issues.filter((issue) => !issue.parentId)
+  const tasks = state?.tasks ?? []
 
   return (
     <div className="flex flex-col gap-7">
@@ -63,11 +68,16 @@ export function TasksPage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {tasks.map((task) => {
-            const issueIDs = taskTreeIssueIDs(task.id, issues)
+            const runs = issues.filter(
+              (issue) => !issue.parentId && issue.taskSourceId === task.id
+            ).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            const latest = runs[0]
+            if (!latest) return null
+            const issueIDs = taskTreeIssueIDs(latest.id, issues)
             const descendants = issueIDs.size - 1
             const completed = issues.filter(
               (issue) =>
-                issue.id !== task.id &&
+                issue.id !== latest.id &&
                 issueIDs.has(issue.id) &&
                 ["done", "cancelled"].includes(issue.status)
             ).length
@@ -76,7 +86,7 @@ export function TasksPage() {
             ).length
             const progress = descendants
               ? Math.round((completed / descendants) * 100)
-              : task.status === "done"
+              : latest.status === "done"
                 ? 100
                 : 0
             const treeExecutions = executions.filter((execution) =>
@@ -101,9 +111,10 @@ export function TasksPage() {
                   <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs text-muted-foreground">
-                        {task.identifier}
+                        {latest.identifier}
                       </span>
-                      <StatusBadge status={task.status} />
+                      <StatusBadge status={latest.status} />
+                      <Badge variant="outline">执行 {runs.length} 次</Badge>
                       {abandoned > 0 && (
                         <Badge variant="outline">放弃目标 {abandoned}</Badge>
                       )}
@@ -120,7 +131,7 @@ export function TasksPage() {
                       variant="ghost"
                       size="icon-sm"
                       render={
-                        <Link to={`/tasks/${task.id}`} aria-label="查看任务" />
+                        <Link to={`/tasks/${latest.id}`} aria-label="查看任务" />
                       }
                       nativeButton={false}
                     >
@@ -138,9 +149,35 @@ export function TasksPage() {
                   <Progress value={progress} className="h-1.5" />
                 </CardContent>
                 <CardFooter>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {task.workspace} · {formatTime(task.updatedAt)}
-                  </p>
+                  <div className="flex w-full items-center justify-between gap-3">
+                    <p className="min-w-0 truncate text-xs text-muted-foreground">
+                      {task.workspace} · {formatTime(task.updatedAt)}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={restarting === task.id}
+                      onClick={async () => {
+                        setRestarting(task.id)
+                        try {
+                          const next = await restartTask(task.id)
+                          toast.success("已创建新的任务执行", {
+                            description: `${next.identifier} · 第 ${runs.length + 1} 次执行`,
+                          })
+                          navigate(`/tasks/${next.id}`)
+                        } catch (error) {
+                          toast.error(
+                            error instanceof Error ? error.message : "重新启动失败"
+                          )
+                        } finally {
+                          setRestarting(null)
+                        }
+                      }}
+                    >
+                      <RotateCcw data-icon="inline-start" />
+                      重新启动
+                    </Button>
+                  </div>
                 </CardFooter>
               </Card>
             )

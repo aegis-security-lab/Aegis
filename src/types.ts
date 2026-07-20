@@ -15,7 +15,17 @@ export interface ConfigView {
   reworkApprovalMode: "all" | "none" | ""
   validationMode: "fixed" | "automatic"
   maxValidationAttempts: number
+  maxIssueDepth: number
+  maxChildrenPerRequest: number
+  maxDirectChildren: number
+  issueBudget: IssueBudgetConfig
   updatedAt: string
+}
+export interface IssueBudgetConfig {
+  tokenLimit: number | null
+  costLimit: number | null
+  timeLimitMinutes: number | null
+  checkIntervalSeconds: number
 }
 export interface RuntimeProbe {
   ready: boolean
@@ -33,6 +43,40 @@ export interface Project {
   description: string
   workspace: string
   status: string
+  createdAt: string
+  updatedAt: string
+}
+export interface Task {
+  id: string
+  projectId: string
+  title: string
+  description: string
+  objective: string
+  priority: "critical" | "high" | "medium" | "low"
+  workMode: "guided" | "autonomous"
+  assigneeAgentId?: string
+  workspace: string
+  containerProfileId?: string
+  context?: string
+  constraints?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface ContainerProfile {
+  id: string
+  name: string
+  description: string
+  image: string
+  nodePath: string
+  piPath: string
+  workspacePath: string
+  hostWorkspace: string
+  networkMode: "bridge" | "none"
+  memoryMb: number
+  cpus: number
+  enabled: boolean
+  runtimeStatus: "running" | "stopped"
+  containerName: string
   createdAt: string
   updatedAt: string
 }
@@ -59,6 +103,7 @@ export interface Issue {
   identifier: string
   projectId: string
   parentId?: string
+  taskSourceId?: string
   title: string
   description: string
   objective: string
@@ -78,6 +123,7 @@ export interface Issue {
   recoveryPhase?: string
   recoveryRequestedAt?: string
   workspace: string
+  containerProfileId?: string
   context?: string
   constraints?: string
   result?: string
@@ -123,7 +169,12 @@ export interface Execution {
   pricing: ModelPricing
   thinking: string
   sessionId: string
+  issueAgentSessionId?: string
   pid?: number
+  runtimeType: "host" | "container"
+  runtimeId?: string
+  containerProfileId?: string
+  containerImage?: string
   currentTool?: string
   checkpoint?: string
   checkpointAt?: string
@@ -142,6 +193,19 @@ export interface Execution {
   startedAt: string
   updatedAt: string
   finishedAt?: string
+}
+export interface IssueAgentSession {
+  id: string
+  issueId: string
+  agentId: string
+  sessionId: string
+  status: "active" | "broken" | "superseded" | "archived"
+  generation: number
+  runtimeType: "host" | "container"
+  containerProfileId?: string
+  workspace: string
+  createdAt: string
+  updatedAt: string
 }
 export interface ToolSnapshot {
   name: string
@@ -312,6 +376,7 @@ export interface IssueDetail {
   blockedBy: Issue[]
   blocks: Issue[]
   executions: Execution[]
+  agentSessions: IssueAgentSession[]
   comments: IssueComment[]
   messages: Message[]
   events: ExecutionEvent[]
@@ -341,6 +406,16 @@ export interface TaskCancellationResult {
   cancelledExecutions: number
   removedApprovals: number
   cancelledWakeups: number
+}
+export interface WorkspaceEntry {
+  path: string
+  kind: "file" | "directory" | "symlink"
+  size?: number
+  modifiedAt: string
+}
+export interface TaskWorkspace {
+  root: string
+  entries: WorkspaceEntry[]
 }
 
 export interface ToolInterruptResult {
@@ -400,6 +475,7 @@ export interface PermissionBoundary {
 }
 export interface AgentDefinition {
   id: string
+  templateId: string
   name: string
   description: string
   avatar: string
@@ -414,6 +490,23 @@ export interface AgentDefinition {
   skillIds: string[]
   knowledgeBaseIds: string[]
   permissions: PermissionBoundary
+  createdAt: string
+  updatedAt: string
+}
+export interface AgentTemplateMetadata {
+  englishName: string
+  chineseName: string
+  introduction: string
+  positions: string[]
+}
+export interface AgentTemplate {
+  id: string
+  provider: string
+  model: string
+  systemPrompt: string
+  metadata: AgentTemplateMetadata
+  hidden: boolean
+  builtin: boolean
   createdAt: string
   updatedAt: string
 }
@@ -479,6 +572,8 @@ export interface AppState {
   config: ConfigView
   runtime: RuntimeProbe
   projects: Project[]
+  containerProfiles: ContainerProfile[]
+  tasks: Task[]
   issues: Issue[]
   relations: IssueRelation[]
   executions: Execution[]
@@ -505,6 +600,10 @@ export interface SaveConfigInput {
   reworkApprovalMode: "all" | "none"
   validationMode: "fixed" | "automatic"
   maxValidationAttempts: number
+  maxIssueDepth: number
+  maxChildrenPerRequest: number
+  maxDirectChildren: number
+  issueBudget: IssueBudgetConfig
 }
 export interface CreateIssueInput {
   projectId?: string
@@ -516,6 +615,7 @@ export interface CreateIssueInput {
   workMode: "guided" | "autonomous"
   assigneeAgentId?: string
   workspace: string
+  containerProfileId?: string
   context: string
   constraints: string
   blockedBy?: string[]

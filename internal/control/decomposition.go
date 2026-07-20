@@ -10,11 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	maxIssueDepth             = 4
-	maxChildrenPerRequest     = 8
-	maxDirectChildrenPerIssue = 16
-)
+const maxIssueDepth = 4 // legacy default retained for existing tests and configurations
 
 // CreateSubIssues is the durable control-plane operation behind the Pi tool.
 // The request key makes retries from the same execution idempotent.
@@ -24,8 +20,10 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 	if input.RequestKey == "" || len(input.RequestKey) > 120 {
 		return DecompositionResult{}, errors.New("requestKey 必填且不能超过 120 个字符")
 	}
-	if len(input.Children) < 2 || len(input.Children) > maxChildrenPerRequest {
-		return DecompositionResult{}, fmt.Errorf("每次必须创建 2-%d 个子 Issues", maxChildrenPerRequest)
+	limits := s.Config()
+	maxDepth, maxPerRequest, maxDirect := normalizeDecompositionLimits(limits.MaxIssueDepth, limits.MaxChildrenPerRequest, limits.MaxDirectChildren)
+	if len(input.Children) < 2 || len(input.Children) > maxPerRequest {
+		return DecompositionResult{}, fmt.Errorf("每次必须创建 2-%d 个子 Issues", maxPerRequest)
 	}
 	for index := range input.Children {
 		item := &input.Children[index]
@@ -79,8 +77,8 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		if err := tx.First(&parent, "id = ?", parentID).Error; err != nil {
 			return errors.New("parent issue not found")
 		}
-		if parent.RequestDepth >= maxIssueDepth {
-			return fmt.Errorf("Issue 已达到最大拆解深度 %d", maxIssueDepth)
+		if parent.RequestDepth >= maxDepth {
+			return fmt.Errorf("Issue 已达到最大拆解深度 %d", maxDepth)
 		}
 		var execution Execution
 		if err := tx.First(&execution, "id = ? AND issue_id = ? AND agent_id = ?", executionID, parent.ID, actorAgentID).Error; err != nil {
@@ -98,8 +96,8 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		if err := tx.Model(&Issue{}).Where("parent_id = ?", parent.ID).Count(&existingCount).Error; err != nil {
 			return err
 		}
-		if existingCount+int64(len(input.Children)) > maxDirectChildrenPerIssue {
-			return fmt.Errorf("父 Issue 最多允许 %d 个直属子 Issues", maxDirectChildrenPerIssue)
+		if existingCount+int64(len(input.Children)) > int64(maxDirect) {
+			return fmt.Errorf("父 Issue 最多允许 %d 个直属子 Issues", maxDirect)
 		}
 		var project Project
 		if err := tx.First(&project, "id = ?", parent.ProjectID).Error; err != nil {
@@ -121,10 +119,13 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 				Objective: item.Objective, Status: "todo", Priority: item.Priority,
 				WorkMode: parent.WorkMode, ExecutionPhase: "active", RequestDepth: parent.RequestDepth + 1,
 				ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, ValidationDisabled: validationDisabled,
-				AssigneeAgentID: item.AgentID, Workspace: parent.Workspace, Context: parent.Context,
+				AssigneeAgentID: item.AgentID, Workspace: parent.Workspace, ContainerProfileID: parent.ContainerProfileID, Context: parent.Context,
 				Constraints: parent.Constraints, CreatedBy: actorAgentID, CreatedAt: now, UpdatedAt: now,
 			}
 			if err := tx.Create(&child).Error; err != nil {
+				return err
+			}
+			if _, err := ensureIssueAgentSessionOnDB(tx, child, child.AssigneeAgentID, ""); err != nil {
 				return err
 			}
 			children = append(children, child)

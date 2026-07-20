@@ -105,7 +105,49 @@ func TestCommentWakeupWithoutObjectiveDoesNotStartValidation(t *testing.T) {
 	}
 }
 
-func TestDispatchWakeupReusesLatestAgentSession(t *testing.T) {
+func TestCancelledIssueCommentWakeupSettlesWithoutChangingIssue(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Cancelled discussion", Objective: "Original objective", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "cancelled", "execution_phase": "completed", "cancelled_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	comment := IssueComment{ID: nextID("comment"), IssueID: issue.ID, AuthorType: "operator", AuthorID: "operator", Body: "Please summarize.", CreatedAt: now}
+	if err = store.db.Create(&comment).Error; err != nil {
+		t.Fatal(err)
+	}
+	wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID, AgentID: execution.AgentID, ExecutionID: execution.ID, Reason: "issue_comment_assignee", Status: "delivered", CreatedAt: now, DeliveredAt: &now}
+	if err = store.db.Create(&wakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Create(&Message{ID: nextID("message"), ExecutionID: execution.ID, IssueID: issue.ID, Role: "assistant", Content: "Summary response", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.handleSettled(&PiSession{executionID: execution.ID, issueID: issue.ID, agentID: execution.AgentID, kind: "work"})
+	if err = store.db.First(&execution, "id = ?", execution.ID).Error; err != nil || execution.Status != "completed" {
+		t.Fatalf("execution was not completed: execution=%+v err=%v", execution, err)
+	}
+	if err = store.db.First(&wakeup, "id = ?", wakeup.ID).Error; err != nil || wakeup.Status != "completed" {
+		t.Fatalf("wakeup was not completed: wakeup=%+v err=%v", wakeup, err)
+	}
+	unchanged, _ := store.GetIssue(issue.ID)
+	if unchanged.Status != "cancelled" || unchanged.ExecutionPhase != "completed" {
+		t.Fatalf("comment response changed cancelled Issue: %+v", unchanged)
+	}
+}
+
+func TestDispatchWakeupReusesLatestAgentSessionEvenWhenIssueCancelled(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Continue review", Objective: "Finish the review.", Priority: "medium", WorkMode: "guided", AssigneeAgentID: "backend-engineer",
@@ -127,6 +169,11 @@ func TestDispatchWakeupReusesLatestAgentSession(t *testing.T) {
 	}
 	wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID, AgentID: "backend-engineer", Reason: "issue_comment_assignee", Status: "queued", CreatedAt: comment.CreatedAt}
 	if err = store.db.Create(&wakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "cancelled", "execution_phase": "completed", "cancelled_at": time.Now(),
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	manager := &Manager{store: store, sessions: map[string]*PiSession{}}

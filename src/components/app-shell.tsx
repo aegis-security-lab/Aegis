@@ -1,5 +1,6 @@
 import {
   Bot,
+  Boxes,
   CheckSquare2,
   CircleGauge,
   ClipboardCheck,
@@ -16,12 +17,14 @@ import {
   ShieldAlert,
   Sparkles,
   Sun,
+  Users,
   Wrench,
 } from "lucide-react"
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
+import { FloatingTaskPet } from "@/components/floating-task-pet"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
@@ -57,7 +60,8 @@ const navigation = [
   {
     label: "Agent 系统",
     items: [
-      { to: "/agents", label: "Agents", icon: Bot },
+      { to: "/talent-library", label: "人才库", icon: Users },
+      { to: "/agents", label: "员工管理", icon: Bot },
       { to: "/skills", label: "Skills", icon: Wrench },
       { to: "/knowledge-bases", label: "知识库", icon: LibraryBig },
     ],
@@ -67,6 +71,7 @@ const navigation = [
     items: [
       { to: "/sessions", label: "Sessions", icon: MessagesSquare },
       { to: "/approvals", label: "审批中心", icon: ClipboardCheck },
+      { to: "/containers", label: "容器管理", icon: Boxes },
     ],
   },
   {
@@ -211,6 +216,7 @@ export function AppShell() {
           </div>
         </div>
       </SidebarInset>
+      <FloatingTaskPet />
     </SidebarProvider>
   )
 }

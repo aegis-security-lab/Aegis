@@ -16,6 +16,7 @@ import {
   Wrench,
 } from "lucide-react"
 import { toast } from "sonner"
+import { useSearchParams } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { ModelPricingFields } from "@/components/model-pricing-fields"
@@ -71,12 +72,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
   createAgent,
+  createAgentTemplate,
   deleteAgent,
+  fetchAgentTemplates,
   updateAgent,
   type SaveAgentInput,
 } from "@/lib/api"
+import { agentTemplateId } from "@/lib/agent-template"
 import { useAppState } from "@/lib/state"
-import type { AgentDefinition, ModelPricing, PermissionBoundary } from "@/types"
+import type {
+  AgentDefinition,
+  AgentTemplate,
+  ModelPricing,
+  PermissionBoundary,
+} from "@/types"
 
 const zeroPricing: ModelPricing = {
   input: 0,
@@ -127,6 +136,8 @@ const categoryLabels: Record<string, string> = {
 
 export function AgentsPage() {
   const { state, refresh } = useAppState()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [templates, setTemplates] = React.useState<AgentTemplate[]>([])
   const [editing, setEditing] = React.useState<AgentDefinition | "new" | null>(
     null
   )
@@ -137,29 +148,37 @@ export function AgentsPage() {
   const customModels = agents.filter(
     (agent) => agent.model.provider || agent.model.model
   ).length
+  const requestedTemplate = templates.find(
+    (item) => item.id === searchParams.get("template")
+  )
+  const effectiveEditing = editing ?? (requestedTemplate ? "new" : null)
   const editingAgent =
-    editing === "new"
+    effectiveEditing === "new"
       ? "new"
-      : editing
-        ? (agents.find((agent) => agent.id === editing.id) ?? editing)
+      : effectiveEditing
+        ? (agents.find((agent) => agent.id === effectiveEditing.id) ??
+          effectiveEditing)
         : null
+  React.useEffect(() => {
+    void fetchAgentTemplates().then(setTemplates)
+  }, [])
 
   return (
     <div className="flex flex-col gap-7">
       <PageHeader
         eyebrow="Agent definitions"
-        title="Agents"
-        description="管理可复用的 Agent 定义。Agent 是模型、系统提示词、工具、Skills 与权限边界的组合，不是运行会话。"
+        title="员工管理"
+        description="管理员工及其工具、Skills、知识库、权限和备忘录；身份、模型与提示词来自人才模板。"
         actions={
           <Button onClick={() => setEditing("new")}>
             <Plus data-icon="inline-start" />
-            新增 Agent
+            新增员工
           </Button>
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Summary icon={Bot} label="Agent 定义" value={agents.length} />
+        <Summary icon={Bot} label="员工数量" value={agents.length} />
         <Summary icon={ShieldCheck} label="已启用" value={enabled} />
         <Summary
           icon={BrainCircuit}
@@ -176,9 +195,9 @@ export function AgentsPage() {
                 <EmptyMedia variant="icon">
                   <Bot />
                 </EmptyMedia>
-                <EmptyTitle>还没有 Agent 定义</EmptyTitle>
+                <EmptyTitle>还没有员工</EmptyTitle>
                 <EmptyDescription>
-                  创建一个 Agent，并配置提示词、工具、Skills 和权限边界。
+                  从人才库聘用，或创建新人才模板并配置员工能力与权限。
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -215,11 +234,17 @@ export function AgentsPage() {
           globalProvider={state?.config.provider ?? ""}
           globalModel={state?.config.model ?? ""}
           globalPricing={state?.config.pricing ?? zeroPricing}
+          templates={templates}
+          lockedTemplate={
+            editingAgent === "new" ? requestedTemplate : undefined
+          }
           onOpenChange={(open) => {
             if (!open) setEditing(null)
+            if (!open && searchParams.has("template")) setSearchParams({})
           }}
           onSaved={async () => {
             setEditing(null)
+            if (searchParams.has("template")) setSearchParams({})
             await refresh()
           }}
         />
@@ -340,6 +365,8 @@ function AgentDialog({
   globalProvider,
   globalModel,
   globalPricing,
+  templates,
+  lockedTemplate,
   onOpenChange,
   onSaved,
 }: {
@@ -349,11 +376,17 @@ function AgentDialog({
   globalProvider: string
   globalModel: string
   globalPricing: ModelPricing
+  templates: AgentTemplate[]
+  lockedTemplate?: AgentTemplate
   onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void>
 }) {
   const [form, setForm] = React.useState<SaveAgentInput>(() =>
-    agent === "new" ? blankAgent() : agentInput(agent)
+    agent === "new"
+      ? lockedTemplate
+        ? templateAgentInput(lockedTemplate)
+        : blankAgent()
+      : agentInput(agent)
   )
   const [saving, setSaving] = React.useState(false)
   const [removing, setRemoving] = React.useState(false)
@@ -380,8 +413,43 @@ function AgentDialog({
     if (!form.name.trim() || !form.systemPrompt.trim() || saving) return
     setSaving(true)
     try {
-      if (agent === "new") await createAgent(form)
-      else await updateAgent(agent.id, form)
+      const provider = form.model.provider || globalProvider
+      const model = form.model.model || globalModel
+      const templateId = await agentTemplateId(
+        provider,
+        model,
+        form.systemPrompt
+      )
+      let template = templates.find((item) => item.id === templateId)
+      if (!template) {
+        const chineseName = window
+          .prompt("新增人才模板：中文名", form.name)
+          ?.trim()
+        if (!chineseName) return
+        const englishName = window
+          .prompt("新增人才模板：英文名", form.id || form.name)
+          ?.trim()
+        if (!englishName) return
+        const introduction = window
+          .prompt("新增人才模板：个人介绍", form.description)
+          ?.trim()
+        if (!introduction) return
+        const positions = window
+          .prompt("新增人才模板：职位（多个用逗号分隔）", form.category)
+          ?.split(/[,，]/)
+          .map((value) => value.trim())
+          .filter(Boolean)
+        if (!positions?.length) return
+        template = await createAgentTemplate({
+          provider,
+          model,
+          systemPrompt: form.systemPrompt,
+          metadata: { englishName, chineseName, introduction, positions },
+        })
+      }
+      const payload = { ...form, templateId: template.id }
+      if (agent === "new") await createAgent(payload)
+      else await updateAgent(agent.id, payload)
       toast.success(agent === "new" ? "Agent 已创建" : "Agent 配置已保存")
       await onSaved()
     } catch (reason) {
@@ -442,11 +510,10 @@ function AgentDialog({
         <form onSubmit={submit} className="contents">
           <DialogHeader>
             <DialogTitle>
-              {agent === "new" ? "新增 Agent" : `配置 ${form.name}`}
+              {agent === "new" ? "新增员工" : `配置 ${form.name}`}
             </DialogTitle>
             <DialogDescription>
-              每项配置都属于这个 Agent；空模型字段会在启动 session
-              时继承全局设置。
+              人才模板提供身份、模型和系统提示词；此处配置员工的运行能力、知识和权限。
             </DialogDescription>
           </DialogHeader>
 
@@ -479,6 +546,7 @@ function AgentDialog({
                     <Input
                       id="agent-name"
                       value={form.name}
+                      disabled={agent !== "new" || Boolean(lockedTemplate)}
                       onChange={(event) => set("name", event.target.value)}
                     />
                   </Field>
@@ -486,7 +554,7 @@ function AgentDialog({
                     <FieldLabel htmlFor="agent-category">类别</FieldLabel>
                     <Select
                       value={form.category}
-                      disabled={agent !== "new" && agent.internal}
+                      disabled={agent !== "new" || Boolean(lockedTemplate)}
                       onValueChange={(value) => set("category", String(value))}
                     >
                       <SelectTrigger id="agent-category" className="w-full">
@@ -528,6 +596,7 @@ function AgentDialog({
                     id="agent-description"
                     rows={3}
                     value={form.description}
+                    disabled={agent !== "new" || Boolean(lockedTemplate)}
                     onChange={(event) => set("description", event.target.value)}
                   />
                 </Field>
@@ -543,6 +612,7 @@ function AgentDialog({
                       <Input
                         id="agent-provider"
                         value={form.model.provider}
+                        disabled={Boolean(lockedTemplate)}
                         placeholder={globalProvider || "继承全局"}
                         onChange={(event) =>
                           set("model", {
@@ -557,6 +627,7 @@ function AgentDialog({
                       <Input
                         id="agent-model"
                         value={form.model.model}
+                        disabled={Boolean(lockedTemplate)}
                         placeholder={globalModel || "继承全局"}
                         onChange={(event) =>
                           set("model", {
@@ -659,6 +730,7 @@ function AgentDialog({
                     id="agent-system-prompt"
                     className="min-h-96 font-mono text-xs leading-5"
                     value={form.systemPrompt}
+                    readOnly={Boolean(lockedTemplate)}
                     onChange={(event) =>
                       set("systemPrompt", event.target.value)
                     }
@@ -1096,6 +1168,7 @@ function categoryGlyph(category: string) {
 function blankAgent(): SaveAgentInput {
   return {
     id: "",
+    templateId: "",
     name: "",
     description: "",
     avatar: "bot",
@@ -1128,6 +1201,7 @@ function blankAgent(): SaveAgentInput {
 function agentInput(agent: AgentDefinition): SaveAgentInput {
   return {
     id: agent.id,
+    templateId: agent.templateId,
     name: agent.name,
     description: agent.description,
     avatar: agent.avatar,
@@ -1141,5 +1215,23 @@ function agentInput(agent: AgentDefinition): SaveAgentInput {
     skillIds: [...agent.skillIds],
     knowledgeBaseIds: [...agent.knowledgeBaseIds],
     permissions: { ...agent.permissions },
+  }
+}
+
+function templateAgentInput(template: AgentTemplate): SaveAgentInput {
+  const input = blankAgent()
+  return {
+    ...input,
+    templateId: template.id,
+    id: template.metadata.englishName,
+    name: template.metadata.chineseName,
+    description: template.metadata.introduction,
+    category: template.metadata.positions[0] || "general",
+    model: {
+      ...input.model,
+      provider: template.provider,
+      model: template.model,
+    },
+    systemPrompt: template.systemPrompt,
   }
 }

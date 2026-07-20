@@ -95,6 +95,15 @@ func toolCatalog() map[string]ToolSnapshot {
 				parameter("limit", "number", "最多返回的条目数；默认 500。", false),
 			},
 		},
+		"aegis_cancel_issue": {
+			Name: "aegis_cancel_issue", Label: "Cancel a direct child Issue", Source: "aegis_extension",
+			Description: "取消当前 Issue 的一个未完成直属子 Issue。summarize_then_cancel 会先要求原 Agent 总结已有成果并写入 Issue.result；immediate 会立即强制终止，未保存的阶段成果不会自动回传。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("issueId", "string", "要取消的未完成直属子 Issue 数据库 ID。", true),
+				parameter("reason", "string", "具体取消原因及其对目标覆盖的影响，最多 2000 个字符。", true),
+				{Name: "mode", Type: "enum", Description: "summarize_then_cancel：先总结、保存 result，再取消并恢复父 Issue；immediate：立即终止，可能留下空 result。", Required: true, Enum: []string{"summarize_then_cancel", "immediate"}},
+			},
+		},
 		"aegis_create_subissues": {
 			Name: "aegis_create_subissues", Label: "Create child Issues", Source: "aegis_extension",
 			Description: "把当前 Issue 原子拆分为 2–8 个持久化子 Issues，并把执行权交还给调度器；评论唤醒已完成 Issue 后调用会自动重新打开父 Issue。",
@@ -147,6 +156,14 @@ func toolCatalog() map[string]ToolSnapshot {
 				parameter("currentActivity", "string", "现在开始进行的具体工作，最多 1000 个字符。", true),
 			},
 		},
+		"aegis_get_issue_progress": {
+			Name: "aegis_get_issue_progress", Label: "Get Issue progress", Source: "aegis_extension",
+			Description: "读取当前顶层任务树内指定 Pi Session 的 Issue、Agent、执行状态、checkpoint 和阶段性工作进度。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("sessionId", "string", "Session 页面 URL 中的 Execution/Session ID，例如 execution-1784538750397-490。", true),
+				parameter("limit", "number", "最多返回的阶段性进度条数，默认 50，最大 100。", false),
+			},
+		},
 		"aegis_broadcast": {
 			Name: "aegis_broadcast", Label: "Broadcast task information", Source: "aegis_extension",
 			Description: "把经过验证且对其他工作有价值的关键信息持久化，并广播给同一顶层任务树中所有正在执行的其他 Agent。",
@@ -175,6 +192,24 @@ func toolCatalog() map[string]ToolSnapshot {
 				parameter("attachmentId", "string", "附件清单中的附件 ID。", true),
 				parameter("offset", "number", "继续读取的字节偏移，默认 0。", false),
 				parameter("limit", "number", "本次最多读取的字节数，范围 1–32768。", false),
+			},
+		},
+		"aegis_submit_validation": {
+			Name: "aegis_submit_validation", Label: "Submit validation decision", Source: "aegis_extension",
+			Description: "提交 retry 或 abandoned 验收决定；retry 会创建 validation_feedback 评论并自动唤醒原 Worker Session。验收通过应使用 aegis_close_current_issue。",
+			Parameters: []ToolParameterSnapshot{
+				{Name: "outcome", Type: "enum", Description: "返工或放弃决定。", Required: true, Enum: []string{"retry", "abandoned"}},
+				parameter("summary", "string", "验收判断摘要。", true),
+				parameter("feedback", "string", "retry 时需要继续完成的具体事项。", true),
+				parameter("impossibilityProof", "string", "abandoned 时目标无法实现的证据。", true),
+			},
+		},
+		"aegis_close_current_issue": {
+			Name: "aegis_close_current_issue", Label: "Close validated Issue", Source: "aegis_extension",
+			Description: "仅供当前验收 Agent 在确认目标全部满足后关闭当前 Issue；系统会创建 validation_passed 评论、持久化验收记录并触发父 Issue。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("summary", "string", "列出已核验目标与证据的验收通过总结。", true),
+				parameter("evidenceCommentId", "string", "可选的当前 Issue 交付或证据评论 ID。", false),
 			},
 		},
 		"aegis_get_memo": {

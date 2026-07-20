@@ -14,9 +14,19 @@ import { useAppState } from "@/lib/state"
 const AgentsPage = React.lazy(() =>
   import("@/pages/agents").then((module) => ({ default: module.AgentsPage }))
 )
+const TalentLibraryPage = React.lazy(() =>
+  import("@/pages/talent-library").then((module) => ({
+    default: module.TalentLibraryPage,
+  }))
+)
 const ApprovalsPage = React.lazy(() =>
   import("@/pages/approvals").then((module) => ({
     default: module.ApprovalsPage,
+  }))
+)
+const ContainersPage = React.lazy(() =>
+  import("@/pages/containers").then((module) => ({
+    default: module.ContainersPage,
   }))
 )
 const DashboardPage = React.lazy(() =>
@@ -140,6 +150,7 @@ export function App() {
           <Route path="issues" element={<IssuesPage />} />
           <Route path="issues/:issueId" element={<IssueDetailPage />} />
           <Route path="agents" element={<AgentsPage />} />
+          <Route path="talent-library" element={<TalentLibraryPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="knowledge-bases" element={<KnowledgeBasesPage />} />
           <Route
@@ -149,6 +160,7 @@ export function App() {
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="sessions/:executionId" element={<SessionDetailPage />} />
           <Route path="approvals" element={<ApprovalsPage />} />
+          <Route path="containers" element={<ContainersPage />} />
           <Route path="security/findings" element={<FindingsPage />} />
           <Route path="security/uncover" element={<UncoverPage />} />
           <Route path="security" element={<SecurityPage />} />

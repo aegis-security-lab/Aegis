@@ -65,6 +65,40 @@ make dev
 
 Vite 地址为 `http://localhost:5173`，`/api` 会代理到 `http://localhost:8080`。
 
+## Docker Worker 镜像
+
+项目根目录的 `Dockerfile` 用于构建 Agent 的固定执行镜像，镜像内包含 Node.js、Python、
+Go、Java、常用编译工具、Pi CLI，以及 `agent-browser` 浏览器自动化
+工具，镜像名统一为 `aegis-pi-worker:latest`。可以在“容器管理”
+页面点击“构建 Worker 镜像”，也可以手动执行：
+
+```bash
+docker build -t aegis-pi-worker:latest .
+```
+
+也可以使用项目提供的构建脚本：
+
+```bash
+./build-worker-image.sh
+```
+
+脚本会检查 Docker、构建固定镜像，并启动一次临时容器验证 Node.js、Python、Go、Java、Pi CLI 和 `agent-browser`。额外参数会原样传递给
+`docker build`，例如 `./build-worker-image.sh --no-cache`。
+
+Worker 镜像基于 Kali Linux Rolling，并从 Kali 官方镜像构建。需要使用镜像代理或固定快照时，可以覆盖基础镜像：
+
+```bash
+AEGIS_KALI_BASE_IMAGE=kalilinux/kali-rolling:latest \
+./build-worker-image.sh
+```
+
+Node.js、Python、Go、Java 以及常用的基础安全工具均通过 Kali 软件源安装；Pi CLI 和
+`agent-browser` 通过 npm 安装，并默认使用 Kali 软件源提供的 Chromium；AMD64 构建还会执行其浏览器安装步骤，ARM64 则直接使用系统 Chromium，以兼容 Apple Silicon。
+
+新增容器执行环境时不需要选择镜像，只配置环境名称、宿主机工作目录、容器工作目录、网络和资源限制。
+环境启动后会创建一个常驻容器；任务只能选择运行中的容器，Execution 通过 `docker exec` 在容器内
+启动 Pi。Execution 结束不会删除环境容器，需要时可在“容器管理”页面停止。
+
 ## Agent、Session 与协作
 
 Agent 是可复用定义，Issue 是工作对象，Execution 是一次执行尝试，Session 是该 Execution 的 Pi 运行实例：

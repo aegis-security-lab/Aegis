@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   ChevronDown,
   Clock3,
+  File,
+  Folder,
   GitBranch,
   MessageSquare,
   Play,
@@ -12,7 +14,7 @@ import {
   Send,
   ShieldCheck,
   ShieldOff,
-  TerminalSquare,
+  Users,
   XCircle,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
@@ -70,6 +72,7 @@ import {
   fetchIssueComments,
   fetchIssueEvents,
   fetchIssueExecutions,
+  fetchTaskWorkspace,
   setIssueValidationDisabled,
   sendChat,
 } from "@/lib/api"
@@ -78,7 +81,7 @@ import {
   mergeById,
   reverseChronological,
 } from "@/lib/collections"
-import { formatTime, formatTokens } from "@/lib/format"
+import { formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import type {
@@ -87,12 +90,15 @@ import type {
   IssueDetail,
   IssueValidation,
   TaskBroadcast,
+  TaskWorkspace,
 } from "@/types"
 export function IssueDetailPage() {
   const { issueId } = useParams()
   const { state, refresh } = useAppState()
   const [detail, setDetail] = React.useState<IssueDetail | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const [workspace, setWorkspace] = React.useState<TaskWorkspace | null>(null)
+  const [workspaceError, setWorkspaceError] = React.useState("")
   const [body, setBody] = React.useState("")
   const [chat, setChat] = React.useState("")
   const [busy, setBusy] = React.useState(false)
@@ -138,6 +144,32 @@ export function IssueDetailPage() {
   React.useEffect(() => {
     void load()
   }, [load])
+  const currentIssueID = detail?.issue.id
+  const isChildIssue = Boolean(detail?.issue.parentId)
+  React.useEffect(() => {
+    if (!currentIssueID || isChildIssue) {
+      setWorkspace(null)
+      setWorkspaceError("")
+      return
+    }
+    let active = true
+    void fetchTaskWorkspace(currentIssueID)
+      .then((value) => {
+        if (active) {
+          setWorkspace(value)
+          setWorkspaceError("")
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setWorkspace(null)
+          setWorkspaceError(error instanceof Error ? error.message : "读取工作区失败")
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [currentIssueID, isChildIssue])
   const taskIssueIDs = React.useMemo(() => {
     if (!detail) return new Set<string>()
     const issues = state?.issues ?? [detail.issue, ...detail.children]
@@ -241,6 +273,15 @@ export function IssueDetailPage() {
   const issue =
     state?.issues.find((candidate) => candidate.id === detail.issue.id) ??
     detail.issue
+  const knownAgents = state?.agents ?? []
+  const associatedAgentIds = Array.from(
+    new Set(
+      [
+        issue.assigneeAgentId,
+        ...detail.agentSessions.map((session) => session.agentId),
+      ].filter((id): id is string => Boolean(id))
+    )
+  )
   const directChildren = (state?.issues ?? detail.children).filter(
     (candidate) => candidate.parentId === issue.id
   )
@@ -737,6 +778,111 @@ export function IssueDetailPage() {
       )}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0 space-y-5">
+          {!issue.parentId && (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>任务创建参数</CardTitle>
+                  <CardDescription>
+                    本次任务执行使用的完整参数快照；重新启动时会复制这些参数。
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
+                  <TaskParameter label="标题" value={issue.title} />
+                  <TaskParameter label="任务来源" value={taskSourceLabel(issue, state?.tasks ?? [])} />
+                  <TaskParameter label="描述" value={issue.description || "未填写"} />
+                  <TaskParameter label="背景与上下文" value={issue.context || "未填写"} />
+                  <TaskParameter label="目标" value={issue.objective || "未填写"} />
+                  <TaskParameter label="执行边界" value={issue.constraints || "未填写"} />
+                  <TaskParameter label="工作目录" value={issue.workspace} mono />
+                  <TaskParameter
+                    label="执行环境"
+                    value={issue.containerProfileId ? `容器 · ${issue.containerProfileId}` : "宿主机"}
+                  />
+                  <TaskParameter label="负责 Agent" value={agentName(issue.assigneeAgentId, state?.agents ?? [])} />
+                  <TaskParameter label="项目" value={projectName(issue.projectId, state?.projects ?? [])} />
+                  <TaskParameter label="工作模式" value={issue.workMode === "guided" ? "引导模式" : "自治模式"} />
+                  <TaskParameter label="优先级" value={issue.priority} />
+                  <TaskParameter
+                    label="验收策略"
+                    value={`${issue.validationMode} · 最多 ${issue.maxValidationAttempts} 次${issue.validationDisabled ? " · 已关闭" : ""}`}
+                  />
+                  <TaskParameter label="创建时间" value={formatTime(issue.createdAt)} />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>任务执行记录</CardTitle>
+                  <CardDescription>
+                    同一个任务每次启动都会创建独立的根 Issue 和会话树。
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {(state?.issues ?? [issue])
+                    .filter(
+                      (candidate) =>
+                        !candidate.parentId &&
+                        candidate.taskSourceId === issue.taskSourceId
+                    )
+                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                    .map((run) => (
+                      <Link
+                        key={run.id}
+                        to={`/tasks/${run.id}`}
+                        className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm hover:bg-muted/40"
+                      >
+                        <span className="min-w-0 truncate">
+                          <span className="font-mono text-xs">{run.identifier}</span>
+                          <span className="ml-2 text-muted-foreground">{formatTime(run.createdAt)}</span>
+                        </span>
+                        <StatusBadge status={run.status} />
+                      </Link>
+                    ))}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Folder className="size-4" />工作区文件
+                  </CardTitle>
+                  <CardDescription className="break-all">
+                    {workspace?.root ?? issue.workspace}
+                    {workspace ? ` · ${workspace.entries.length} 项` : ""}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {workspaceError ? (
+                    <p className="text-sm text-destructive">{workspaceError}</p>
+                  ) : workspace ? (
+                    <ScrollArea className="h-[360px] rounded-md border">
+                      <div className="divide-y text-sm">
+                        {workspace.entries.map((entry) => (
+                          <div key={entry.path} className="flex items-center gap-2 px-3 py-2">
+                            {entry.kind === "directory" ? (
+                              <Folder className="size-4 shrink-0 text-amber-500" />
+                            ) : (
+                              <File className="size-4 shrink-0 text-muted-foreground" />
+                            )}
+                            <span className="min-w-0 flex-1 break-all font-mono text-xs">{entry.path}</span>
+                            {entry.kind === "file" && (
+                              <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(entry.size ?? 0)}</span>
+                            )}
+                          </div>
+                        ))}
+                        {workspace.entries.length === 0 && (
+                          <p className="p-4 text-muted-foreground">工作区为空</p>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Spinner />正在读取工作区…
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
           <Card className="h-[360px] gap-0 overflow-hidden py-0 sm:h-[420px]">
             <CardHeader className="shrink-0 border-b py-4">
               <CardTitle>Issue 定义</CardTitle>
@@ -885,47 +1031,64 @@ export function IssueDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <TerminalSquare className="size-4" />
-                Executions
+                <Users className="size-4" />
+                关联 Agent
               </CardTitle>
               <CardDescription>
-                Worker 运行独立记录；同一 Issue 的所有验收轮次复用一个验收会话。
+                参与过当前 Issue 的 Agent；负责人负责最终交付与子任务协调。
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {detail.executions.map((e) => (
-                <Link
-                  key={e.id}
-                  to={`/sessions/${e.id}`}
-                  className="block rounded-lg border p-3 hover:bg-muted/40"
-                >
-                  <div className="flex justify-between gap-2">
-                    <span className="text-xs font-medium">
-                      {e.kind} · {e.agentId}
-                    </span>
-                    <StatusBadge status={e.status} />
-                  </div>
-                  <p className="mt-2 font-mono text-xs text-muted-foreground">
-                    {e.sessionId}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formatTokens(e.tokens)} tokens · ${e.cost.toFixed(4)}
-                  </p>
-                </Link>
-              ))}
-              {detail.executionsPage.hasMore ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  disabled={loadingMore === "executions"}
-                  onClick={() => void loadOlder("executions")}
-                >
-                  {loadingMore === "executions" ? <Spinner /> : null}
-                  加载更早运行
-                </Button>
-              ) : null}
+              {associatedAgentIds.length ? (
+                associatedAgentIds.map((agentId) => {
+                  const agent = knownAgents.find(
+                    (candidate) => candidate.id === agentId
+                  )
+                  const bindings = detail.agentSessions.filter(
+                    (session) => session.agentId === agentId
+                  )
+                  const bindingStatus = bindings.some(
+                    (session) => session.status === "active"
+                  )
+                    ? "已关联"
+                    : bindings.length
+                      ? "历史关联"
+                      : "待首次执行"
+                  return (
+                    <div key={agentId} className="rounded-lg border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">
+                            {agent?.name ?? agentId}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">
+                            {agentId}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                          {agentId === issue.assigneeAgentId ? (
+                            <Badge>负责人</Badge>
+                          ) : (
+                            <Badge variant="secondary">
+                              {agent?.internal ? "验收 Agent" : "协作 Agent"}
+                            </Badge>
+                          )}
+                          <Badge variant="outline">{bindingStatus}</Badge>
+                        </div>
+                      </div>
+                      {agent ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {agent.category || "未分类"} · {agent.model.provider} / {agent.model.model}
+                        </p>
+                      ) : null}
+                    </div>
+                  )
+                })
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  当前 Issue 尚未关联 Agent。
+                </p>
+              )}
             </CardContent>
           </Card>
           <Card>
@@ -1239,4 +1402,50 @@ function findTaskRootID(issueID: string, issues: Issue[]) {
     current = parent
   }
   return current?.id ?? issueID
+}
+
+function TaskParameter({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={cn("mt-1 whitespace-pre-wrap break-all", mono && "font-mono text-xs")}>
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function taskSourceLabel(
+  issue: Issue,
+  tasks: Array<{ id: string; title: string }>
+) {
+  if (!issue.taskSourceId) return "历史根 Issue（未关联任务定义）"
+  const source = tasks.find((candidate) => candidate.id === issue.taskSourceId)
+  return source ? `${source.title} · ${source.id}` : issue.taskSourceId
+}
+
+function agentName(id: string | undefined, agents: AgentDefinition[]) {
+  if (!id) return "未指定"
+  const agent = agents.find((candidate) => candidate.id === id)
+  return agent ? `${agent.name} · ${agent.id}` : id
+}
+
+function projectName(id: string, projects: Array<{ id: string; name: string }>) {
+  const project = projects.find((candidate) => candidate.id === id)
+  return project ? `${project.name} · ${project.id}` : id
+}
+
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
+  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
 }

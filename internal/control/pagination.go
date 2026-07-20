@@ -126,7 +126,7 @@ func (s *Store) SessionEventsPage(sessionID, before string, limit int) (Executio
 	if err != nil {
 		return ExecutionEventPage{}, err
 	}
-	return s.executionEventsPage("execution_id = ?", execution.ID, before, limit)
+	return s.executionEventsPage("execution_id IN ?", s.executionIDsForPiSession(execution), before, limit)
 }
 
 func (s *Store) executionEventsPage(scope string, scopeValue any, before string, limit int) (ExecutionEventPage, error) {
@@ -201,12 +201,13 @@ func (s *Store) SessionMessagesPage(sessionID, before string, limit int) (Messag
 		return MessagePage{}, err
 	}
 	limit = normalizePageLimit(limit)
-	query := s.db.Model(&Message{}).Where("execution_id = ?", execution.ID)
+	executionIDs := s.executionIDsForPiSession(execution)
+	query := s.db.Model(&Message{}).Where("execution_id IN ?", executionIDs)
 	var total int64
 	if err = query.Count(&total).Error; err != nil {
 		return MessagePage{}, err
 	}
-	query, err = applyBeforeCursor(query, &Message{}, "execution_id = ?", execution.ID, before)
+	query, err = applyBeforeCursor(query, &Message{}, "execution_id IN ?", executionIDs, before)
 	if err != nil {
 		return MessagePage{}, err
 	}
@@ -232,12 +233,13 @@ func (s *Store) SessionProgressPage(sessionID, before string, limit int) (Execut
 		return ExecutionProgressPage{}, err
 	}
 	limit = normalizePageLimit(limit)
-	query := s.db.Model(&ExecutionProgress{}).Where("execution_id = ?", execution.ID)
+	executionIDs := s.executionIDsForPiSession(execution)
+	query := s.db.Model(&ExecutionProgress{}).Where("execution_id IN ?", executionIDs)
 	var total int64
 	if err = query.Count(&total).Error; err != nil {
 		return ExecutionProgressPage{}, err
 	}
-	query, err = applyBeforeCursor(query, &ExecutionProgress{}, "execution_id = ?", execution.ID, before)
+	query, err = applyBeforeCursor(query, &ExecutionProgress{}, "execution_id IN ?", executionIDs, before)
 	if err != nil {
 		return ExecutionProgressPage{}, err
 	}
@@ -265,24 +267,38 @@ func (s *Store) sessionExecution(id string) (Execution, error) {
 	return execution, nil
 }
 
+func (s *Store) executionIDsForPiSession(execution Execution) []string {
+	var ids []string
+	if execution.SessionID != "" {
+		s.db.Model(&Execution{}).
+			Where("issue_id = ? AND agent_id = ? AND session_id = ?", execution.IssueID, execution.AgentID, execution.SessionID).
+			Order("started_at asc, id asc").Pluck("id", &ids)
+	}
+	if len(ids) == 0 {
+		ids = []string{execution.ID}
+	}
+	return ids
+}
+
 func (s *Store) SessionDelta(sessionID string, since time.Time) (SessionDelta, error) {
 	execution, err := s.sessionExecution(sessionID)
 	if err != nil {
 		return SessionDelta{}, err
 	}
 	watermark := time.Now()
+	executionIDs := s.executionIDsForPiSession(execution)
 	var messages []Message
-	if err = s.db.Where("execution_id = ? AND updated_at > ? AND updated_at <= ?", execution.ID, since, watermark).
+	if err = s.db.Where("execution_id IN ? AND updated_at > ? AND updated_at <= ?", executionIDs, since, watermark).
 		Order("updated_at asc, id asc").Limit(maxDeltaRows + 1).Find(&messages).Error; err != nil {
 		return SessionDelta{}, err
 	}
 	var events []ExecutionEvent
-	if err = s.db.Where("execution_id = ? AND (updated_at > ? OR created_at > ?) AND created_at <= ?", execution.ID, since, since, watermark).
+	if err = s.db.Where("execution_id IN ? AND (updated_at > ? OR created_at > ?) AND created_at <= ?", executionIDs, since, since, watermark).
 		Order("updated_at asc, id asc").Limit(maxDeltaRows + 1).Find(&events).Error; err != nil {
 		return SessionDelta{}, err
 	}
 	var progress []ExecutionProgress
-	if err = s.db.Where("execution_id = ? AND created_at > ? AND created_at <= ?", execution.ID, since, watermark).
+	if err = s.db.Where("execution_id IN ? AND created_at > ? AND created_at <= ?", executionIDs, since, watermark).
 		Order("created_at asc, id asc").Limit(maxDeltaRows + 1).Find(&progress).Error; err != nil {
 		return SessionDelta{}, err
 	}

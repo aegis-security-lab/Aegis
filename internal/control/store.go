@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -55,6 +56,29 @@ type registrySeedMigrationRecord struct {
 	AppliedAt time.Time
 }
 
+func migrateTasks(db *gorm.DB) error {
+	var roots []Issue
+	if err := db.Where("hidden = ? AND parent_id = ? AND task_source_id = ?", false, "", "").Find(&roots).Error; err != nil {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, root := range roots {
+			now := root.CreatedAt
+			if now.IsZero() {
+				now = time.Now()
+			}
+			task := Task{ID: nextID("task"), ProjectID: root.ProjectID, Title: root.Title, Description: root.Description, Objective: root.Objective, Priority: root.Priority, WorkMode: root.WorkMode, AssigneeAgentID: root.AssigneeAgentID, Workspace: root.Workspace, ContainerProfileID: root.ContainerProfileID, Context: root.Context, Constraints: root.Constraints, CreatedAt: now, UpdatedAt: root.UpdatedAt}
+			if err := tx.Create(&task).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&Issue{}).Where("id = ?", root.ID).Update("task_source_id", task.ID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func NewStore(dataDir string) (*Store, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return nil, errors.New("data directory is required")
@@ -78,8 +102,25 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := os.Chmod(dbPath, 0o600); err != nil {
 		return nil, fmt.Errorf("secure sqlite database: %w", err)
 	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &Issue{}, &ConciergeConversation{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &Finding{}); err != nil {
+	// A rework Execution resumes its source Pi conversation. Execution IDs stay
+	// unique audit records, while one Session ID may span multiple executions.
+	if err := db.Exec("DROP INDEX IF EXISTS idx_executions_session_id").Error; err != nil {
+		return nil, fmt.Errorf("migrate reusable execution sessions: %w", err)
+	}
+	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &AgentTemplate{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &Task{}, &Issue{}, &ConciergeConversation{}, &IssueRelation{}, &IssueAgentSession{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &Finding{}); err != nil {
 		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
+	}
+	if err := db.Model(&IssueComment{}).Where("type = '' OR type IS NULL").Update("type", "normal").Error; err != nil {
+		return nil, fmt.Errorf("migrate Issue comment types: %w", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_agent_session_current ON issue_agent_sessions(issue_id, agent_id) WHERE status = 'active'").Error; err != nil {
+		return nil, fmt.Errorf("create current Issue-Agent session constraint: %w", err)
+	}
+	if err := migrateIssueAgentSessions(db); err != nil {
+		return nil, fmt.Errorf("migrate Issue-Agent sessions: %w", err)
+	}
+	if err := migrateTasks(db); err != nil {
+		return nil, fmt.Errorf("migrate reusable Tasks: %w", err)
 	}
 	if err := db.Where("status = ? AND type = ?", "pending", "tool_call").Delete(&Approval{}).Error; err != nil {
 		return nil, fmt.Errorf("remove invalid approvals: %w", err)
@@ -89,11 +130,16 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := db.First(&settings, 1).Error; err == nil {
 		s.config = settings.Value
 		s.config.ValidationMode, s.config.MaxValidationAttempts = normalizeValidationPolicy(s.config.ValidationMode, s.config.MaxValidationAttempts)
+		s.config.MaxIssueDepth, s.config.MaxChildrenPerRequest, s.config.MaxDirectChildren = normalizeDecompositionLimits(s.config.MaxIssueDepth, s.config.MaxChildrenPerRequest, s.config.MaxDirectChildren)
+		s.config.IssueBudget = normalizeIssueBudget(s.config.IssueBudget)
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	if err := s.loadRegistry(); err != nil {
 		return nil, err
+	}
+	if err := s.seedAgentTemplates(time.Now()); err != nil {
+		return nil, fmt.Errorf("seed Agent templates: %w", err)
 	}
 	if err := s.seedProject(); err != nil {
 		return nil, err
@@ -273,6 +319,11 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 		return ConfigView{}, errors.New("不支持的验收策略")
 	}
 	input.ValidationMode, input.MaxValidationAttempts = normalizeValidationPolicy(input.ValidationMode, input.MaxValidationAttempts)
+	input.MaxIssueDepth, input.MaxChildrenPerRequest, input.MaxDirectChildren = normalizeDecompositionLimits(input.MaxIssueDepth, input.MaxChildrenPerRequest, input.MaxDirectChildren)
+	input.IssueBudget = normalizeIssueBudget(input.IssueBudget)
+	if err := validateIssueBudget(input.IssueBudget); err != nil {
+		return ConfigView{}, err
+	}
 	if input.Concurrency < 1 {
 		input.Concurrency = 1
 	}
@@ -291,7 +342,7 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 		return ConfigView{}, errors.New("API Key 认证需要填写密钥")
 	}
 	now := time.Now()
-	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, UpdatedAt: now}
+	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, MaxIssueDepth: input.MaxIssueDepth, MaxChildrenPerRequest: input.MaxChildrenPerRequest, MaxDirectChildren: input.MaxDirectChildren, IssueBudget: input.IssueBudget, UpdatedAt: now}
 	if err := s.db.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
 		return ConfigView{}, err
 	}
@@ -302,7 +353,60 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 
 func configView(c Config) ConfigView {
 	mode, attempts := normalizeValidationPolicy(c.ValidationMode, c.MaxValidationAttempts)
-	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, UpdatedAt: c.UpdatedAt}
+	depth, perRequest, direct := normalizeDecompositionLimits(c.MaxIssueDepth, c.MaxChildrenPerRequest, c.MaxDirectChildren)
+	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, MaxIssueDepth: depth, MaxChildrenPerRequest: perRequest, MaxDirectChildren: direct, IssueBudget: normalizeIssueBudget(c.IssueBudget), UpdatedAt: c.UpdatedAt}
+}
+
+func normalizeIssueBudget(budget IssueBudgetConfig) IssueBudgetConfig {
+	// Older config records have no issueBudget object. A zero polling interval
+	// identifies that migration case and applies the requested 10-minute default.
+	if budget.CheckIntervalSeconds <= 0 {
+		minutes := 10
+		budget.TimeLimitMinutes = &minutes
+		budget.CheckIntervalSeconds = 60
+	}
+	return budget
+}
+
+func validateIssueBudget(budget IssueBudgetConfig) error {
+	if budget.CheckIntervalSeconds < 1 || budget.CheckIntervalSeconds > 3600 {
+		return errors.New("Issue 预算轮询间隔必须在 1 到 3600 秒之间")
+	}
+	if budget.TokenLimit != nil && *budget.TokenLimit <= 0 {
+		return errors.New("Issue Token 预算必须大于 0，或留空禁用")
+	}
+	if budget.CostLimit != nil && (*budget.CostLimit <= 0 || math.IsNaN(*budget.CostLimit) || math.IsInf(*budget.CostLimit, 0)) {
+		return errors.New("Issue 成本预算必须是大于 0 的有限数字，或留空禁用")
+	}
+	if budget.TimeLimitMinutes != nil && *budget.TimeLimitMinutes <= 0 {
+		return errors.New("Issue 时间预算必须大于 0 分钟，或留空禁用")
+	}
+	return nil
+}
+
+func normalizeDecompositionLimits(depth, perRequest, direct int) (int, int, int) {
+	if depth < 1 {
+		depth = 4
+	}
+	if depth > 20 {
+		depth = 20
+	}
+	if perRequest < 2 {
+		perRequest = 8
+	}
+	if perRequest > 50 {
+		perRequest = 50
+	}
+	if direct < 2 {
+		direct = 16
+	}
+	if direct > 200 {
+		direct = 200
+	}
+	if direct < perRequest {
+		direct = perRequest
+	}
+	return depth, perRequest, direct
 }
 
 func normalizeValidationPolicy(mode string, attempts int) (string, int) {
@@ -329,12 +433,19 @@ func (s *Store) SetRuntimeProbe(p RuntimeProbe) {
 func (s *Store) State() StateView { s.mu.RLock(); defer s.mu.RUnlock(); return s.stateViewLocked() }
 func (s *Store) stateViewLocked() StateView {
 	var projects []Project
+	var containerProfiles []ContainerProfile
+	var tasks []Task
 	var issues []Issue
 	var relations []IssueRelation
 	var executions []Execution
 	var approvals []Approval
 	knowledgeBases, _ := s.listKnowledgeBases()
 	s.db.Order("created_at asc").Find(&projects)
+	s.db.Order("created_at asc").Find(&containerProfiles)
+	s.db.Order("updated_at desc").Find(&tasks)
+	for index := range containerProfiles {
+		containerProfiles[index] = containerRuntimeState(containerProfiles[index])
+	}
 	s.db.Where("hidden = ?", false).Order("updated_at desc").Find(&issues)
 	s.db.Order("created_at asc").Find(&relations)
 	s.db.Where("issue_id IN (?)", s.db.Model(&Issue{}).Select("id").Where("hidden = ?", false)).Order("started_at desc").Limit(300).Find(&executions)
@@ -345,7 +456,7 @@ func (s *Store) stateViewLocked() StateView {
 	for index := range executions {
 		executions[index] = compactExecution(executions[index])
 	}
-	return StateView{Configured: s.config.Configured, Config: configView(s.config), Runtime: s.runtime, Projects: projects, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
+	return StateView{Configured: s.config.Configured, Config: configView(s.config), Runtime: s.runtime, Projects: projects, ContainerProfiles: containerProfiles, Tasks: tasks, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
 }
 func (s *Store) Subscribe() (<-chan StateView, func()) {
 	ch := make(chan StateView, 4)
@@ -414,6 +525,21 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		if s.belongsToCancelledTask(parent) {
 			return Issue{}, errors.New("所属任务已取消，不能创建新的子 Issue")
 		}
+		if input.ContainerProfileID == "" {
+			input.ContainerProfileID = parent.ContainerProfileID
+		}
+	}
+	var selectedContainerProfile *ContainerProfile
+	if input.ContainerProfileID != "" {
+		var profile ContainerProfile
+		if err := s.db.First(&profile, "id = ? AND enabled = ?", input.ContainerProfileID, true).Error; err != nil {
+			return Issue{}, errors.New("容器执行环境不存在或已停用")
+		}
+		profile = containerRuntimeState(profile)
+		if profile.RuntimeStatus != "running" {
+			return Issue{}, errors.New("只能选择已启动的容器")
+		}
+		selectedContainerProfile = &profile
 	}
 	var project Project
 	if input.ProjectID != "" {
@@ -435,6 +561,9 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, errors.New("工作目录不存在或不是目录")
 	}
 	workspace, err = filepath.Abs(workspace)
+	if selectedContainerProfile != nil && (selectedContainerProfile.HostWorkspace == "" || filepath.Clean(workspace) != filepath.Clean(selectedContainerProfile.HostWorkspace)) {
+		return Issue{}, errors.New("任务工作目录必须与容器绑定的宿主机工作目录一致")
+	}
 	if err != nil {
 		return Issue{}, err
 	}
@@ -457,14 +586,15 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
 				return errors.New("parent issue not found")
 			}
-			if parent.RequestDepth >= maxIssueDepth {
-				return fmt.Errorf("Issue 已达到最大层级 %d", maxIssueDepth)
+			configuredDepth, _, _ := normalizeDecompositionLimits(s.config.MaxIssueDepth, s.config.MaxChildrenPerRequest, s.config.MaxDirectChildren)
+			if parent.RequestDepth >= configuredDepth {
+				return fmt.Errorf("Issue 已达到最大层级 %d", configuredDepth)
 			}
 			issue.RequestDepth = parent.RequestDepth + 1
 			issue.ValidationMode, issue.MaxValidationAttempts = normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
@@ -472,6 +602,11 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		}
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
+		}
+		if issue.AssigneeAgentID != "" {
+			if _, err := ensureIssueAgentSessionOnDB(tx, issue, issue.AssigneeAgentID, ""); err != nil {
+				return err
+			}
 		}
 		for _, blocker := range uniqueStrings(input.BlockedBy) {
 			if blocker == issue.ID {
@@ -491,6 +626,40 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	return issue, nil
 }
 
+func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
+	if input.ParentID != "" {
+		return Task{}, Issue{}, errors.New("任务定义不能包含父 Issue")
+	}
+	now := time.Now()
+	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: strings.TrimSpace(input.Constraints), CreatedAt: now, UpdatedAt: now}
+	if err := s.db.Create(&task).Error; err != nil {
+		return Task{}, Issue{}, err
+	}
+	input.TaskSourceID = task.ID
+	issue, err := s.CreateIssue(input)
+	if err != nil {
+		_ = s.db.Delete(&Task{}, "id = ?", task.ID).Error
+		return Task{}, Issue{}, err
+	}
+	// Persist normalized/defaulted values from the actual run.
+	task.ProjectID, task.Title, task.Description, task.Objective = issue.ProjectID, issue.Title, issue.Description, issue.Objective
+	task.Priority, task.WorkMode, task.AssigneeAgentID = issue.Priority, issue.WorkMode, issue.AssigneeAgentID
+	task.Workspace, task.ContainerProfileID, task.Context, task.Constraints = issue.Workspace, issue.ContainerProfileID, issue.Context, issue.Constraints
+	if err = s.db.Save(&task).Error; err != nil {
+		return Task{}, Issue{}, err
+	}
+	s.notify()
+	return task, issue, nil
+}
+
+func (s *Store) GetTask(id string) (Task, error) {
+	var task Task
+	if err := s.db.First(&task, "id = ?", id).Error; err != nil {
+		return Task{}, errors.New("task not found")
+	}
+	return task, nil
+}
+
 func (s *Store) GetIssue(id string) (Issue, error) {
 	var issue Issue
 	err := s.db.First(&issue, "id = ?", id).Error
@@ -499,12 +668,57 @@ func (s *Store) GetIssue(id string) (Issue, error) {
 	}
 	return issue, err
 }
+
+func (s *Store) TaskWorkspace(id string) (TaskWorkspace, error) {
+	workspace := ""
+	if task, err := s.GetTask(id); err == nil {
+		workspace = task.Workspace
+	} else if issue, issueErr := s.GetIssue(id); issueErr == nil && issue.ParentID == "" {
+		workspace = issue.Workspace
+	} else {
+		return TaskWorkspace{}, errors.New("task not found")
+	}
+	root, err := filepath.Abs(workspace)
+	if err != nil {
+		return TaskWorkspace{}, err
+	}
+	result := TaskWorkspace{Root: root, Entries: []WorkspaceEntry{}}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if path == root {
+			return nil
+		}
+		relative, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil
+		}
+		kind := "file"
+		if entry.IsDir() {
+			kind = "directory"
+		} else if entry.Type()&os.ModeSymlink != 0 {
+			kind = "symlink"
+		}
+		result.Entries = append(result.Entries, WorkspaceEntry{Path: filepath.ToSlash(relative), Kind: kind, Size: info.Size(), ModifiedAt: info.ModTime()})
+		return nil
+	})
+	if err != nil {
+		return TaskWorkspace{}, err
+	}
+	slices.SortFunc(result.Entries, func(a, b WorkspaceEntry) int { return strings.Compare(a.Path, b.Path) })
+	return result, nil
+}
 func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	issue, err := s.GetIssue(id)
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Broadcasts: []TaskBroadcast{}, Watermark: time.Now()}
+	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, AgentSessions: []IssueAgentSession{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Broadcasts: []TaskBroadcast{}, Watermark: time.Now()}
 	d.Decompositions = []IssueDecomposition{}
 	s.db.Where("parent_id = ?", issue.ID).Order("number asc").Find(&d.Children)
 	var incoming, outgoing []IssueRelation
@@ -527,6 +741,7 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 		return IssueDetail{}, err
 	}
 	d.Executions, d.ExecutionsPage = executions.Items, executions.Page
+	s.db.Where("issue_id = ?", issue.ID).Order("created_at asc").Find(&d.AgentSessions)
 	comments, err := s.IssueCommentsPage(issue.ID, "", detailPageSize)
 	if err != nil {
 		return IssueDetail{}, err
@@ -650,6 +865,11 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		return Issue{}, err
 	}
 	s.db.First(&issue, "id = ?", issue.ID)
+	if issue.AssigneeAgentID != "" {
+		if _, err := s.ensureIssueAgentSession(issue, issue.AssigneeAgentID, ""); err != nil {
+			return Issue{}, err
+		}
+	}
 	s.changedLocked()
 	return issue, nil
 }
@@ -921,7 +1141,15 @@ func (s *Store) createExecution(issue Issue, agentID, kind string) (Execution, e
 	if err != nil {
 		return Execution{}, err
 	}
-	return s.createExecutionRecord(issue, agent, kind)
+	return s.createExecutionRecord(issue, agent, kind, "")
+}
+
+func (s *Store) createExecutionWithSession(issue Issue, agentID, kind, sessionID string) (Execution, error) {
+	agent, err := s.executionAgent(agentID)
+	if err != nil {
+		return Execution{}, err
+	}
+	return s.createExecutionRecord(issue, agent, kind, sessionID)
 }
 
 func (s *Store) createInternalExecution(issue Issue, agentID, kind string) (Execution, AgentDefinition, error) {
@@ -932,15 +1160,29 @@ func (s *Store) createInternalExecution(issue Issue, agentID, kind string) (Exec
 	if !agent.Enabled || !agent.Internal {
 		return Execution{}, AgentDefinition{}, errors.New("internal agent is unavailable")
 	}
-	execution, err := s.createExecutionRecord(issue, agent, kind)
+	execution, err := s.createExecutionRecord(issue, agent, kind, "")
 	return execution, agent, err
 }
 
-func (s *Store) createExecutionRecord(issue Issue, agent AgentDefinition, kind string) (Execution, error) {
+func (s *Store) createExecutionRecord(issue Issue, agent AgentDefinition, kind, sessionID string) (Execution, error) {
 	cfg := s.effectiveAgentConfig(agent)
 	now := time.Now()
-	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agent.ID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: nextID("pi-session"), SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
-	err := s.db.Create(&e).Error
+	runtimeType := "host"
+	containerImage := ""
+	if issue.ContainerProfileID != "" {
+		var profile ContainerProfile
+		if err := s.db.First(&profile, "id = ? AND enabled = ?", issue.ContainerProfileID, true).Error; err != nil {
+			return Execution{}, errors.New("容器执行环境不存在或已停用")
+		}
+		runtimeType = "container"
+		containerImage = profile.Image
+	}
+	binding, err := s.ensureIssueAgentSession(issue, agent.ID, sessionID)
+	if err != nil {
+		return Execution{}, err
+	}
+	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agent.ID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: binding.SessionID, IssueAgentSessionID: binding.ID, RuntimeType: runtimeType, ContainerProfileID: issue.ContainerProfileID, ContainerImage: containerImage, SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
+	err = s.db.Create(&e).Error
 	return e, err
 }
 func (s *Store) updateExecution(id string, updates map[string]any) error {

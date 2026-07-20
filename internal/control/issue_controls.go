@@ -16,7 +16,23 @@ const abandonSummaryInstruction = `## 操作员已放弃目标
 
 请只提交一次最终总结，说明：已经完成的工作、已经生成的附件、当前状态以及剩余风险。总结完成后，此 Issue 将直接以“目标已放弃”结束。`
 
+const parentAgentCancelSummaryInstruction = `## 父 Agent 请求取消此子 Issue
+
+父 Agent 已决定不再继续这个子 Issue。立即停止继续实施，也不要再创建子 Issue 或进入目标验收。
+
+请只提交一次最终总结，说明：已经完成的工作、已经生成的附件、当前状态以及剩余风险。总结会保存到 Issue.result，供父 Agent 恢复后整合；总结完成后，此 Issue 将结束。`
+
+const issueBudgetSummaryInstruction = `## Issue 执行预算已耗尽
+
+系统检测到当前 Issue 已达到全局配置的执行预算。立即停止继续实施，也不要再创建子 Issue 或进入目标验收。
+
+请只提交一次最终总结，说明：预算耗尽前已经完成的工作、已经生成的附件、当前状态以及剩余风险。总结会保存到 Issue.result；总结完成后，此 Issue 将以“目标已放弃”结束。`
+
 func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
+	return m.abandonIssueWithSummary(id, reason, abandonSummaryInstruction, "操作员已放弃目标", "operator_abandoned_issue", false)
+}
+
+func (m *Manager) abandonIssueWithSummary(id, reason, instruction, eventTitle, eventType string, allowTopLevel bool) (Issue, error) {
 	m.scheduleMu.Lock()
 	defer m.scheduleMu.Unlock()
 
@@ -24,7 +40,7 @@ func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
 	if err != nil {
 		return Issue{}, err
 	}
-	if issue.ParentID == "" {
+	if issue.ParentID == "" && !allowTopLevel {
 		return Issue{}, errors.New("顶层任务请使用“取消任务”；只有子 Issue 可以放弃目标")
 	}
 	if slices.Contains([]string{"done", "cancelled"}, issue.Status) {
@@ -52,7 +68,7 @@ func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
 				Where("id IN ? AND status NOT IN ?", descendantIDs, []string{"done", "cancelled"}).
 				Updates(map[string]any{
 					"status": "cancelled", "execution_phase": "completed", "checkout_execution_id": "",
-					"cancelled_at": now, "error": "所属目标已由操作员放弃", "updated_at": now,
+					"cancelled_at": now, "error": eventTitle, "updated_at": now,
 				}).Error; err != nil {
 				return err
 			}
@@ -105,7 +121,7 @@ func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
 		}).Error; err != nil {
 			return err
 		}
-		commentBody := abandonSummaryInstruction + "\n\n**操作员原因：** " + reason
+		commentBody := instruction + "\n\n**取消原因：** " + reason
 		if err := createSystemComment(tx, issue.ID, commentBody, now); err != nil {
 			return err
 		}
@@ -115,7 +131,7 @@ func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
 		}
 		return tx.Create(&ExecutionEvent{
 			ID: nextID("event"), ExecutionID: currentExecutionID, IssueID: issue.ID, Type: "cancellation",
-			Title: "操作员已放弃目标", Detail: eventDetail, CreatedAt: now,
+			Title: eventTitle, Detail: eventDetail, CreatedAt: now,
 		}).Error
 	})
 	if err != nil {
@@ -127,7 +143,7 @@ func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
 		issue, _ = m.store.GetIssue(issue.ID)
 		m.finalizeManualAbandon(issue, "", "", "")
 	} else {
-		prompt := `<system_event type="operator_abandoned_issue">` + "\n" + abandonSummaryInstruction + "\n\n操作员原因：" + reason + "\n</system_event>"
+		prompt := `<system_event type="` + eventType + `">` + "\n" + instruction + "\n\n取消原因：" + reason + "\n</system_event>"
 		if _, err = m.sendSessionPrompt(summarySession, prompt); err != nil {
 			issue, _ = m.store.GetIssue(issue.ID)
 			m.finalizeManualAbandon(issue, summarySession.executionID, summarySession.agentID, "原负责人会话不可用，未能生成额外总结。")
@@ -250,7 +266,7 @@ func (m *Manager) finalizeManualAbandon(issue Issue, executionID, agentID, resul
 
 func createSystemComment(tx *gorm.DB, issueID, body string, now time.Time) error {
 	return tx.Create(&IssueComment{
-		ID: nextID("comment"), IssueID: issueID, AuthorType: "system", AuthorID: "aegis-system",
+		ID: nextID("comment"), IssueID: issueID, Type: "system", AuthorType: "system", AuthorID: "aegis-system",
 		Body: strings.TrimSpace(body), Mentions: []string{}, CreatedAt: now,
 	}).Error
 }

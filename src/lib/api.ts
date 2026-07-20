@@ -1,10 +1,13 @@
 import type {
   AgentDefinition,
+  AgentTemplate,
+  AgentTemplateMetadata,
   AppState,
   Approval,
   ConciergeConversation,
   ConciergeConversationDetail,
   ConnectionTestResult,
+  ContainerProfile,
   CreateIssueInput,
   CursorPage,
   Execution,
@@ -26,17 +29,29 @@ import type {
   SessionDelta,
   SkillDefinition,
   TaskCancellationResult,
+  Task,
   ToolInterruptResult,
   TaskTimeline,
+  TaskWorkspace,
   UncoverEngine,
   UncoverSearchInput,
   UncoverSearchResult,
   UncoverStatus,
 } from "@/types"
+export type SaveContainerProfileInput = Omit<
+  ContainerProfile,
+  "id" | "createdAt" | "updatedAt" | "runtimeStatus" | "containerName"
+>
 export type SaveAgentInput = Omit<
   AgentDefinition,
   "builtin" | "createdAt" | "updatedAt"
 >
+export interface SaveAgentTemplateInput {
+  provider: string
+  model: string
+  systemPrompt: string
+  metadata: AgentTemplateMetadata
+}
 export type SaveSkillInput = Omit<
   SkillDefinition,
   "builtin" | "createdAt" | "updatedAt"
@@ -64,6 +79,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 export const fetchState = () => request<AppState>("/api/state")
+export const probeDocker = () =>
+  request<{ ready: boolean }>("/api/container-profiles/probe/docker")
+export const buildWorkerContainerImage = () =>
+  request<{ image: string; output: string }>(
+    "/api/container-profiles/image/build",
+    { method: "POST" }
+  )
+export const createContainerProfile = (input: SaveContainerProfileInput) =>
+  request<ContainerProfile>("/api/container-profiles", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+export const updateContainerProfile = (
+  id: string,
+  input: SaveContainerProfileInput
+) =>
+  request<ContainerProfile>(
+    `/api/container-profiles/${encodeURIComponent(id)}`,
+    { method: "PUT", body: JSON.stringify(input) }
+  )
+export const deleteContainerProfile = (id: string) =>
+  request<void>(`/api/container-profiles/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
+export const startContainerProfile = (id: string) =>
+  request<ContainerProfile>(
+    `/api/container-profiles/${encodeURIComponent(id)}/start`,
+    { method: "POST" }
+  )
+export const stopContainerProfile = (id: string) =>
+  request<ContainerProfile>(
+    `/api/container-profiles/${encodeURIComponent(id)}/stop`,
+    { method: "POST" }
+  )
 export const fetchConciergeConversations = () =>
   request<{ conversations: ConciergeConversation[] }>(
     "/api/concierge/conversations"
@@ -128,6 +177,11 @@ export const fetchExecutionEvent = (id: string) =>
   request<ExecutionEvent>(`/api/execution-events/${encodeURIComponent(id)}`)
 export const createIssue = (input: CreateIssueInput) =>
   request<Issue>("/api/issues", { method: "POST", body: JSON.stringify(input) })
+export const createTask = (input: CreateIssueInput) =>
+  request<{ task: Task; issue: Issue }>("/api/tasks", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
 export const updateIssue = (id: string, input: Partial<Issue>) =>
   request<Issue>(`/api/issues/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -143,6 +197,12 @@ export const cancelTask = (id: string, reason = "") =>
     `/api/tasks/${encodeURIComponent(id)}/cancel`,
     { method: "POST", body: JSON.stringify({ reason }) }
   )
+export const restartTask = (id: string) =>
+  request<Issue>(`/api/tasks/${encodeURIComponent(id)}/restart`, {
+    method: "POST",
+  })
+export const fetchTaskWorkspace = (id: string) =>
+  request<TaskWorkspace>(`/api/tasks/${encodeURIComponent(id)}/workspace`)
 export const abandonIssue = (id: string, reason = "") =>
   request<Issue>(`/api/issues/${encodeURIComponent(id)}/abandon`, {
     method: "POST",
@@ -209,6 +269,18 @@ export const updateAgent = (id: string, input: SaveAgentInput) =>
   })
 export const deleteAgent = (id: string) =>
   request<void>(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" })
+export const fetchAgentTemplates = () =>
+  request<AgentTemplate[]>("/api/agent-templates")
+export const createAgentTemplate = (input: SaveAgentTemplateInput) =>
+  request<AgentTemplate>("/api/agent-templates", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+export const setAgentTemplateHidden = (id: string, hidden: boolean) =>
+  request<AgentTemplate>(
+    `/api/agent-templates/${encodeURIComponent(id)}/hidden`,
+    { method: "PATCH", body: JSON.stringify({ hidden }) }
+  )
 export const fetchKnowledgeBase = (id: string) =>
   request<KnowledgeBaseDetail>(`/api/knowledge-bases/${encodeURIComponent(id)}`)
 export const createKnowledgeBase = (input: SaveKnowledgeBaseInput) =>

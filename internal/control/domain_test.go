@@ -694,3 +694,39 @@ func TestSecurityAgentRoutingUsesLeadForTopLevelAndWorkerForChildren(t *testing.
 		t.Fatalf("child security issue agent=%s, want red-team-engineer", worker.ID)
 	}
 }
+
+func TestRedTeamLeadHasMandatoryComplexTaskBoundary(t *testing.T) {
+	s := configuredStore(t)
+	lead, err := s.GetAgent("red-team-lead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"COMPLEX TASK BOUNDARY (mandatory)",
+		"two or more distinct security objectives",
+		"requires reconnaissance or information collection",
+		"requires a formal vulnerability",
+		"covers two or more vulnerability classes",
+		"you MUST call aegis_create_subissues",
+	} {
+		if !strings.Contains(lead.SystemPrompt, required) {
+			t.Fatalf("red-team lead prompt is missing %q", required)
+		}
+	}
+}
+
+func TestRedTeamAgentsReceiveAgentBrowserSkill(t *testing.T) {
+	store := configuredStore(t)
+	if _, exists := skillIndex(store.Skills(), agentBrowserSkillID); !exists {
+		t.Fatalf("agent-browser skill %s was not seeded", agentBrowserSkillID)
+	}
+	for _, agentID := range []string{"red-team-lead", "recon-engineer", "red-team-engineer"} {
+		agent, err := store.GetAgent(agentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(agent.SkillIDs, agentBrowserSkillID) {
+			t.Fatalf("agent %s does not have %s: %v", agentID, agentBrowserSkillID, agent.SkillIDs)
+		}
+	}
+}

@@ -43,6 +43,7 @@ func main() {
 		}
 	}()
 	<-ctx.Done()
+	manager.BeginShutdown()
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdown)
@@ -54,6 +55,69 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	_ = r.SetTrustedProxies(nil)
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "time": time.Now()}) })
+	api.GET("/container-profiles", func(c *gin.Context) { c.JSON(http.StatusOK, store.ContainerProfiles()) })
+	api.POST("/container-profiles/image/build", func(c *gin.Context) {
+		output, err := control.BuildWorkerContainerImage(c.Request.Context())
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"image": control.WorkerContainerImage, "output": output})
+	})
+	api.POST("/container-profiles/:id/start", func(c *gin.Context) {
+		profile, err := store.StartContainerProfile(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, profile)
+	})
+	api.POST("/container-profiles/:id/stop", func(c *gin.Context) {
+		profile, err := store.StopContainerProfile(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, profile)
+	})
+	api.POST("/container-profiles", func(c *gin.Context) {
+		var in control.SaveContainerProfileInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		profile, err := store.SaveContainerProfile("", in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, profile)
+	})
+	api.PUT("/container-profiles/:id", func(c *gin.Context) {
+		var in control.SaveContainerProfileInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		profile, err := store.SaveContainerProfile(c.Param("id"), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, profile)
+	})
+	api.DELETE("/container-profiles/:id", func(c *gin.Context) {
+		if err := store.DeleteContainerProfile(c.Param("id")); err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	api.GET("/container-profiles/probe/docker", func(c *gin.Context) {
+		if err := control.ProbeDocker(); err != nil {
+			writeError(c, http.StatusServiceUnavailable, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ready": true})
+	})
 	api.GET("/state", func(c *gin.Context) { c.JSON(200, store.State()) })
 	api.GET("/events", func(c *gin.Context) { streamState(c, store) })
 	api.GET("/tools/uncover/status", func(c *gin.Context) {
@@ -201,6 +265,34 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(200, v)
 	})
+	api.GET("/tasks/:id/workspace", func(c *gin.Context) {
+		v, err := store.TaskWorkspace(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.POST("/tasks/:id/restart", func(c *gin.Context) {
+		v, err := manager.RestartTask(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.POST("/tasks", func(c *gin.Context) {
+		var in control.CreateIssueInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		task, issue, err := manager.CreateTask(in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"task": task, "issue": issue})
+	})
 	api.POST("/issues", func(c *gin.Context) {
 		var in control.CreateIssueInput
 		if !bindJSON(c, &in) {
@@ -346,6 +438,88 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, gin.H{"broadcasts": result})
 	})
+	api.GET("/internal/executions/:id/child-issues", func(c *gin.Context) {
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		includeComments, err := strconv.ParseBool(fallbackQuery(c.Query("includeComments"), "true"))
+		if err != nil {
+			writeError(c, http.StatusBadRequest, errors.New("invalid includeComments value"))
+			return
+		}
+		result, err := manager.ExecutionChildIssues(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), includeComments)
+		if err != nil {
+			writeError(c, http.StatusUnauthorized, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"children": result})
+	})
+	api.POST("/internal/executions/:id/child-waits", func(c *gin.Context) {
+		var in control.WaitForChildIssuesInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.WaitForChildIssues(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
+	api.POST("/internal/executions/:id/cancel-issue", func(c *gin.Context) {
+		var in control.CancelIssueInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.CancelIssueFromExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/issue-progress", func(c *gin.Context) {
+		var in control.GetIssueProgressInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := c.GetHeader("Authorization")
+		result, err := manager.GetIssueProgress(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/issue-comments", func(c *gin.Context) {
+		var in control.CommentIssueInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.CommentIssueFromExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
 	api.GET("/internal/executions/:id/validation/attachments", func(c *gin.Context) {
 		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
 		if !strings.HasPrefix(authorization, "Bearer ") {
@@ -376,6 +550,40 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		result, err := manager.ReadValidationAttachment(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), c.Param("attachmentId"), offset, limit)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/validation/decision", func(c *gin.Context) {
+		var in control.SubmitValidationDecisionInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.SubmitValidationDecision(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/validation/close", func(c *gin.Context) {
+		var in control.CloseValidatedIssueInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.CloseValidatedIssue(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return
@@ -694,6 +902,33 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	})
 
 	api.GET("/agents", func(c *gin.Context) { c.JSON(200, store.Agents()) })
+	api.GET("/agent-templates", func(c *gin.Context) { c.JSON(200, store.AgentTemplates()) })
+	api.POST("/agent-templates", func(c *gin.Context) {
+		var in control.SaveAgentTemplateInput
+		if c.ShouldBindJSON(&in) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid template input"})
+			return
+		}
+		v, err := store.SaveAgentTemplate(in)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.PATCH("/agent-templates/:id/hidden", func(c *gin.Context) {
+		var in control.SetAgentTemplateHiddenInput
+		if c.ShouldBindJSON(&in) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hidden input"})
+			return
+		}
+		v, err := store.SetAgentTemplateHidden(c.Param("id"), in.Hidden)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
 	api.POST("/agents", func(c *gin.Context) {
 		var in control.SaveAgentInput
 		if !bindJSON(c, &in) {

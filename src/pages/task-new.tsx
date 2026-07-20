@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
-import { createIssue } from "@/lib/api"
+import { createTask } from "@/lib/api"
 import {
   ISSUE_TITLE_MAX_LENGTH,
   issueTitleLength,
@@ -112,7 +112,7 @@ export function TaskNewPage() {
     }
     setBusy(true)
     try {
-      const issue = await createIssue({
+      const { issue } = await createTask({
         ...form,
         assigneeAgentId: selectedAgentId,
       })
@@ -211,6 +211,43 @@ export function TaskNewPage() {
                   value={form.workspace}
                   onChange={(event) => update("workspace", event.target.value)}
                 />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="task-runtime">执行环境</FieldLabel>
+                <Select
+                  value={form.containerProfileId || "host"}
+                  onValueChange={(value) => {
+                    update(
+                      "containerProfileId",
+                      !value || value === "host" ? undefined : value
+                    )
+                    const profile = state?.containerProfiles.find(
+                      (item) => item.id === value
+                    )
+                    if (profile) update("workspace", profile.hostWorkspace)
+                  }}
+                >
+                  <SelectTrigger id="task-runtime" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectItem value="host">宿主机（默认）</SelectItem>
+                    {(state?.containerProfiles ?? [])
+                      .filter(
+                        (profile) =>
+                          profile.enabled && profile.runtimeStatus === "running"
+                      )
+                      .map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.name} · {profile.image}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  选择容器后，每次 Execution
+                  都会启动一个临时容器，并将上方工作目录挂载到容器工作区。
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="constraints">权限与执行边界</FieldLabel>

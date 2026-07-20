@@ -83,6 +83,15 @@ export function SetupPage() {
     reworkApprovalMode: "all",
     validationMode: "fixed",
     maxValidationAttempts: 3,
+    maxIssueDepth: 4,
+    maxChildrenPerRequest: 8,
+    maxDirectChildren: 16,
+    issueBudget: {
+      tokenLimit: null,
+      costLimit: null,
+      timeLimitMinutes: 10,
+      checkIntervalSeconds: 60,
+    },
   }))
 
   const update = <K extends keyof SaveConfigInput>(
@@ -580,8 +589,18 @@ function WorkspaceStep({
           </Field>
           <Field>
             <FieldLabel>Issue 返工审批策略</FieldLabel>
-            <Select value={form.reworkApprovalMode} onValueChange={(value) => update("reworkApprovalMode", value as SaveConfigInput["reworkApprovalMode"])}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <Select
+              value={form.reworkApprovalMode}
+              onValueChange={(value) =>
+                update(
+                  "reworkApprovalMode",
+                  value as SaveConfigInput["reworkApprovalMode"]
+                )
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">始终需要人工批准</SelectItem>
                 <SelectItem value="none">自动批准并重新执行</SelectItem>

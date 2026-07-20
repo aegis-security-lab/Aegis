@@ -45,7 +45,8 @@ export function SessionsPage() {
           <div>
             <CardTitle>Pi 会话</CardTitle>
             <CardDescription>
-              一个 Execution 对应一个持久化 Pi Session。
+              每个 Issue 中的每个 Agent 对应一个当前 Pi
+              Session，多次执行会继续同一段对话。
             </CardDescription>
           </div>
           <div className="relative w-full md:w-80">

@@ -26,6 +26,7 @@ func (m *Manager) PublishExecutionAttachment(executionID, token string, input Pu
 	if err != nil {
 		return IssueAttachment{}, err
 	}
+	input.Path = m.hostWorkspacePath(issue, input.Path)
 	attachment, err := m.store.captureAttachment(issue, executionID, input)
 	if err != nil {
 		return IssueAttachment{}, err
@@ -159,8 +160,24 @@ func (m *Manager) collectExecutionAttachments(issue Issue, executionID string) {
 		if path == "" || !autoPublishableAttachment(path) {
 			continue
 		}
+		path = m.hostWorkspacePath(issue, path)
 		_, _ = m.store.captureAttachment(issue, executionID, PublishAttachmentInput{Path: path})
 	}
+}
+
+func (m *Manager) hostWorkspacePath(issue Issue, path string) string {
+	if issue.ContainerProfileID == "" || !filepath.IsAbs(path) {
+		return path
+	}
+	profile, err := m.store.GetContainerProfile(issue.ContainerProfileID)
+	if err != nil {
+		return path
+	}
+	relative, err := filepath.Rel(profile.WorkspacePath, filepath.Clean(path))
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return filepath.Join(issue.Workspace, relative)
 }
 
 func autoPublishableAttachment(path string) bool {

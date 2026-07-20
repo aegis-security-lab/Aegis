@@ -178,25 +178,28 @@ func TestValidationPassCompletesIssueAndFailurePreparesSameAgentRetry(t *testing
 		t.Fatal(err)
 	}
 
-	checkedOut, retry, agent, prompt, err := manager.prepareValidationRetry(issue, validation, validationDecision{
+	manager.scheduleMu.Lock()
+	manager.continueAfterValidationFailure(issue, validation, validationDecision{
 		Summary: "The output does not name the test command.", Feedback: "Run the integration suite and report its command and result.",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retry.Kind != "rework" || agent.ID != issue.AssigneeAgentID || checkedOut.CheckoutExecutionID != retry.ID {
-		t.Fatalf("retry did not return to the original owner: issue=%+v execution=%+v agent=%+v", checkedOut, retry, agent)
-	}
-	if !strings.Contains(prompt, issue.Objective) || !strings.Contains(prompt, "Run the integration suite") {
-		t.Fatalf("retry prompt is missing objective or feedback: %s", prompt)
-	}
 	detail, err := store.GetIssueDetail(issue.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Comments) != 1 || detail.Comments[0].AuthorID != "acceptance-validator" {
+	if len(detail.Comments) != 1 || detail.Comments[0].AuthorID != "acceptance-validator" || detail.Comments[0].Type != "validation_feedback" || !strings.Contains(detail.Comments[0].Body, "Run the integration suite") {
 		t.Fatalf("validation failure comment was not recorded: %+v", detail.Comments)
 	}
+	var wakeup AgentWakeup
+	if err = store.db.First(&wakeup, "comment_id = ?", detail.Comments[0].ID).Error; err != nil {
+		manager.scheduleMu.Unlock()
+		t.Fatal(err)
+	}
+	if wakeup.AgentID != issue.AssigneeAgentID || wakeup.Reason != "validation_feedback" || wakeup.Status != "queued" {
+		manager.scheduleMu.Unlock()
+		t.Fatalf("validation feedback did not queue the original owner: %+v", wakeup)
+	}
+	store.db.Delete(&AgentWakeup{}, "id = ?", wakeup.ID)
+	manager.scheduleMu.Unlock()
 
 	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
 		"execution_phase": "validating", "checkout_execution_id": "",
@@ -211,6 +214,38 @@ func TestValidationPassCompletesIssueAndFailurePreparesSameAgentRetry(t *testing
 	}
 	if completed.Status != "done" || completed.ExecutionPhase != "completed" || completed.Result != validation.CandidateResult {
 		t.Fatalf("validated Issue was not completed: %+v", completed)
+	}
+}
+
+func TestSubmitValidationDecisionPersistsStructuredResult(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Structured validation", Objective: "Provide evidence.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := IssueValidation{ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: "source", ValidationExecutionID: execution.ID, Attempt: 1, Objective: issue.Objective, Status: "running", CreatedAt: time.Now()}
+	if err = store.db.Create(&record).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.sessions[execution.ID] = &PiSession{executionID: execution.ID, issueID: issue.ID, kind: "validation", controlToken: "validation-token"}
+	input := SubmitValidationDecisionInput{Outcome: "retry", Summary: "Evidence is incomplete.", Feedback: "Publish the test output."}
+	if _, err = manager.SubmitValidationDecision(execution.ID, "validation-token", input); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.First(&record, "id = ?", record.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	decision, err := submittedValidationDecision(record, "not json")
+	if err != nil || decision.Outcome != "retry" || decision.Feedback != input.Feedback {
+		t.Fatalf("structured decision was not persisted: decision=%+v err=%v", decision, err)
+	}
+	if _, err = manager.SubmitValidationDecision(execution.ID, "wrong-token", input); err == nil {
+		t.Fatal("wrong control token accepted")
 	}
 }
 
@@ -261,5 +296,66 @@ func TestFixedValidationExecutionIsReusedAndAbandonmentIsVisible(t *testing.T) {
 	}
 	if abandoned.Status != "cancelled" || !abandoned.ObjectiveAbandoned || abandoned.AbandonedAt == nil || abandoned.AbandonmentReason == "" {
 		t.Fatalf("abandoned objective is not persisted: %+v", abandoned)
+	}
+}
+
+func TestWorkerDeliveryCommentAutomaticallyQueuesAcceptanceAgent(t *testing.T) {
+	store := configuredStore(t)
+	issue, _ := store.CreateIssue(CreateIssueInput{Title: "Delivery", Objective: "Verified output", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	source, _ := store.createExecution(issue, "backend-engineer", "work")
+	_ = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "active", "checkout_execution_id": source.ID}).Error
+	_ = store.updateExecution(source.ID, map[string]any{"status": "completed", "result": "Implemented and tested."})
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.scheduleMu.Lock()
+	if err := manager.publishDeliveryForValidation(issue, source, source.AgentID, "Implemented and tested."); err != nil {
+		manager.scheduleMu.Unlock()
+		t.Fatal(err)
+	}
+	var comment IssueComment
+	if err := store.db.First(&comment, "issue_id = ? AND type = ?", issue.ID, "delivery").Error; err != nil {
+		manager.scheduleMu.Unlock()
+		t.Fatal(err)
+	}
+	var wakeup AgentWakeup
+	if err := store.db.First(&wakeup, "comment_id = ?", comment.ID).Error; err != nil {
+		manager.scheduleMu.Unlock()
+		t.Fatal(err)
+	}
+	updated, _ := store.GetIssue(issue.ID)
+	if comment.ExecutionID != source.ID || wakeup.AgentID != "acceptance-validator" || wakeup.Reason != "delivery_validation" || updated.ExecutionPhase != "awaiting_validation" {
+		manager.scheduleMu.Unlock()
+		t.Fatalf("delivery workflow mismatch: comment=%+v wakeup=%+v issue=%+v", comment, wakeup, updated)
+	}
+	store.db.Delete(&AgentWakeup{}, "id = ?", wakeup.ID)
+	manager.scheduleMu.Unlock()
+}
+
+func TestAcceptanceAgentCloseToolCreatesPassedCommentAndClosesIssue(t *testing.T) {
+	store := configuredStore(t)
+	issue, _ := store.CreateIssue(CreateIssueInput{Title: "Validated", Objective: "All checks pass", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	source, _ := store.createExecution(issue, "backend-engineer", "work")
+	validationExecution, _, _ := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	_ = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "validating", "result": "Checks pass", "current_execution_id": validationExecution.ID}).Error
+	validation := IssueValidation{ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID, ValidationExecutionID: validationExecution.ID, Attempt: 1, Objective: issue.Objective, CandidateResult: "Checks pass", Status: "running", CreatedAt: time.Now()}
+	if err := store.db.Create(&validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	session := &PiSession{manager: manager, executionID: validationExecution.ID, issueID: issue.ID, agentID: "acceptance-validator", kind: "validation", controlToken: "validator-secret"}
+	manager.sessions[validationExecution.ID] = session
+	if _, err := manager.CloseValidatedIssue(validationExecution.ID, "validator-secret", CloseValidatedIssueInput{Summary: "Objective and published evidence verified."}); err != nil {
+		t.Fatal(err)
+	}
+	manager.handleValidationSettled(issue, session, "")
+	completed, _ := store.GetIssue(issue.ID)
+	if completed.Status != "done" {
+		t.Fatalf("validated Issue was not closed: %+v", completed)
+	}
+	var comment IssueComment
+	if err := store.db.First(&comment, "issue_id = ? AND type = ?", issue.ID, "validation_passed").Error; err != nil {
+		t.Fatal(err)
+	}
+	if comment.AuthorID != "acceptance-validator" || !strings.Contains(comment.Body, "Objective and published evidence verified") {
+		t.Fatalf("unexpected passed comment: %+v", comment)
 	}
 }

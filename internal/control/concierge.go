@@ -37,10 +37,11 @@ func (s *Store) CreateConciergeConversation() (ConciergeConversation, error) {
 		ValidationDisabled: true, Workspace: s.Config().Workspace, CreatedBy: "operator", Hidden: true,
 		CreatedAt: now, UpdatedAt: now,
 	}
+	sessionID := nextID("pi-session")
 	execution := Execution{
 		ID: executionID, IssueID: issue.ID, AgentID: agent.ID, Kind: "concierge", Status: "idle",
 		Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking,
-		SessionID: nextID("pi-session"), SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools),
+		SessionID: sessionID, SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools),
 		StartedAt: now, UpdatedAt: now,
 	}
 	conversation := ConciergeConversation{
@@ -51,6 +52,11 @@ func (s *Store) CreateConciergeConversation() (ConciergeConversation, error) {
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
 		}
+		binding, err := ensureIssueAgentSessionOnDB(tx, issue, agent.ID, sessionID)
+		if err != nil {
+			return err
+		}
+		execution.IssueAgentSessionID = binding.ID
 		if err := tx.Create(&execution).Error; err != nil {
 			return err
 		}

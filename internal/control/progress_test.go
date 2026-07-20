@@ -3,6 +3,7 @@ package control
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecutionProgressIsAuthenticatedPersistedAndVisibleInSession(t *testing.T) {
@@ -71,5 +72,37 @@ func TestProgressPromptRequiresMaterialStageUpdates(t *testing.T) {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("progress prompt missing %q: %s", required, prompt)
 		}
+	}
+}
+
+func TestAgentCanReadSessionProgressInsideCurrentTaskTree(t *testing.T) {
+	store := configuredStore(t)
+	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	sourceExecution, _ := store.createExecution(parent, "backend-engineer", "work")
+	targetExecution, _ := store.createExecution(child, "frontend-engineer", "work")
+	now := time.Now()
+	progress := ExecutionProgress{ID: nextID("progress"), ExecutionID: targetExecution.ID, IssueID: child.ID, Stage: "调查完成", Summary: "已定位入口。", CurrentActivity: "正在验证。", CreatedAt: now}
+	if err := store.db.Create(&progress).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Model(&Execution{}).Where("id = ?", targetExecution.ID).Update("checkpoint", "正在验证").Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{
+		sourceExecution.ID: {executionID: sourceExecution.ID, issueID: parent.ID, agentID: "backend-engineer", controlToken: "secret"},
+	}}
+	result, err := manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{SessionID: targetExecution.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Issue.ID != child.ID || result.Execution.ID != targetExecution.ID || len(result.ProgressUpdates) != 1 || result.ProgressUpdates[0].ID != progress.ID {
+		t.Fatalf("unexpected progress result: %+v", result)
+	}
+
+	other, _ := store.CreateIssue(CreateIssueInput{Title: "Other task", Priority: "low", WorkMode: "autonomous"})
+	otherExecution, _ := store.createExecution(other, "backend-engineer", "work")
+	if _, err = manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{SessionID: otherExecution.ID}); err == nil {
+		t.Fatal("expected cross-task progress read to be rejected")
 	}
 }
