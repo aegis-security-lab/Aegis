@@ -2,6 +2,7 @@ package control
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -35,15 +36,15 @@ func (m *Manager) checkIssueBudgets(now time.Time) {
 	if !config.Configured {
 		return
 	}
-	budget := normalizeIssueBudget(config.IssueBudget)
-	if budget.TokenLimit == nil && budget.CostLimit == nil && budget.TimeLimitMinutes == nil {
-		return
-	}
 	var issues []Issue
-	if err := m.store.db.Where("status = ? AND execution_phase NOT IN ? AND abandon_requested_at IS NULL", "in_progress", []string{"waiting_children", "summarizing"}).Find(&issues).Error; err != nil {
+	if err := m.store.db.Where("parent_id = ? AND status = ? AND execution_phase <> ? AND abandon_requested_at IS NULL", "", "in_progress", "summarizing").Find(&issues).Error; err != nil {
 		return
 	}
 	for _, issue := range issues {
+		budget := budgetForIssue(config, issue)
+		if budget.TokenLimit == nil && budget.CostLimit == nil && budget.TimeLimitMinutes == nil {
+			continue
+		}
 		usage, ok := m.issueBudgetUsage(issue.ID, now)
 		if !ok {
 			continue
@@ -58,22 +59,32 @@ func (m *Manager) checkIssueBudgets(now time.Time) {
 	}
 }
 
+func budgetForIssue(config Config, issue Issue) IssueBudgetConfig {
+	budget := normalizeIssueBudget(config.IssueBudget)
+	if issue.ParentID == "" && issue.TimeBudgetMinutes != nil {
+		budget.TimeLimitMinutes = issue.TimeBudgetMinutes
+	}
+	return budget
+}
+
 func (m *Manager) issueBudgetUsage(issueID string, now time.Time) (issueBudgetUsage, bool) {
-	var executions []Execution
-	if err := m.store.db.Where("issue_id = ? AND kind <> ?", issueID, "concierge").Find(&executions).Error; err != nil || len(executions) == 0 {
+	root, err := m.store.GetIssue(issueID)
+	if err != nil || root.ParentID != "" || root.CurrentExecutionID == "" {
 		return issueBudgetUsage{}, false
 	}
-	usage := issueBudgetUsage{}
-	for _, execution := range executions {
-		usage.Tokens += execution.Tokens
-		usage.Cost += execution.Cost
-		end := now
-		if execution.FinishedAt != nil {
-			end = *execution.FinishedAt
-		}
-		if end.After(execution.StartedAt) {
-			usage.Duration += end.Sub(execution.StartedAt)
-		}
+	var execution Execution
+	if err := m.store.db.First(&execution, "id = ? AND issue_id = ? AND kind <> ?", root.CurrentExecutionID, root.ID, "concierge").Error; err != nil {
+		return issueBudgetUsage{}, false
+	}
+	if !slices.Contains(activeExecutionStatuses, execution.Status) {
+		return issueBudgetUsage{}, false
+	}
+	usage := issueBudgetUsage{Tokens: execution.Tokens, Cost: execution.Cost}
+	// Every Execution receives a fresh Issue budget. A comment wakeup, rework,
+	// continuation, heartbeat, or manually restarted Issue therefore starts from
+	// zero instead of inheriting usage from earlier or parallel executions.
+	if now.After(execution.StartedAt) {
+		usage.Duration = now.Sub(execution.StartedAt)
 	}
 	return usage, true
 }
@@ -81,15 +92,15 @@ func (m *Manager) issueBudgetUsage(issueID string, now time.Time) (issueBudgetUs
 func issueBudgetExceededReason(budget IssueBudgetConfig, usage issueBudgetUsage) string {
 	reasons := make([]string, 0, 3)
 	if budget.TokenLimit != nil && usage.Tokens >= *budget.TokenLimit {
-		reasons = append(reasons, fmt.Sprintf("Token 预算已达到：当前累计 %d tokens，配置上限 %d tokens", usage.Tokens, *budget.TokenLimit))
+		reasons = append(reasons, fmt.Sprintf("Token 预算已达到：本次 Execution 已使用 %d tokens，配置上限 %d tokens", usage.Tokens, *budget.TokenLimit))
 	}
 	if budget.CostLimit != nil && usage.Cost >= *budget.CostLimit {
-		reasons = append(reasons, fmt.Sprintf("成本预算已达到：当前累计 $%.6f，配置上限 $%.6f", usage.Cost, *budget.CostLimit))
+		reasons = append(reasons, fmt.Sprintf("成本预算已达到：本次 Execution 已使用 $%.6f，配置上限 $%.6f", usage.Cost, *budget.CostLimit))
 	}
 	if budget.TimeLimitMinutes != nil {
 		limit := time.Duration(*budget.TimeLimitMinutes) * time.Minute
 		if usage.Duration >= limit {
-			reasons = append(reasons, fmt.Sprintf("时间预算已达到：当前累计执行 %.1f 分钟，配置上限 %d 分钟", usage.Duration.Minutes(), *budget.TimeLimitMinutes))
+			reasons = append(reasons, fmt.Sprintf("时间预算已达到：本次 Execution 已运行 %.1f 分钟，配置上限 %d 分钟", usage.Duration.Minutes(), *budget.TimeLimitMinutes))
 		}
 	}
 	if len(reasons) == 0 {

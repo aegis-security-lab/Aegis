@@ -9,52 +9,58 @@ type IssueBudgetConfig struct {
 	CheckIntervalSeconds int      `json:"checkIntervalSeconds"`
 }
 
+type IssueHeartbeatConfig struct {
+	IntervalSeconds int `json:"intervalSeconds"`
+}
+
 type Config struct {
-	Configured            bool              `json:"configured"`
-	NodePath              string            `json:"nodePath"`
-	PiPath                string            `json:"piPath"`
-	Provider              string            `json:"provider"`
-	Model                 string            `json:"model"`
-	Pricing               ModelPricing      `json:"pricing"`
-	BaseURL               string            `json:"baseUrl"`
-	Thinking              string            `json:"thinking"`
-	AuthMode              string            `json:"authMode"`
-	APIKey                string            `json:"apiKey,omitempty"`
-	Workspace             string            `json:"workspace"`
-	Concurrency           int               `json:"concurrency"`
-	ApprovalMode          string            `json:"approvalMode"`
-	ReworkApprovalMode    string            `json:"reworkApprovalMode"`
-	ValidationMode        string            `json:"validationMode"`
-	MaxValidationAttempts int               `json:"maxValidationAttempts"`
-	MaxIssueDepth         int               `json:"maxIssueDepth"`
-	MaxChildrenPerRequest int               `json:"maxChildrenPerRequest"`
-	MaxDirectChildren     int               `json:"maxDirectChildren"`
-	IssueBudget           IssueBudgetConfig `json:"issueBudget"`
-	UpdatedAt             time.Time         `json:"updatedAt"`
+	Configured            bool                 `json:"configured"`
+	NodePath              string               `json:"nodePath"`
+	PiPath                string               `json:"piPath"`
+	Provider              string               `json:"provider"`
+	Model                 string               `json:"model"`
+	Pricing               ModelPricing         `json:"pricing"`
+	BaseURL               string               `json:"baseUrl"`
+	Thinking              string               `json:"thinking"`
+	AuthMode              string               `json:"authMode"`
+	APIKey                string               `json:"apiKey,omitempty"`
+	Workspace             string               `json:"workspace"`
+	Concurrency           int                  `json:"concurrency"`
+	ApprovalMode          string               `json:"approvalMode"`
+	ReworkApprovalMode    string               `json:"reworkApprovalMode"`
+	ValidationMode        string               `json:"validationMode"`
+	MaxValidationAttempts int                  `json:"maxValidationAttempts"`
+	MaxIssueDepth         int                  `json:"maxIssueDepth"`
+	MaxChildrenPerRequest int                  `json:"maxChildrenPerRequest"`
+	MaxDirectChildren     int                  `json:"maxDirectChildren"`
+	IssueBudget           IssueBudgetConfig    `json:"issueBudget"`
+	IssueHeartbeat        IssueHeartbeatConfig `json:"issueHeartbeat"`
+	UpdatedAt             time.Time            `json:"updatedAt"`
 }
 
 type ConfigView struct {
-	Configured            bool              `json:"configured"`
-	NodePath              string            `json:"nodePath"`
-	PiPath                string            `json:"piPath"`
-	Provider              string            `json:"provider"`
-	Model                 string            `json:"model"`
-	Pricing               ModelPricing      `json:"pricing"`
-	BaseURL               string            `json:"baseUrl"`
-	Thinking              string            `json:"thinking"`
-	AuthMode              string            `json:"authMode"`
-	HasAPIKey             bool              `json:"hasApiKey"`
-	Workspace             string            `json:"workspace"`
-	Concurrency           int               `json:"concurrency"`
-	ApprovalMode          string            `json:"approvalMode"`
-	ReworkApprovalMode    string            `json:"reworkApprovalMode"`
-	ValidationMode        string            `json:"validationMode"`
-	MaxValidationAttempts int               `json:"maxValidationAttempts"`
-	MaxIssueDepth         int               `json:"maxIssueDepth"`
-	MaxChildrenPerRequest int               `json:"maxChildrenPerRequest"`
-	MaxDirectChildren     int               `json:"maxDirectChildren"`
-	IssueBudget           IssueBudgetConfig `json:"issueBudget"`
-	UpdatedAt             time.Time         `json:"updatedAt"`
+	Configured            bool                 `json:"configured"`
+	NodePath              string               `json:"nodePath"`
+	PiPath                string               `json:"piPath"`
+	Provider              string               `json:"provider"`
+	Model                 string               `json:"model"`
+	Pricing               ModelPricing         `json:"pricing"`
+	BaseURL               string               `json:"baseUrl"`
+	Thinking              string               `json:"thinking"`
+	AuthMode              string               `json:"authMode"`
+	HasAPIKey             bool                 `json:"hasApiKey"`
+	Workspace             string               `json:"workspace"`
+	Concurrency           int                  `json:"concurrency"`
+	ApprovalMode          string               `json:"approvalMode"`
+	ReworkApprovalMode    string               `json:"reworkApprovalMode"`
+	ValidationMode        string               `json:"validationMode"`
+	MaxValidationAttempts int                  `json:"maxValidationAttempts"`
+	MaxIssueDepth         int                  `json:"maxIssueDepth"`
+	MaxChildrenPerRequest int                  `json:"maxChildrenPerRequest"`
+	MaxDirectChildren     int                  `json:"maxDirectChildren"`
+	IssueBudget           IssueBudgetConfig    `json:"issueBudget"`
+	IssueHeartbeat        IssueHeartbeatConfig `json:"issueHeartbeat"`
+	UpdatedAt             time.Time            `json:"updatedAt"`
 }
 
 type RuntimeProbe struct {
@@ -111,6 +117,21 @@ type SaveContainerProfileInput struct {
 	Enabled       bool    `json:"enabled"`
 }
 
+type ContainerProfileDeleteImpact struct {
+	ContainerProfileID   string `json:"containerProfileId"`
+	IssueCount           int    `json:"issueCount"`
+	TaskCount            int    `json:"taskCount"`
+	ExecutionCount       int    `json:"executionCount"`
+	ActiveExecutionCount int    `json:"activeExecutionCount"`
+}
+
+type ContainerProfileDeleteResult struct {
+	ContainerProfileID string `json:"containerProfileId"`
+	DeletedIssues      int64  `json:"deletedIssues"`
+	DeletedTasks       int64  `json:"deletedTasks"`
+	DeletedExecutions  int64  `json:"deletedExecutions"`
+}
+
 // Task is a reusable work definition. Each run creates a new root Issue that
 // points back to the Task through TaskSourceID.
 type Task struct {
@@ -126,6 +147,7 @@ type Task struct {
 	ContainerProfileID string    `json:"containerProfileId,omitempty" gorm:"index"`
 	Context            string    `json:"context,omitempty" gorm:"type:text"`
 	Constraints        string    `json:"constraints,omitempty" gorm:"type:text"`
+	TimeBudgetMinutes  *int      `json:"timeBudgetMinutes,omitempty"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
 }
@@ -160,6 +182,7 @@ type Issue struct {
 	ContainerProfileID    string     `json:"containerProfileId,omitempty" gorm:"index"`
 	Context               string     `json:"context,omitempty"`
 	Constraints           string     `json:"constraints,omitempty"`
+	TimeBudgetMinutes     *int       `json:"timeBudgetMinutes,omitempty"`
 	Result                string     `json:"result,omitempty"`
 	Error                 string     `json:"error,omitempty"`
 	ObjectiveAbandoned    bool       `json:"objectiveAbandoned" gorm:"index"`
@@ -291,6 +314,7 @@ type IssueValidation struct {
 	Feedback              string     `json:"feedback" gorm:"type:text"`
 	AbandonmentProof      string     `json:"abandonmentProof,omitempty" gorm:"type:text"`
 	DecisionJSON          string     `json:"decisionJson,omitempty" gorm:"type:text"`
+	ManualOverrideReason  string     `json:"manualOverrideReason,omitempty" gorm:"type:text"`
 	Error                 string     `json:"error,omitempty" gorm:"type:text"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	CompletedAt           *time.Time `json:"completedAt,omitempty"`
@@ -437,19 +461,21 @@ type ValidationAttachmentChunk struct {
 }
 
 type AgentWakeup struct {
-	ID                  string     `json:"id" gorm:"primaryKey"`
-	IssueID             string     `json:"issueId" gorm:"index"`
-	CommentID           string     `json:"commentId"`
-	AgentID             string     `json:"agentId" gorm:"index"`
-	ExecutionID         string     `json:"executionId,omitempty"`
-	Reason              string     `json:"reason"`
-	Status              string     `json:"status" gorm:"index"`
-	Error               string     `json:"error,omitempty"`
-	PriorIssueStatus    string     `json:"priorIssueStatus,omitempty"`
-	PriorExecutionPhase string     `json:"priorExecutionPhase,omitempty"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	DeliveredAt         *time.Time `json:"deliveredAt,omitempty"`
-	CompletedAt         *time.Time `json:"completedAt,omitempty"`
+	ID                      string     `json:"id" gorm:"primaryKey"`
+	IssueID                 string     `json:"issueId" gorm:"index"`
+	CommentID               string     `json:"commentId"`
+	AgentID                 string     `json:"agentId" gorm:"index"`
+	ExecutionID             string     `json:"executionId,omitempty"`
+	Reason                  string     `json:"reason"`
+	Status                  string     `json:"status" gorm:"index"`
+	Error                   string     `json:"error,omitempty"`
+	PriorIssueStatus        string     `json:"priorIssueStatus,omitempty"`
+	PriorExecutionPhase     string     `json:"priorExecutionPhase,omitempty"`
+	PriorExecutionID        string     `json:"priorExecutionId,omitempty"`
+	HeartbeatElapsedSeconds int64      `json:"heartbeatElapsedSeconds,omitempty"`
+	CreatedAt               time.Time  `json:"createdAt"`
+	DeliveredAt             *time.Time `json:"deliveredAt,omitempty"`
+	CompletedAt             *time.Time `json:"completedAt,omitempty"`
 }
 
 type IssueDecomposition struct {
@@ -537,6 +563,7 @@ type AgentTemplate struct {
 	Provider     string                `json:"provider" gorm:"index"`
 	Model        string                `json:"model" gorm:"index"`
 	SystemPrompt string                `json:"systemPrompt" gorm:"type:text"`
+	Note         string                `json:"note" gorm:"type:text"`
 	Metadata     AgentTemplateMetadata `json:"metadata" gorm:"embedded;embeddedPrefix:metadata_"`
 	Hidden       bool                  `json:"hidden" gorm:"index"`
 	Builtin      bool                  `json:"builtin"`
@@ -547,10 +574,14 @@ type SaveAgentTemplateInput struct {
 	Provider     string                `json:"provider"`
 	Model        string                `json:"model"`
 	SystemPrompt string                `json:"systemPrompt"`
+	Note         string                `json:"note"`
 	Metadata     AgentTemplateMetadata `json:"metadata"`
 }
 type SetAgentTemplateHiddenInput struct {
 	Hidden bool `json:"hidden"`
+}
+type UpdateAgentTemplateNoteInput struct {
+	Note string `json:"note"`
 }
 type SkillDefinition struct {
 	ID          string    `json:"id"`
@@ -609,16 +640,26 @@ type ReportExecutionProgressInput struct {
 }
 
 type GetIssueProgressInput struct {
-	SessionID string `json:"sessionId"`
-	Limit     int    `json:"limit"`
+	SessionID     string `json:"sessionId"`
+	Mode          string `json:"mode"`
+	ProgressLimit int    `json:"progressLimit"`
+	MessageLimit  int    `json:"messageLimit"`
 }
 
 type IssueProgressResult struct {
-	SessionID       string              `json:"sessionId"`
-	Execution       Execution           `json:"execution"`
-	Issue           Issue               `json:"issue"`
-	AgentName       string              `json:"agentName"`
-	ProgressUpdates []ExecutionProgress `json:"progressUpdates"`
+	SessionID         string              `json:"sessionId"`
+	Mode              string              `json:"mode"`
+	Execution         Execution           `json:"execution"`
+	Issue             Issue               `json:"issue"`
+	AgentName         string              `json:"agentName"`
+	ProgressUpdates   []ExecutionProgress `json:"progressUpdates"`
+	Messages          []Message           `json:"messages"`
+	ProgressTotal     int64               `json:"progressTotal"`
+	MessageTotal      int64               `json:"messageTotal"`
+	ProgressTruncated bool                `json:"progressTruncated"`
+	MessagesTruncated bool                `json:"messagesTruncated"`
+	OverflowFilePath  string              `json:"overflowFilePath,omitempty"`
+	OverflowReason    string              `json:"overflowReason,omitempty"`
 }
 
 type BroadcastMessageInput struct {
@@ -804,6 +845,7 @@ type CreateIssueInput struct {
 	ContainerProfileID string   `json:"containerProfileId"`
 	Context            string   `json:"context"`
 	Constraints        string   `json:"constraints"`
+	TimeBudgetMinutes  *int     `json:"timeBudgetMinutes"`
 	BlockedBy          []string `json:"blockedBy"`
 	TaskSourceID       string   `json:"taskSourceId"`
 }
@@ -880,6 +922,10 @@ type IssueValidationControlInput struct {
 	Disabled bool `json:"disabled"`
 }
 
+type ManualValidationOverrideInput struct {
+	Reason string `json:"reason"`
+}
+
 type SubmitValidationDecisionInput struct {
 	Outcome            string `json:"outcome"`
 	Summary            string `json:"summary"`
@@ -943,25 +989,26 @@ type CreateRelationInput struct {
 }
 
 type SaveConfigInput struct {
-	NodePath              string            `json:"nodePath"`
-	PiPath                string            `json:"piPath"`
-	Provider              string            `json:"provider"`
-	Model                 string            `json:"model"`
-	Pricing               ModelPricing      `json:"pricing"`
-	BaseURL               string            `json:"baseUrl"`
-	Thinking              string            `json:"thinking"`
-	AuthMode              string            `json:"authMode"`
-	APIKey                string            `json:"apiKey"`
-	Workspace             string            `json:"workspace"`
-	Concurrency           int               `json:"concurrency"`
-	ApprovalMode          string            `json:"approvalMode"`
-	ReworkApprovalMode    string            `json:"reworkApprovalMode"`
-	ValidationMode        string            `json:"validationMode"`
-	MaxValidationAttempts int               `json:"maxValidationAttempts"`
-	MaxIssueDepth         int               `json:"maxIssueDepth"`
-	MaxChildrenPerRequest int               `json:"maxChildrenPerRequest"`
-	MaxDirectChildren     int               `json:"maxDirectChildren"`
-	IssueBudget           IssueBudgetConfig `json:"issueBudget"`
+	NodePath              string               `json:"nodePath"`
+	PiPath                string               `json:"piPath"`
+	Provider              string               `json:"provider"`
+	Model                 string               `json:"model"`
+	Pricing               ModelPricing         `json:"pricing"`
+	BaseURL               string               `json:"baseUrl"`
+	Thinking              string               `json:"thinking"`
+	AuthMode              string               `json:"authMode"`
+	APIKey                string               `json:"apiKey"`
+	Workspace             string               `json:"workspace"`
+	Concurrency           int                  `json:"concurrency"`
+	ApprovalMode          string               `json:"approvalMode"`
+	ReworkApprovalMode    string               `json:"reworkApprovalMode"`
+	ValidationMode        string               `json:"validationMode"`
+	MaxValidationAttempts int                  `json:"maxValidationAttempts"`
+	MaxIssueDepth         int                  `json:"maxIssueDepth"`
+	MaxChildrenPerRequest int                  `json:"maxChildrenPerRequest"`
+	MaxDirectChildren     int                  `json:"maxDirectChildren"`
+	IssueBudget           IssueBudgetConfig    `json:"issueBudget"`
+	IssueHeartbeat        IssueHeartbeatConfig `json:"issueHeartbeat"`
 }
 
 // Finding represents a security finding discovered during reconnaissance or vulnerability analysis.

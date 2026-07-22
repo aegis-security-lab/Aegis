@@ -611,7 +611,7 @@ func TestVulnerabilityReportAgentUsesRequiredFormatAndReceivesReportIssues(t *te
 			t.Fatalf("report system prompt missing %q", required)
 		}
 	}
-	if agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite {
+	if !agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite || agent.Permissions.ApprovalMode != "none" || agent.Permissions.ReworkApprovalMode != "none" {
 		t.Fatalf("unexpected report permissions: %+v", agent.Permissions)
 	}
 	issue, err := s.CreateIssue(CreateIssueInput{
@@ -640,7 +640,7 @@ func TestReconAgentUsesFixedWorkflowAndReceivesReconIssues(t *testing.T) {
 			t.Fatalf("recon system prompt missing %q", required)
 		}
 	}
-	if !agent.Permissions.AllowNetwork || agent.Permissions.AllowWrite {
+	if !agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite || agent.Permissions.ApprovalMode != "none" || agent.Permissions.ReworkApprovalMode != "none" {
 		t.Fatalf("unexpected recon permissions: %+v", agent.Permissions)
 	}
 	issue, err := s.CreateIssue(CreateIssueInput{
@@ -673,7 +673,7 @@ func TestSecurityAgentRoutingUsesLeadForTopLevelAndWorkerForChildren(t *testing.
 	if lead.ID != "red-team-lead" {
 		t.Fatalf("top-level security task agent=%s, want red-team-lead", lead.ID)
 	}
-	if !lead.Permissions.AllowNetwork || lead.Permissions.AllowWrite {
+	if !lead.Permissions.AllowNetwork || !lead.Permissions.AllowWrite || lead.Permissions.ApprovalMode != "none" || lead.Permissions.ReworkApprovalMode != "none" {
 		t.Fatalf("unexpected red-team lead permissions: %+v", lead.Permissions)
 	}
 	if !slices.Contains(lead.Tools, "aegis_create_subissues") {

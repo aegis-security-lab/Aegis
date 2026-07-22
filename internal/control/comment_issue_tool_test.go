@@ -23,10 +23,7 @@ func TestCommentIssueFromExecutionIsTaskScopedAndWakesDifferentAssignee(t *testi
 	manager.scheduleMu.Lock()
 	defer manager.scheduleMu.Unlock()
 
-	if _, err = manager.CommentIssueFromExecution(session.executionID, "secret", CommentIssueInput{IssueID: child.ID, Body: "Interrupt running work."}); err == nil {
-		t.Fatal("running child accepted a comment")
-	}
-	if err = store.db.Model(&Issue{}).Where("id = ?", child.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed"}).Error; err != nil {
+	if err = store.db.Model(&Issue{}).Where("id = ?", child.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "active"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	comment, err := manager.CommentIssueFromExecution(session.executionID, "secret", CommentIssueInput{IssueID: child.ID, Body: "Please verify the newly discovered response path."})

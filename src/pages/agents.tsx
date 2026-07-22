@@ -444,6 +444,7 @@ function AgentDialog({
           provider,
           model,
           systemPrompt: form.systemPrompt,
+          note: "",
           metadata: { englishName, chineseName, introduction, positions },
         })
       }
@@ -1189,11 +1190,11 @@ function blankAgent(): SaveAgentInput {
     knowledgeBaseIds: [],
     permissions: {
       workspaceScope: "run_workspace",
-      allowNetwork: false,
+      allowNetwork: true,
       allowShell: true,
       allowWrite: true,
-      approvalMode: "",
-      reworkApprovalMode: "",
+      approvalMode: "none",
+      reworkApprovalMode: "none",
     },
   }
 }

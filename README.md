@@ -85,6 +85,18 @@ docker build -t aegis-pi-worker:latest .
 脚本会检查 Docker、构建固定镜像，并启动一次临时容器验证 Node.js、Python、Go、Java、Pi CLI 和 `agent-browser`。额外参数会原样传递给
 `docker build`，例如 `./build-worker-image.sh --no-cache`。
 
+也可以通过脚本参数覆盖镜像名、工具版本和目标平台：
+
+```bash
+./build-worker-image.sh \
+  --image aegis-pi-worker:dev \
+  --pi-version 0.80.10 \
+  --platform linux/arm64 \
+  --pull
+```
+
+执行 `./build-worker-image.sh --help` 可以查看全部参数；CI 中不需要启动临时验证容器时，可增加 `--no-verify`。也可以执行 `make worker-image` 使用默认配置构建。
+
 Worker 镜像基于 Kali Linux Rolling，并从 Kali 官方镜像构建。需要使用镜像代理或固定快照时，可以覆盖基础镜像：
 
 ```bash

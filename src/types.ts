@@ -19,6 +19,7 @@ export interface ConfigView {
   maxChildrenPerRequest: number
   maxDirectChildren: number
   issueBudget: IssueBudgetConfig
+  issueHeartbeat: IssueHeartbeatConfig
   updatedAt: string
 }
 export interface IssueBudgetConfig {
@@ -26,6 +27,9 @@ export interface IssueBudgetConfig {
   costLimit: number | null
   timeLimitMinutes: number | null
   checkIntervalSeconds: number
+}
+export interface IssueHeartbeatConfig {
+  intervalSeconds: number
 }
 export interface RuntimeProbe {
   ready: boolean
@@ -59,6 +63,7 @@ export interface Task {
   containerProfileId?: string
   context?: string
   constraints?: string
+  timeBudgetMinutes?: number
   createdAt: string
   updatedAt: string
 }
@@ -79,6 +84,21 @@ export interface ContainerProfile {
   containerName: string
   createdAt: string
   updatedAt: string
+}
+
+export interface ContainerProfileDeleteImpact {
+  containerProfileId: string
+  issueCount: number
+  taskCount: number
+  executionCount: number
+  activeExecutionCount: number
+}
+
+export interface ContainerProfileDeleteResult {
+  containerProfileId: string
+  deletedIssues: number
+  deletedTasks: number
+  deletedExecutions: number
 }
 export type IssueStatus =
   | "backlog"
@@ -126,6 +146,7 @@ export interface Issue {
   containerProfileId?: string
   context?: string
   constraints?: string
+  timeBudgetMinutes?: number
   result?: string
   error?: string
   objectiveAbandoned: boolean
@@ -367,6 +388,7 @@ export interface IssueValidation {
   feedback: string
   abandonmentProof?: string
   error?: string
+  manualOverrideReason?: string
   createdAt: string
   completedAt?: string
 }
@@ -504,6 +526,7 @@ export interface AgentTemplate {
   provider: string
   model: string
   systemPrompt: string
+  note: string
   metadata: AgentTemplateMetadata
   hidden: boolean
   builtin: boolean
@@ -604,6 +627,7 @@ export interface SaveConfigInput {
   maxChildrenPerRequest: number
   maxDirectChildren: number
   issueBudget: IssueBudgetConfig
+  issueHeartbeat: IssueHeartbeatConfig
 }
 export interface CreateIssueInput {
   projectId?: string
@@ -618,6 +642,7 @@ export interface CreateIssueInput {
   containerProfileId?: string
   context: string
   constraints: string
+  timeBudgetMinutes?: number
   blockedBy?: string[]
 }
 export interface ConnectionTestResult {

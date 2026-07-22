@@ -7,12 +7,24 @@ import {
   RefreshCw,
   Square,
   Trash2,
+  TriangleAlert,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
   Card,
   CardContent,
@@ -50,11 +62,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import {
   createContainerProfile,
   buildWorkerContainerImage,
   deleteContainerProfile,
+  fetchContainerProfileDeleteImpact,
   probeDocker,
   startContainerProfile,
   stopContainerProfile,
@@ -62,7 +76,10 @@ import {
   type SaveContainerProfileInput,
 } from "@/lib/api"
 import { useAppState } from "@/lib/state"
-import type { ContainerProfile } from "@/types"
+import type {
+  ContainerProfile,
+  ContainerProfileDeleteImpact,
+} from "@/types"
 
 const defaults: SaveContainerProfileInput = {
   name: "",
@@ -85,6 +102,14 @@ export function ContainersPage() {
     null
   )
   const [busy, setBusy] = React.useState(false)
+  const [deleteTarget, setDeleteTarget] =
+    React.useState<ContainerProfile | null>(null)
+  const [deleteImpact, setDeleteImpact] =
+    React.useState<ContainerProfileDeleteImpact | null>(null)
+  const [checkingDelete, setCheckingDelete] = React.useState<string | null>(
+    null
+  )
+  const [deleting, setDeleting] = React.useState(false)
 
   const checkDocker = async () => {
     try {
@@ -107,14 +132,37 @@ export function ContainersPage() {
     }
   }
 
-  const remove = async (profile: ContainerProfile) => {
-    if (!window.confirm(`删除容器环境“${profile.name}”？`)) return
+  const prepareDelete = async (profile: ContainerProfile) => {
+    setCheckingDelete(profile.id)
     try {
-      await deleteContainerProfile(profile.id)
+      const impact = await fetchContainerProfileDeleteImpact(profile.id)
+      setDeleteTarget(profile)
+      setDeleteImpact(impact)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "无法检查删除影响")
+    } finally {
+      setCheckingDelete(null)
+    }
+  }
+
+  const remove = async () => {
+    if (!deleteTarget || !deleteImpact || deleting) return
+    setDeleting(true)
+    try {
+      const result = await deleteContainerProfile(deleteTarget.id, true)
       await refresh()
-      toast.success("容器环境已删除")
+      toast.success("容器环境已删除", {
+        description:
+          result.deletedIssues > 0
+            ? `同时删除 ${result.deletedIssues} 个 Issues、${result.deletedExecutions} 条执行记录和 ${result.deletedTasks} 个任务定义。`
+            : "没有关联 Issue 被删除。",
+      })
+      setDeleteTarget(null)
+      setDeleteImpact(null)
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "删除失败")
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -241,10 +289,15 @@ export function ContainersPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void remove(profile)}
+                    disabled={checkingDelete === profile.id}
+                    onClick={() => void prepareDelete(profile)}
                   >
-                    <Trash2 />
-                    删除
+                    {checkingDelete === profile.id ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : (
+                      <Trash2 data-icon="inline-start" />
+                    )}
+                    {checkingDelete === profile.id ? "检查中" : "删除"}
                   </Button>
                 </div>
               </CardContent>
@@ -272,6 +325,47 @@ export function ContainersPage() {
           }
         }}
       />
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleting) {
+            setDeleteTarget(null)
+            setDeleteImpact(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <TriangleAlert />
+            </AlertDialogMedia>
+            <AlertDialogTitle>删除容器环境？</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteImpact && deleteImpact.issueCount > 0
+                ? `“${deleteTarget?.name ?? "该容器环境"}”已被 ${deleteImpact.issueCount} 个 Issues 引用。继续删除将永久删除这些 Issues、${deleteImpact.executionCount} 条执行记录和 ${deleteImpact.taskCount} 个任务定义。此操作不可撤销。`
+                : `“${deleteTarget?.name ?? "该容器环境"}”当前没有关联 Issue。删除后无法恢复。`}
+              {deleteImpact && deleteImpact.activeExecutionCount > 0
+                ? ` 其中 ${deleteImpact.activeExecutionCount} 个执行仍在运行，确认后将立即中止。`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleting}
+              onClick={() => void remove()}
+            >
+              {deleting ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Trash2 data-icon="inline-start" />
+              )}
+              {deleting ? "正在删除" : "确认删除"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

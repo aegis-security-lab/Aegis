@@ -8,6 +8,8 @@ import type {
   ConciergeConversationDetail,
   ConnectionTestResult,
   ContainerProfile,
+  ContainerProfileDeleteImpact,
+  ContainerProfileDeleteResult,
   CreateIssueInput,
   CursorPage,
   Execution,
@@ -50,6 +52,7 @@ export interface SaveAgentTemplateInput {
   provider: string
   model: string
   systemPrompt: string
+  note: string
   metadata: AgentTemplateMetadata
 }
 export type SaveSkillInput = Omit<
@@ -99,10 +102,15 @@ export const updateContainerProfile = (
     `/api/container-profiles/${encodeURIComponent(id)}`,
     { method: "PUT", body: JSON.stringify(input) }
   )
-export const deleteContainerProfile = (id: string) =>
-  request<void>(`/api/container-profiles/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  })
+export const fetchContainerProfileDeleteImpact = (id: string) =>
+  request<ContainerProfileDeleteImpact>(
+    `/api/container-profiles/${encodeURIComponent(id)}/delete-impact`
+  )
+export const deleteContainerProfile = (id: string, cascadeIssues: boolean) =>
+  request<ContainerProfileDeleteResult>(
+    `/api/container-profiles/${encodeURIComponent(id)}?cascadeIssues=${cascadeIssues}`,
+    { method: "DELETE" }
+  )
 export const startContainerProfile = (id: string) =>
   request<ContainerProfile>(
     `/api/container-profiles/${encodeURIComponent(id)}/start`,
@@ -213,6 +221,11 @@ export const setIssueValidationDisabled = (id: string, disabled: boolean) =>
     method: "PUT",
     body: JSON.stringify({ disabled }),
   })
+export const manuallyRejectIssueValidation = (id: string, reason: string) =>
+  request<Issue>(
+    `/api/issues/${encodeURIComponent(id)}/validation/manual-reject`,
+    { method: "POST", body: JSON.stringify({ reason }) }
+  )
 export const fetchTaskTimeline = (id: string) =>
   request<TaskTimeline>(`/api/tasks/${encodeURIComponent(id)}/timeline`)
 export const createIssueComment = (id: string, body: string) =>
@@ -280,6 +293,11 @@ export const setAgentTemplateHidden = (id: string, hidden: boolean) =>
   request<AgentTemplate>(
     `/api/agent-templates/${encodeURIComponent(id)}/hidden`,
     { method: "PATCH", body: JSON.stringify({ hidden }) }
+  )
+export const updateAgentTemplateNote = (id: string, note: string) =>
+  request<AgentTemplate>(
+    `/api/agent-templates/${encodeURIComponent(id)}/note`,
+    { method: "PATCH", body: JSON.stringify({ note }) }
   )
 export const fetchKnowledgeBase = (id: string) =>
   request<KnowledgeBaseDetail>(`/api/knowledge-bases/${encodeURIComponent(id)}`)

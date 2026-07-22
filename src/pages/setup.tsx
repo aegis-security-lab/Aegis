@@ -79,8 +79,8 @@ export function SetupPage() {
     apiKey: "",
     workspace: "",
     concurrency: 3,
-    approvalMode: "risky",
-    reworkApprovalMode: "all",
+    approvalMode: "none",
+    reworkApprovalMode: "none",
     validationMode: "fixed",
     maxValidationAttempts: 3,
     maxIssueDepth: 4,
@@ -91,6 +91,9 @@ export function SetupPage() {
       costLimit: null,
       timeLimitMinutes: 10,
       checkIntervalSeconds: 60,
+    },
+    issueHeartbeat: {
+      intervalSeconds: 60,
     },
   }))
 

@@ -25,13 +25,14 @@ var requiredAgentTools = []string{"aegis_create_subissues", "aegis_list_child_is
 var defaultAgentTools = ensureRequiredAgentTools([]string{"read", "grep", "find", "ls", "bash", "edit", "write"})
 
 const (
-	uncoverToolID                  = "aegis_uncover_search"
-	uncoverSkillID                 = "uncover-cyberspace-search"
-	uncoverRedTeamSeedMigrationID  = "uncover-red-team-defaults-v1"
-	uncoverUIConfigSeedMigrationID = "uncover-ui-provider-config-v1"
-	agentBrowserSkillID            = "agent-browser-security-workflows"
-	agentBrowserSeedMigrationID    = "agent-browser-red-team-defaults-v1"
-	redTeamComplexityMigrationID   = "red-team-lead-complexity-boundary-v1"
+	uncoverToolID                   = "aegis_uncover_search"
+	uncoverSkillID                  = "uncover-cyberspace-search"
+	uncoverRedTeamSeedMigrationID   = "uncover-red-team-defaults-v1"
+	uncoverUIConfigSeedMigrationID  = "uncover-ui-provider-config-v1"
+	agentBrowserSkillID             = "agent-browser-security-workflows"
+	agentBrowserSeedMigrationID     = "agent-browser-red-team-defaults-v1"
+	redTeamComplexityMigrationID    = "red-team-lead-complexity-boundary-v1"
+	openAgentPermissionsMigrationID = "open-all-agent-permissions-v1"
 )
 
 const redTeamComplexityBoundary = `COMPLEX TASK BOUNDARY (mandatory)
@@ -56,6 +57,16 @@ func defaultSkills(now time.Time) []SkillDefinition {
 - Keep dependencies acyclic and reference only earlier issues.
 - Include implementation, validation, and security work when relevant.
 - Assign each issue to the most suitable enabled Agent.`},
+		{"development-planning", "开发计划与市场调研", "调研产品与技术现状，形成可执行的开发计划、里程碑、依赖和任务分工。", `# Development planning and market research
+
+- Start by clarifying the target users, business outcome, constraints, competitors, existing solutions, and measurable success criteria.
+- For market research, use only authorized sources and record source URLs, dates, assumptions, and confidence. Separate observed facts from inference; never invent market data.
+- Inspect the repository and current product contracts before proposing implementation work. Reuse existing capabilities and identify risks, unknowns, and technical debt.
+- Turn the outcome into milestones and independently verifiable Issues. Each Issue needs a concise scope, objective, acceptance evidence, execution boundary, owner, and dependencies.
+- Assign backend work to backend-engineer, frontend work to frontend-engineer, security work to red-team-engineer or red-team-lead, and reporting/documentation work to the best available specialist. Use the current Agent roster rather than guessing IDs.
+- Create child Issues with aegis_create_subissues when the work has multiple deliverables, parallel opportunities, meaningful dependencies, or cannot be completed thoroughly in one execution. Keep the parent focused on coordination and final integration.
+- For a small, bounded request, produce a short plan and complete it yourself only when doing so is clearly more efficient and verifiable.
+- Keep plans actionable: include sequencing, critical path, risks, validation checkpoints, rollback considerations, and what evidence proves each milestone complete.`},
 		{"go-service-engineering", "Go 服务工程", "使用 Go、Gin、GORM 构建可维护的后端服务。", `# Go service engineering
 
 - Preserve package boundaries and keep handlers thin.
@@ -258,7 +269,7 @@ func defaultAgents(now time.Time) []AgentDefinition {
 		WorkspaceScope: "run_workspace", AllowNetwork: false, AllowShell: true,
 		AllowWrite: true, ApprovalMode: "",
 	}
-	return []AgentDefinition{
+	agents := []AgentDefinition{
 		{
 			ID: conciergeAgentID, Name: "Aegis 管家", Description: "理解你的需求，直接回答问题，或把明确的执行需求创建为真实任务并交给调度器。",
 			Avatar: "sparkles", Category: "concierge", Enabled: true, Builtin: true,
@@ -286,6 +297,34 @@ Before creating a Task, make sure the requested outcome is concrete enough to sc
 			SystemPrompt: `You are the Aegis Orchestrator. Inspect the workspace when useful, decompose objectives into verifiable Issues, assign each Issue to the best enabled specialist, keep dependencies explicit, and never claim implementation work yourself. Return exactly the requested planning JSON when planning.`,
 			Tools:        ensureRequiredAgentTools([]string{"read", "grep", "find", "ls"}), SkillIDs: []string{"decompose-issues"},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: false, AllowShell: false, AllowWrite: false},
+			CreatedAt:   now, UpdatedAt: now,
+		},
+		{
+			ID: "development-lead", Name: "开发负责人", Description: "负责市场调研、技术方案与开发计划，拆分任务、设置依赖并分配给合适的专业 Agent。",
+			Avatar: "clipboard-list", Category: "development", Enabled: true, Builtin: true,
+			SystemPrompt: `You are Aegis's development lead. You own the planning quality and delivery coordination for product and engineering work. Your job is to turn an ambiguous request into an evidence-based execution plan and make sure the right specialists perform the right work.
+
+PRIMARY RESPONSIBILITIES
+1. Market and product research: understand target users, competing or adjacent solutions, current product behavior, relevant standards, and feasible implementation options. Use authorized network sources when needed. Record source URLs, dates, assumptions, confidence, and unresolved questions. Distinguish observed facts from inference and never fabricate market evidence.
+2. Repository and system analysis: inspect the existing workspace, APIs, data model, UI routes, runtime constraints, and test coverage before planning changes. Identify reusable capabilities, integration risks, migration concerns, and validation gaps.
+3. Development planning: define milestones, sequencing, critical path, dependencies, risks, validation checkpoints, rollback considerations, and concrete evidence for completion. Write a concise plan or research artifact when it improves handoff.
+4. Task planning and delegation: decide whether the request is simple enough to complete directly. When it has multiple deliverables, parallel work, meaningful dependencies, cross-domain changes, or a material research phase, call aegis_create_subissues and assign each child to the best enabled Agent. Use clear objectives, boundaries, and acceptance evidence; do not create vague placeholder tasks.
+5. Coordination and integration: use aegis_list_child_issues, aegis_get_issue_progress, aegis_wait_for_child_issues, aegis_comment_issue, aegis_broadcast, and aegis_list_broadcasts to track work, correct scope drift, unblock dependencies, and consolidate results. On continuation, compare child evidence with the original objective and create another small wave only when material gaps remain.
+
+DELEGATION RULES
+- Use backend-engineer for Go, Gin, GORM/SQLite, APIs, persistence, concurrency, and backend tests.
+- Use frontend-engineer for React, Tailwind, shadcn/ui, browser behavior, accessibility, and frontend tests.
+- Use red-team-lead or red-team-engineer for authorized security analysis and validation.
+- Use vulnerability-report-engineer for evidence-based security or assessment reports.
+- Use the exact IDs and descriptions from the current <aegis_available_agents> roster. Never invent an Agent or claim delegation succeeded unless the tool succeeded.
+- Every child Issue must state its scope, objective, execution boundary, expected deliverables, validation method, and dependencies. Keep dependencies acyclic.
+- If the task is simple and bounded, you may perform it yourself, but still report the plan, assumptions, evidence, and remaining risks.
+- Respect the operator's authorization and workspace boundary. Do not expand scope because research reveals an interesting possibility. Do not perform destructive changes, production actions, or security testing without explicit authorization.
+
+PROGRESS AND HANDOFF
+Call aegis_report_progress after each meaningful phase: research, system analysis, plan creation, delegation, coordination, and final integration. Broadcast only durable findings that can help other Agents. Finish with a concise plan or integration report containing what was researched, what was delegated, current status, evidence, risks, and next actions.`,
+			Tools: append([]string{}, defaultAgentTools...), SkillIDs: []string{"development-planning", "decompose-issues", "api-contract-testing"},
+			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: true, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
 		},
 		{
@@ -543,6 +582,16 @@ OUTPUT RULES
 			CreatedAt:   now, UpdatedAt: now,
 		},
 	}
+	for index := range agents {
+		if agents[index].Internal || agents[index].ID == conciergeAgentID {
+			continue
+		}
+		agents[index].Permissions = PermissionBoundary{
+			WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: true,
+			ApprovalMode: "none", ReworkApprovalMode: "none",
+		}
+	}
+	return agents
 }
 
 func (s *Store) loadRegistry() error {
@@ -604,10 +653,57 @@ func (s *Store) applyRegistrySeedMigrations(now time.Time) error {
 	if err := s.applyAgentBrowserRedTeamSeedMigration(now); err != nil {
 		return err
 	}
+	if err := s.applyOpenAgentPermissionsMigration(now); err != nil {
+		return err
+	}
 	if err := s.applyRedTeamComplexityBoundaryMigration(now); err != nil {
 		return err
 	}
 	return s.applyUncoverUIConfigSeedMigration(now)
+}
+
+func (s *Store) applyOpenAgentPermissionsMigration(now time.Time) error {
+	var applied int64
+	if err := s.db.Model(&registrySeedMigrationRecord{}).Where("id = ?", openAgentPermissionsMigrationID).Count(&applied).Error; err != nil {
+		return fmt.Errorf("check registry seed migration %s: %w", openAgentPermissionsMigrationID, err)
+	}
+	if applied > 0 {
+		return nil
+	}
+	open := PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: true, ApprovalMode: "none", ReworkApprovalMode: "none"}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		for index := range s.agents {
+			if s.agents[index].Internal || s.agents[index].ID == conciergeAgentID {
+				continue
+			}
+			next := cloneAgent(s.agents[index])
+			next.Permissions = open
+			next.UpdatedAt = now
+			record := agentRecord{ID: next.ID, Definition: next, CreatedAt: next.CreatedAt, UpdatedAt: now}
+			if err := tx.Save(&record).Error; err != nil {
+				return err
+			}
+			s.agents[index] = next
+		}
+		var record configRecord
+		if err := tx.First(&record, 1).Error; err == nil {
+			record.Value.ApprovalMode = "none"
+			record.Value.ReworkApprovalMode = "none"
+			record.UpdatedAt = now
+			if err := tx.Save(&record).Error; err != nil {
+				return err
+			}
+			s.config.ApprovalMode = "none"
+			s.config.ReworkApprovalMode = "none"
+		}
+		if err := tx.Where("status = ?", "pending").Delete(&Approval{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&registrySeedMigrationRecord{ID: openAgentPermissionsMigrationID, AppliedAt: now}).Error
+	}); err != nil {
+		return fmt.Errorf("apply registry seed migration %s: %w", openAgentPermissionsMigrationID, err)
+	}
+	return nil
 }
 
 func (s *Store) applyRedTeamComplexityBoundaryMigration(now time.Time) error {

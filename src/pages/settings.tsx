@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Bot, Database, Gauge, KeyRound, Radar, Save, ShieldCheck } from "lucide-react"
+import { Bot, Database, Gauge, HeartPulse, KeyRound, Radar, Save, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
@@ -120,7 +120,7 @@ export function SettingsPage() {
               ["runtime", "Pi Runtime"],
               ["model", "模型与认证"],
               ["workspace", "工作区"],
-              ["budget", "Issue 预算"],
+              ["budget", "预算与心跳"],
               ["policy", "执行与拆分策略"],
             ] as const
           ).map(([value, label]) => (
@@ -364,7 +364,7 @@ export function SettingsPage() {
                   <div>
                     <CardTitle>Issue 执行预算</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      任一预算达到后，系统会要求负责人总结现有成果并放弃目标
+                      仅对根 Issue 生效；任一预算达到后会总结现有成果并放弃根目标
                     </p>
                   </div>
                 </div>
@@ -389,7 +389,7 @@ export function SettingsPage() {
                       }
                     />
                     <FieldDescription>
-                      累计当前 Issue 所有 Worker、返工和验收 Execution 的 Token。
+                      只统计根 Issue 当前这一次 Execution 的 Token；评论唤醒、返工、继续执行或手动重启产生新 Execution 后重新计数，子 Issue 不会单独触发预算。
                     </FieldDescription>
                   </Field>
                   <Field>
@@ -411,7 +411,7 @@ export function SettingsPage() {
                       }
                     />
                     <FieldDescription>
-                      按 Execution 启动时保存的模型价格快照累计。
+                      只统计根 Issue 当前这一次 Execution 按模型价格快照计算的成本；新 Execution 会重新计数。
                     </FieldDescription>
                   </Field>
                   <Field>
@@ -432,7 +432,7 @@ export function SettingsPage() {
                       }
                     />
                     <FieldDescription>
-                      默认 10 分钟；累计实际 Execution 时长，不计算父 Issue 等待子 Issues 的空闲时间。
+                      默认 10 分钟；只计算根 Issue 当前这一次 Execution 的运行时间。等待期间不会消耗，新 Execution 会获得完整的新预算。
                     </FieldDescription>
                   </Field>
                   <Field>
@@ -454,6 +454,45 @@ export function SettingsPage() {
                     />
                     <FieldDescription>
                       默认每 60 秒检查一次。三个预算都留空时不执行预算检查。
+                    </FieldDescription>
+                  </Field>
+                </FieldGroup>
+              </CardContent>
+            </Card>
+            <Card className={section === "budget" ? undefined : "hidden"}>
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
+                    <HeartPulse />
+                  </span>
+                  <div>
+                    <CardTitle>等待 Issue 心跳</CardTitle>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      定期唤醒等待子树或未完成依赖的 Issue 负责人
+                    </p>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="settings-heartbeat-interval">
+                      心跳间隔（秒）
+                    </FieldLabel>
+                    <Input
+                      id="settings-heartbeat-interval"
+                      type="number"
+                      min={1}
+                      max={3600}
+                      value={form.issueHeartbeat.intervalSeconds}
+                      onChange={(event) =>
+                        update("issueHeartbeat", {
+                          intervalSeconds: Number(event.target.value),
+                        })
+                      }
+                    />
+                    <FieldDescription>
+                      默认 60 秒。已有运行中 Execution 的 Issue 不会被重复唤醒。
                     </FieldDescription>
                   </Field>
                 </FieldGroup>
@@ -690,8 +729,8 @@ function fromConfig(
     apiKey: "",
     workspace: config.workspace,
     concurrency: config.concurrency || 3,
-    approvalMode: config.approvalMode || "risky",
-    reworkApprovalMode: config.reworkApprovalMode || "all",
+    approvalMode: config.approvalMode || "none",
+    reworkApprovalMode: config.reworkApprovalMode || "none",
     validationMode: config.validationMode || "fixed",
     maxValidationAttempts: config.maxValidationAttempts || 3,
     maxIssueDepth: config.maxIssueDepth || 4,
@@ -702,6 +741,9 @@ function fromConfig(
       costLimit: null,
       timeLimitMinutes: 10,
       checkIntervalSeconds: 60,
+    },
+    issueHeartbeat: config.issueHeartbeat ?? {
+      intervalSeconds: 60,
     },
   }
 }

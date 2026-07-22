@@ -333,6 +333,12 @@ function summarizeTool(tool: ToolData) {
         meta: oneLine(stringValue(tool.input.currentActivity)),
         icon: "info" as const,
       }
+    case "aegis_get_issue_progress":
+      return {
+        title: "查看子 Issue 进度",
+        meta: `${stringValue(tool.input.mode) || "progress"} · ${stringValue(tool.input.sessionId) || "Session"}`,
+        icon: "info" as const,
+      }
     case "aegis_broadcast": {
       const delivered = Number(asRecord(tool.output.details).deliveredCount)
       return {

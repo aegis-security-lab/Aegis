@@ -7,8 +7,10 @@ import {
   CircleDotDashed,
   CircleX,
   GitBranch,
+  GitMerge,
   LockKeyhole,
   TriangleAlert,
+  Workflow,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -38,6 +40,7 @@ interface IssueTreeProps {
   agents: AgentDefinition[]
   executions?: Execution[]
   rootIds?: string[]
+  mode?: "hierarchy" | "dependency"
   className?: string
 }
 
@@ -47,6 +50,7 @@ export function IssueTree({
   agents,
   executions = [],
   rootIds,
+  mode = "hierarchy",
   className,
 }: IssueTreeProps) {
   const issueMap = React.useMemo(
@@ -64,6 +68,21 @@ export function IssueTree({
     for (const list of map.values()) list.sort((a, b) => a.number - b.number)
     return map
   }, [issues])
+  const dependencyMap = React.useMemo(() => {
+    const map = new Map<string, Issue[]>()
+    for (const relation of relations) {
+      if (relation.type !== "blocks") continue
+      const blocker = issueMap.get(relation.issueId)
+      const blocked = issueMap.get(relation.relatedIssueId)
+      if (!blocker || !blocked) continue
+      const list = map.get(blocker.id) ?? []
+      list.push(blocked)
+      map.set(blocker.id, list)
+    }
+    for (const list of map.values()) list.sort((a, b) => a.number - b.number)
+    return map
+  }, [issueMap, relations])
+  const branchMap = mode === "dependency" ? dependencyMap : childrenMap
   const roots = React.useMemo(() => {
     if (rootIds) {
       return rootIds.flatMap((id) => {
@@ -71,10 +90,24 @@ export function IssueTree({
         return issue ? [issue] : []
       })
     }
+    if (mode === "dependency") {
+      const blockedIds = new Set<string>()
+      for (const [blockerId, blockedIssues] of dependencyMap) {
+        if (!issueMap.has(blockerId)) continue
+        for (const blockedIssue of blockedIssues)
+          blockedIds.add(blockedIssue.id)
+      }
+      const dependencyRoots = issues
+        .filter((issue) => !blockedIds.has(issue.id))
+        .sort((a, b) => a.number - b.number)
+      return dependencyRoots.length > 0
+        ? dependencyRoots
+        : [...issues].sort((a, b) => a.number - b.number)
+    }
     return issues
       .filter((issue) => !issue.parentId || !issueMap.has(issue.parentId))
       .sort((a, b) => b.number - a.number)
-  }, [issueMap, issues, rootIds])
+  }, [dependencyMap, issueMap, issues, mode, rootIds])
   const agentMap = React.useMemo(
     () => new Map(agents.map((agent) => [agent.id, agent.name])),
     [agents]
@@ -98,11 +131,11 @@ export function IssueTree({
     const visit = (issue: Issue) => {
       if (ids.has(issue.id)) return
       ids.add(issue.id)
-      for (const child of childrenMap.get(issue.id) ?? []) visit(child)
+      for (const child of branchMap.get(issue.id) ?? []) visit(child)
     }
     for (const root of roots) visit(root)
     return issues.filter((issue) => ids.has(issue.id))
-  }, [childrenMap, issues, roots])
+  }, [branchMap, issues, roots])
   const summary = React.useMemo(
     () => summarizeTree(visibleIssues, executionMap),
     [executionMap, visibleIssues]
@@ -111,24 +144,32 @@ export function IssueTree({
     () => new Set(roots.map((issue) => issue.id))
   )
   const rows = React.useMemo(() => {
-    const items: Array<{ issue: Issue; depth: number }> = []
-    const visit = (issue: Issue, depth: number) => {
-      items.push({ issue, depth })
-      if (!expanded.has(issue.id)) return
-      for (const child of childrenMap.get(issue.id) ?? []) {
-        visit(child, depth + 1)
+    const items: Array<{
+      key: string
+      issue: Issue
+      depth: number
+      reference: boolean
+    }> = []
+    const rendered = new Set<string>()
+    const visit = (issue: Issue, depth: number, path: string) => {
+      const reference = rendered.has(issue.id)
+      items.push({ key: path, issue, depth, reference })
+      if (reference || !expanded.has(issue.id)) return
+      rendered.add(issue.id)
+      for (const child of branchMap.get(issue.id) ?? []) {
+        visit(child, depth + 1, `${path}/${child.id}`)
       }
     }
-    for (const root of roots) visit(root, 0)
+    for (const root of roots) visit(root, 0, root.id)
     return items
-  }, [childrenMap, expanded, roots])
+  }, [branchMap, expanded, roots])
   const viewportRef = React.useRef<HTMLDivElement>(null)
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewportRef.current,
     estimateSize: () => 92,
-    getItemKey: (index) => rows[index]?.issue.id ?? index,
+    getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 8,
   })
 
@@ -186,11 +227,14 @@ export function IssueTree({
                 <TreeNode
                   issue={row.issue}
                   depth={row.depth}
-                  childrenMap={childrenMap}
+                  branchMap={branchMap}
+                  hierarchyChildrenMap={childrenMap}
                   issueMap={issueMap}
                   relations={relations}
                   agentMap={agentMap}
                   executionMap={executionMap}
+                  mode={mode}
+                  reference={row.reference}
                   open={expanded.has(row.issue.id)}
                   onToggle={() =>
                     setExpanded((current) => {
@@ -213,11 +257,14 @@ export function IssueTree({
 interface TreeNodeProps {
   issue: Issue
   depth: number
-  childrenMap: Map<string, Issue[]>
+  branchMap: Map<string, Issue[]>
+  hierarchyChildrenMap: Map<string, Issue[]>
   issueMap: Map<string, Issue>
   relations: IssueRelation[]
   agentMap: Map<string, string>
   executionMap: Map<string, Execution>
+  mode: "hierarchy" | "dependency"
+  reference: boolean
   open: boolean
   onToggle: () => void
 }
@@ -225,26 +272,33 @@ interface TreeNodeProps {
 function TreeNode({
   issue,
   depth,
-  childrenMap,
+  branchMap,
+  hierarchyChildrenMap,
   issueMap,
   relations,
   agentMap,
   executionMap,
+  mode,
+  reference,
   open,
   onToggle,
 }: TreeNodeProps) {
-  const children = childrenMap.get(issue.id) ?? []
-  const completed = children.filter((child) =>
+  const branches = branchMap.get(issue.id) ?? []
+  const hierarchyChildren = hierarchyChildrenMap.get(issue.id) ?? []
+  const completed = hierarchyChildren.filter((child) =>
     terminalStatuses.has(child.status)
   ).length
-  const blockers = relations
+  const dependencies = relations
     .filter((relation) => relation.relatedIssueId === issue.id)
     .flatMap((relation) => {
       const blocker = issueMap.get(relation.issueId)
-      return blocker && !terminalStatuses.has(blocker.status) ? [blocker] : []
+      return blocker ? [blocker] : []
     })
-  const progress = children.length
-    ? Math.round((completed / children.length) * 100)
+  const blockers = dependencies.filter(
+    (blocker) => !terminalStatuses.has(blocker.status)
+  )
+  const progress = hierarchyChildren.length
+    ? Math.round((completed / hierarchyChildren.length) * 100)
     : 0
   const execution = executionMap.get(issue.id)
   const operationalState = issueOperationalState(issue, execution, blockers)
@@ -258,7 +312,9 @@ function TreeNode({
       style={{ paddingLeft: 16 + Math.min(depth, 4) * 20 }}
     >
       <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center">
-        {children.length ? (
+        {reference ? (
+          <GitMerge className="size-3.5 text-muted-foreground" />
+        ) : branches.length ? (
           <Button
             type="button"
             variant="ghost"
@@ -285,6 +341,11 @@ function TreeNode({
             {issue.title}
           </Link>
           <OperationalBadge state={operationalState} />
+          {reference && (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+              关系引用
+            </Badge>
+          )}
           {issue.validationDisabled && issue.status !== "cancelled" && (
             <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
               跳过验收
@@ -297,11 +358,20 @@ function TreeNode({
           <span>
             {agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent"}
           </span>
-          <span>深度 {issue.requestDepth}</span>
-          {children.length > 0 && (
-            <span>
-              {completed}/{children.length} 个直属子项完成
-            </span>
+          {mode === "hierarchy" ? (
+            <>
+              <span>深度 {issue.requestDepth}</span>
+              {hierarchyChildren.length > 0 && (
+                <span>
+                  {completed}/{hierarchyChildren.length} 个直属子项完成
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span>{dependencies.length} 个前置依赖</span>
+              <span>{branches.length} 个被阻塞项</span>
+            </>
           )}
           {blockers.length > 0 && (
             <Tooltip>
@@ -326,7 +396,7 @@ function TreeNode({
             </TooltipContent>
           </Tooltip>
         )}
-        {children.length > 0 && (
+        {mode === "hierarchy" && hierarchyChildren.length > 0 && (
           <Progress
             value={progress}
             className="mt-2 max-w-xs"
@@ -336,8 +406,12 @@ function TreeNode({
       </div>
 
       <Badge variant="outline" className="mt-0.5 hidden shrink-0 gap-1 sm:flex">
-        <GitBranch className="size-3" />
-        {children.length}
+        {mode === "dependency" ? (
+          <Workflow className="size-3" />
+        ) : (
+          <GitBranch className="size-3" />
+        )}
+        {branches.length}
       </Badge>
     </div>
   )

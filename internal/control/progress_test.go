@@ -1,6 +1,8 @@
 package control
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +77,21 @@ func TestProgressPromptRequiresMaterialStageUpdates(t *testing.T) {
 	}
 }
 
+func TestIssueProgressToolSupportsMessagesModesAndOverflowNotice(t *testing.T) {
+	extension := string(guardExtension)
+	for _, required := range []string{
+		`Type.Literal("messages")`,
+		`Type.Literal("all")`,
+		"Recent chat messages, newest first",
+		"overflowFilePath",
+		"You MUST use the read tool with offset/limit",
+	} {
+		if !strings.Contains(extension, required) {
+			t.Fatalf("issue progress tool is missing %q", required)
+		}
+	}
+}
+
 func TestAgentCanReadSessionProgressInsideCurrentTaskTree(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
@@ -99,10 +116,118 @@ func TestAgentCanReadSessionProgressInsideCurrentTaskTree(t *testing.T) {
 	if result.Issue.ID != child.ID || result.Execution.ID != targetExecution.ID || len(result.ProgressUpdates) != 1 || result.ProgressUpdates[0].ID != progress.ID {
 		t.Fatalf("unexpected progress result: %+v", result)
 	}
+	if result.Mode != "progress" || len(result.Messages) != 0 {
+		t.Fatalf("default mode should return only progress: %+v", result)
+	}
 
 	other, _ := store.CreateIssue(CreateIssueInput{Title: "Other task", Priority: "low", WorkMode: "autonomous"})
 	otherExecution, _ := store.createExecution(other, "backend-engineer", "work")
 	if _, err = manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{SessionID: otherExecution.ID}); err == nil {
 		t.Fatal("expected cross-task progress read to be rejected")
+	}
+}
+
+func TestIssueProgressModesReturnNewestFirstAndExportOverflow(t *testing.T) {
+	store := configuredStore(t)
+	workspace := t.TempDir()
+	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer", Workspace: workspace})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
+	sourceExecution, _ := store.createExecution(parent, "backend-engineer", "work")
+	targetExecution, _ := store.createExecution(child, "frontend-engineer", "work")
+	base := time.Now().Add(-time.Minute)
+	progress := []ExecutionProgress{
+		{ID: nextID("progress"), ExecutionID: targetExecution.ID, IssueID: child.ID, Stage: "older stage", Summary: "older progress", CurrentActivity: "older activity", CreatedAt: base},
+		{ID: nextID("progress"), ExecutionID: targetExecution.ID, IssueID: child.ID, Stage: "newer stage", Summary: "newer progress", CurrentActivity: "newer activity", CreatedAt: base.Add(time.Second)},
+	}
+	if err := store.db.Create(&progress).Error; err != nil {
+		t.Fatal(err)
+	}
+	messages := []Message{
+		{ID: nextID("message"), ExecutionID: targetExecution.ID, IssueID: child.ID, Role: "user", Content: "older message", CreatedAt: base, UpdatedAt: base},
+		{ID: nextID("message"), ExecutionID: targetExecution.ID, IssueID: child.ID, Role: "assistant", Content: "newer message", CreatedAt: base.Add(time.Second), UpdatedAt: base.Add(time.Second)},
+	}
+	if err := store.db.Create(&messages).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{
+		sourceExecution.ID: {executionID: sourceExecution.ID, issueID: parent.ID, agentID: "backend-engineer", controlToken: "secret"},
+	}}
+
+	progressResult, err := manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{
+		SessionID: targetExecution.ID, ProgressLimit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(progressResult.ProgressUpdates) != 1 || progressResult.ProgressUpdates[0].Stage != "newer stage" || !progressResult.ProgressTruncated {
+		t.Fatalf("progress result is not newest-first and bounded: %+v", progressResult)
+	}
+	if progressResult.OverflowFilePath == "" || !strings.HasPrefix(progressResult.OverflowFilePath, filepath.Join(parent.Workspace, ".aegis", "issue-progress")) {
+		t.Fatalf("unexpected progress overflow path: %q", progressResult.OverflowFilePath)
+	}
+	exported, err := os.ReadFile(progressResult.OverflowFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exported), "older progress") || strings.Contains(string(exported), "older message") {
+		t.Fatalf("progress export has unexpected content: %s", exported)
+	}
+
+	messageResult, err := manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{
+		SessionID: targetExecution.ID, Mode: "messages", MessageLimit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messageResult.Messages) != 1 || messageResult.Messages[0].Content != "newer message" || len(messageResult.ProgressUpdates) != 0 || !messageResult.MessagesTruncated {
+		t.Fatalf("message result is not newest-first and bounded: %+v", messageResult)
+	}
+	exported, err = os.ReadFile(messageResult.OverflowFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exported), "older message") || strings.Contains(string(exported), "older progress") {
+		t.Fatalf("message export has unexpected content: %s", exported)
+	}
+
+	allResult, err := manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{
+		SessionID: targetExecution.ID, Mode: "all", ProgressLimit: 10, MessageLimit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allResult.ProgressUpdates) != 2 || len(allResult.Messages) != 2 || allResult.ProgressUpdates[0].Stage != "newer stage" || allResult.Messages[0].Content != "newer message" || allResult.OverflowFilePath != "" {
+		t.Fatalf("all mode result is unexpected: %+v", allResult)
+	}
+}
+
+func TestIssueProgressExportsSingleOversizedMessage(t *testing.T) {
+	store := configuredStore(t)
+	workspace := t.TempDir()
+	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer", Workspace: workspace})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
+	sourceExecution, _ := store.createExecution(parent, "backend-engineer", "work")
+	targetExecution, _ := store.createExecution(child, "frontend-engineer", "work")
+	content := strings.Repeat("x", messageInlineByteBudget+1)
+	now := time.Now()
+	if err := store.db.Create(&Message{ID: nextID("message"), ExecutionID: targetExecution.ID, IssueID: child.ID, Role: "assistant", Content: content, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{
+		sourceExecution.ID: {executionID: sourceExecution.ID, issueID: parent.ID, agentID: "backend-engineer", controlToken: "secret"},
+	}}
+	result, err := manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{SessionID: targetExecution.ID, Mode: "messages"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 0 || !result.MessagesTruncated || result.OverflowFilePath == "" {
+		t.Fatalf("oversized message was not exported: %+v", result)
+	}
+	exported, err := os.ReadFile(result.OverflowFilePath)
+	if err != nil || !strings.Contains(string(exported), content[:100]) {
+		t.Fatalf("oversized message export is missing: err=%v", err)
+	}
+	if _, err = manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{SessionID: targetExecution.ID, Mode: "invalid"}); err == nil {
+		t.Fatal("expected invalid mode to be rejected")
 	}
 }

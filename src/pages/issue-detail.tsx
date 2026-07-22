@@ -4,8 +4,6 @@ import {
   ArrowLeft,
   ChevronDown,
   Clock3,
-  File,
-  Folder,
   GitBranch,
   MessageSquare,
   Play,
@@ -72,7 +70,7 @@ import {
   fetchIssueComments,
   fetchIssueEvents,
   fetchIssueExecutions,
-  fetchTaskWorkspace,
+  manuallyRejectIssueValidation,
   setIssueValidationDisabled,
   sendChat,
 } from "@/lib/api"
@@ -90,21 +88,20 @@ import type {
   IssueDetail,
   IssueValidation,
   TaskBroadcast,
-  TaskWorkspace,
 } from "@/types"
 export function IssueDetailPage() {
   const { issueId } = useParams()
   const { state, refresh } = useAppState()
   const [detail, setDetail] = React.useState<IssueDetail | null>(null)
   const [loading, setLoading] = React.useState(true)
-  const [workspace, setWorkspace] = React.useState<TaskWorkspace | null>(null)
-  const [workspaceError, setWorkspaceError] = React.useState("")
   const [body, setBody] = React.useState("")
   const [chat, setChat] = React.useState("")
   const [busy, setBusy] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
   const [abandonOpen, setAbandonOpen] = React.useState(false)
   const [validationOpen, setValidationOpen] = React.useState(false)
+  const [manualRejectOpen, setManualRejectOpen] = React.useState(false)
+  const [manualRejectReason, setManualRejectReason] = React.useState("")
   const [loadingMore, setLoadingMore] = React.useState<
     "comments" | "events" | "executions" | null
   >(null)
@@ -144,32 +141,6 @@ export function IssueDetailPage() {
   React.useEffect(() => {
     void load()
   }, [load])
-  const currentIssueID = detail?.issue.id
-  const isChildIssue = Boolean(detail?.issue.parentId)
-  React.useEffect(() => {
-    if (!currentIssueID || isChildIssue) {
-      setWorkspace(null)
-      setWorkspaceError("")
-      return
-    }
-    let active = true
-    void fetchTaskWorkspace(currentIssueID)
-      .then((value) => {
-        if (active) {
-          setWorkspace(value)
-          setWorkspaceError("")
-        }
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setWorkspace(null)
-          setWorkspaceError(error instanceof Error ? error.message : "读取工作区失败")
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [currentIssueID, isChildIssue])
   const taskIssueIDs = React.useMemo(() => {
     if (!detail) return new Set<string>()
     const issues = state?.issues ?? [detail.issue, ...detail.children]
@@ -365,6 +336,24 @@ export function IssueDetailPage() {
       setBusy(false)
     }
   }
+  const manualRejectValidation = async () => {
+    if (!manualRejectReason.trim()) {
+      toast.error("请填写验收不通过原因")
+      return
+    }
+    setBusy(true)
+    try {
+      await manuallyRejectIssueValidation(issue.id, manualRejectReason.trim())
+      setManualRejectOpen(false)
+      setManualRejectReason("")
+      toast.success("已记录手动不通过，验收 Agent 将继续核验")
+      await Promise.all([refresh(), load()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "手动验收失败")
+    } finally {
+      setBusy(false)
+    }
+  }
   const comment = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!body.trim()) return
@@ -525,6 +514,18 @@ export function IssueDetailPage() {
                   {issue.validationDisabled ? "恢复验收" : "取消验收"}
                 </Button>
               )}
+            {issue.objective.trim() &&
+              ["done", "in_review"].includes(issue.status) &&
+              detail.validations.some((validation) => validation.status === "passed") && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setManualRejectOpen(true)}
+                >
+                  <ShieldOff data-icon="inline-start" />
+                  手动验收不通过
+                </Button>
+              )}
             {issue.parentId &&
               !["done", "cancelled"].includes(issue.status) && (
                 <Button
@@ -627,6 +628,35 @@ export function IssueDetailPage() {
                 <ShieldOff data-icon="inline-start" />
               )}
               {issue.validationDisabled ? "确认恢复" : "确认取消验收"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={manualRejectOpen} onOpenChange={setManualRejectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia><ShieldOff /></AlertDialogMedia>
+            <AlertDialogTitle>手动改判为验收不通过？</AlertDialogTitle>
+            <AlertDialogDescription>
+              系统会保留原验收通过记录，新增一轮固定验收，并把你的原因作为验收 Agent 后续核验的权威基准。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            value={manualRejectReason}
+            onChange={(event) => setManualRejectReason(event.target.value)}
+            placeholder="请说明为什么原验收通过不正确，以及需要继续核验或修复的内容…"
+            rows={6}
+            autoFocus
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>返回</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busy || !manualRejectReason.trim()}
+              onClick={() => void manualRejectValidation()}
+            >
+              {busy ? <Spinner data-icon="inline-start" /> : <ShieldOff data-icon="inline-start" />}
+              确认不通过并继续验收
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -778,111 +808,6 @@ export function IssueDetailPage() {
       )}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0 space-y-5">
-          {!issue.parentId && (
-            <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>任务创建参数</CardTitle>
-                  <CardDescription>
-                    本次任务执行使用的完整参数快照；重新启动时会复制这些参数。
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
-                  <TaskParameter label="标题" value={issue.title} />
-                  <TaskParameter label="任务来源" value={taskSourceLabel(issue, state?.tasks ?? [])} />
-                  <TaskParameter label="描述" value={issue.description || "未填写"} />
-                  <TaskParameter label="背景与上下文" value={issue.context || "未填写"} />
-                  <TaskParameter label="目标" value={issue.objective || "未填写"} />
-                  <TaskParameter label="执行边界" value={issue.constraints || "未填写"} />
-                  <TaskParameter label="工作目录" value={issue.workspace} mono />
-                  <TaskParameter
-                    label="执行环境"
-                    value={issue.containerProfileId ? `容器 · ${issue.containerProfileId}` : "宿主机"}
-                  />
-                  <TaskParameter label="负责 Agent" value={agentName(issue.assigneeAgentId, state?.agents ?? [])} />
-                  <TaskParameter label="项目" value={projectName(issue.projectId, state?.projects ?? [])} />
-                  <TaskParameter label="工作模式" value={issue.workMode === "guided" ? "引导模式" : "自治模式"} />
-                  <TaskParameter label="优先级" value={issue.priority} />
-                  <TaskParameter
-                    label="验收策略"
-                    value={`${issue.validationMode} · 最多 ${issue.maxValidationAttempts} 次${issue.validationDisabled ? " · 已关闭" : ""}`}
-                  />
-                  <TaskParameter label="创建时间" value={formatTime(issue.createdAt)} />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>任务执行记录</CardTitle>
-                  <CardDescription>
-                    同一个任务每次启动都会创建独立的根 Issue 和会话树。
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {(state?.issues ?? [issue])
-                    .filter(
-                      (candidate) =>
-                        !candidate.parentId &&
-                        candidate.taskSourceId === issue.taskSourceId
-                    )
-                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                    .map((run) => (
-                      <Link
-                        key={run.id}
-                        to={`/tasks/${run.id}`}
-                        className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm hover:bg-muted/40"
-                      >
-                        <span className="min-w-0 truncate">
-                          <span className="font-mono text-xs">{run.identifier}</span>
-                          <span className="ml-2 text-muted-foreground">{formatTime(run.createdAt)}</span>
-                        </span>
-                        <StatusBadge status={run.status} />
-                      </Link>
-                    ))}
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Folder className="size-4" />工作区文件
-                  </CardTitle>
-                  <CardDescription className="break-all">
-                    {workspace?.root ?? issue.workspace}
-                    {workspace ? ` · ${workspace.entries.length} 项` : ""}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {workspaceError ? (
-                    <p className="text-sm text-destructive">{workspaceError}</p>
-                  ) : workspace ? (
-                    <ScrollArea className="h-[360px] rounded-md border">
-                      <div className="divide-y text-sm">
-                        {workspace.entries.map((entry) => (
-                          <div key={entry.path} className="flex items-center gap-2 px-3 py-2">
-                            {entry.kind === "directory" ? (
-                              <Folder className="size-4 shrink-0 text-amber-500" />
-                            ) : (
-                              <File className="size-4 shrink-0 text-muted-foreground" />
-                            )}
-                            <span className="min-w-0 flex-1 break-all font-mono text-xs">{entry.path}</span>
-                            {entry.kind === "file" && (
-                              <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(entry.size ?? 0)}</span>
-                            )}
-                          </div>
-                        ))}
-                        {workspace.entries.length === 0 && (
-                          <p className="p-4 text-muted-foreground">工作区为空</p>
-                        )}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Spinner />正在读取工作区…
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          )}
           <Card className="h-[360px] gap-0 overflow-hidden py-0 sm:h-[420px]">
             <CardHeader className="shrink-0 border-b py-4">
               <CardTitle>Issue 定义</CardTitle>
@@ -1078,7 +1003,8 @@ export function IssueDetailPage() {
                       </div>
                       {agent ? (
                         <p className="mt-2 text-xs text-muted-foreground">
-                          {agent.category || "未分类"} · {agent.model.provider} / {agent.model.model}
+                          {agent.category || "未分类"} · {agent.model.provider}{" "}
+                          / {agent.model.model}
                         </p>
                       ) : null}
                     </div>
@@ -1248,6 +1174,16 @@ function ValidationHistoryItem({
                 {validation.error}
               </p>
             ) : null}
+            {validation.manualOverrideReason ? (
+              <div className="mt-3 rounded-md border border-amber-300/60 bg-amber-50/60 p-3 dark:bg-amber-950/20">
+                <p className="mb-1 text-xs font-medium text-amber-800 dark:text-amber-300">
+                  用户手动验收基准
+                </p>
+                <MarkdownContent className="text-sm">
+                  {validation.manualOverrideReason}
+                </MarkdownContent>
+              </div>
+            ) : null}
           </div>
         </CollapsibleContent>
       </div>
@@ -1402,50 +1338,4 @@ function findTaskRootID(issueID: string, issues: Issue[]) {
     current = parent
   }
   return current?.id ?? issueID
-}
-
-function TaskParameter({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: string
-  mono?: boolean
-}) {
-  return (
-    <div className="min-w-0">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn("mt-1 whitespace-pre-wrap break-all", mono && "font-mono text-xs")}>
-        {value}
-      </p>
-    </div>
-  )
-}
-
-function taskSourceLabel(
-  issue: Issue,
-  tasks: Array<{ id: string; title: string }>
-) {
-  if (!issue.taskSourceId) return "历史根 Issue（未关联任务定义）"
-  const source = tasks.find((candidate) => candidate.id === issue.taskSourceId)
-  return source ? `${source.title} · ${source.id}` : issue.taskSourceId
-}
-
-function agentName(id: string | undefined, agents: AgentDefinition[]) {
-  if (!id) return "未指定"
-  const agent = agents.find((candidate) => candidate.id === id)
-  return agent ? `${agent.name} · ${agent.id}` : id
-}
-
-function projectName(id: string, projects: Array<{ id: string; name: string }>) {
-  const project = projects.find((candidate) => candidate.id === id)
-  return project ? `${project.name} · ${project.id}` : id
-}
-
-function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
-  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
 }

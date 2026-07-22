@@ -398,6 +398,27 @@ export function TaskNewPage() {
                     </SelectContent>
                   </Select>
                 </Field>
+                <Field>
+                  <FieldLabel htmlFor="task-time-budget">时间预算（分钟）</FieldLabel>
+                  <Input
+                    id="task-time-budget"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={form.timeBudgetMinutes ?? ""}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      update(
+                        "timeBudgetMinutes",
+                        value ? Math.max(1, Number.parseInt(value, 10)) : undefined
+                      )
+                    }}
+                    placeholder="使用全局配置"
+                  />
+                  <FieldDescription>
+                    留空使用设置中的全局预算；填写后仅本任务根 Issue 使用该预算，优先级高于全局时间预算，子 Issue 不重复计时。
+                  </FieldDescription>
+                </Field>
               </FieldGroup>
             </CardContent>
           </Card>

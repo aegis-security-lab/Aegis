@@ -132,6 +132,7 @@ func NewStore(dataDir string) (*Store, error) {
 		s.config.ValidationMode, s.config.MaxValidationAttempts = normalizeValidationPolicy(s.config.ValidationMode, s.config.MaxValidationAttempts)
 		s.config.MaxIssueDepth, s.config.MaxChildrenPerRequest, s.config.MaxDirectChildren = normalizeDecompositionLimits(s.config.MaxIssueDepth, s.config.MaxChildrenPerRequest, s.config.MaxDirectChildren)
 		s.config.IssueBudget = normalizeIssueBudget(s.config.IssueBudget)
+		s.config.IssueHeartbeat = normalizeIssueHeartbeat(s.config.IssueHeartbeat)
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -171,6 +172,28 @@ func NewStore(dataDir string) (*Store, error) {
 			if err := tx.Model(&ExecutionEvent{}).Where("execution_id IN ? AND status = ?", activeIDs, "running").Updates(map[string]any{"status": "interrupted", "updated_at": now}).Error; err != nil {
 				return err
 			}
+			// Heartbeats are coordination turns over an already waiting Issue. If
+			// the service stops mid-heartbeat, restore the durable waiting state
+			// instead of treating the heartbeat as interrupted primary work.
+			var interruptedHeartbeats []AgentWakeup
+			if err := tx.Where("execution_id IN ? AND reason = ? AND status = ?", activeIDs, issueHeartbeatReason, "delivered").Find(&interruptedHeartbeats).Error; err != nil {
+				return err
+			}
+			for _, wakeup := range interruptedHeartbeats {
+				if err := tx.Model(&AgentWakeup{}).Where("id = ?", wakeup.ID).Updates(map[string]any{
+					"status": "failed", "error": "Aegis 服务重启，本次心跳已中断", "completed_at": now,
+				}).Error; err != nil {
+					return err
+				}
+				priorStatus := fallback(wakeup.PriorIssueStatus, "todo")
+				priorPhase := fallback(wakeup.PriorExecutionPhase, "active")
+				if err := tx.Model(&Issue{}).Where("id = ? AND current_execution_id = ?", wakeup.IssueID, wakeup.ExecutionID).Updates(map[string]any{
+					"status": priorStatus, "execution_phase": priorPhase, "checkout_execution_id": "",
+					"current_execution_id": wakeup.PriorExecutionID, "error": "", "updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+			}
 		}
 		if err := tx.Model(&IssueValidation{}).Where("status = ?", "running").Updates(map[string]any{"status": "interrupted", "error": "Aegis 服务重启，正在恢复原验收轮次"}).Error; err != nil {
 			return err
@@ -206,8 +229,16 @@ func NewStore(dataDir string) (*Store, error) {
 			if executionID != "" {
 				_ = tx.First(&recoveryExecution, "id = ? AND issue_id = ?", executionID, issue.ID).Error
 			}
+			settledCommentWakeup := false
+			if recoveryExecution.Kind == "wakeup" {
+				var settledWakeups int64
+				if err := tx.Model(&AgentWakeup{}).Where("execution_id = ? AND status IN ?", recoveryExecution.ID, []string{"delivered", "completed"}).Count(&settledWakeups).Error; err != nil {
+					return err
+				}
+				settledCommentWakeup = settledWakeups > 0
+			}
 			if recoveryExecution.ID != "" && recoveryExecution.Status == "completed" &&
-				slices.Contains([]string{"work", "rework", "continuation"}, recoveryExecution.Kind) &&
+				(slices.Contains([]string{"work", "rework", "continuation"}, recoveryExecution.Kind) || settledCommentWakeup) &&
 				strings.TrimSpace(recoveryExecution.Result) != "" {
 				if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
 					"status": "todo", "execution_phase": "recovering", "checkout_execution_id": "",
@@ -324,6 +355,10 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	if err := validateIssueBudget(input.IssueBudget); err != nil {
 		return ConfigView{}, err
 	}
+	input.IssueHeartbeat = normalizeIssueHeartbeat(input.IssueHeartbeat)
+	if err := validateIssueHeartbeat(input.IssueHeartbeat); err != nil {
+		return ConfigView{}, err
+	}
 	if input.Concurrency < 1 {
 		input.Concurrency = 1
 	}
@@ -334,27 +369,48 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 		input.Thinking = "medium"
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if input.APIKey == "" {
 		input.APIKey = s.config.APIKey
 	}
 	if input.AuthMode == "api_key" && input.APIKey == "" {
+		s.mu.Unlock()
 		return ConfigView{}, errors.New("API Key 认证需要填写密钥")
 	}
 	now := time.Now()
-	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, MaxIssueDepth: input.MaxIssueDepth, MaxChildrenPerRequest: input.MaxChildrenPerRequest, MaxDirectChildren: input.MaxDirectChildren, IssueBudget: input.IssueBudget, UpdatedAt: now}
+	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, MaxIssueDepth: input.MaxIssueDepth, MaxChildrenPerRequest: input.MaxChildrenPerRequest, MaxDirectChildren: input.MaxDirectChildren, IssueBudget: input.IssueBudget, IssueHeartbeat: input.IssueHeartbeat, UpdatedAt: now}
 	if err := s.db.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
+		s.mu.Unlock()
 		return ConfigView{}, err
 	}
+	savedConfig := s.config
 	s.updatedAt = now
 	s.broadcastLocked()
-	return configView(s.config), nil
+	s.mu.Unlock()
+	if err := s.seedAgentTemplates(now); err != nil {
+		return ConfigView{}, fmt.Errorf("refresh Agent templates: %w", err)
+	}
+	s.notify()
+	return configView(savedConfig), nil
 }
 
 func configView(c Config) ConfigView {
 	mode, attempts := normalizeValidationPolicy(c.ValidationMode, c.MaxValidationAttempts)
 	depth, perRequest, direct := normalizeDecompositionLimits(c.MaxIssueDepth, c.MaxChildrenPerRequest, c.MaxDirectChildren)
-	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, MaxIssueDepth: depth, MaxChildrenPerRequest: perRequest, MaxDirectChildren: direct, IssueBudget: normalizeIssueBudget(c.IssueBudget), UpdatedAt: c.UpdatedAt}
+	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, MaxIssueDepth: depth, MaxChildrenPerRequest: perRequest, MaxDirectChildren: direct, IssueBudget: normalizeIssueBudget(c.IssueBudget), IssueHeartbeat: normalizeIssueHeartbeat(c.IssueHeartbeat), UpdatedAt: c.UpdatedAt}
+}
+
+func normalizeIssueHeartbeat(heartbeat IssueHeartbeatConfig) IssueHeartbeatConfig {
+	if heartbeat.IntervalSeconds <= 0 {
+		heartbeat.IntervalSeconds = 60
+	}
+	return heartbeat
+}
+
+func validateIssueHeartbeat(heartbeat IssueHeartbeatConfig) error {
+	if heartbeat.IntervalSeconds < 1 || heartbeat.IntervalSeconds > 3600 {
+		return errors.New("Issue 心跳间隔必须在 1 到 3600 秒之间")
+	}
+	return nil
 }
 
 func normalizeIssueBudget(budget IssueBudgetConfig) IssueBudgetConfig {
@@ -561,6 +617,9 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, errors.New("工作目录不存在或不是目录")
 	}
 	workspace, err = filepath.Abs(workspace)
+	if input.TimeBudgetMinutes != nil && *input.TimeBudgetMinutes <= 0 {
+		return Issue{}, errors.New("任务时间预算必须大于 0 分钟，或留空使用全局配置")
+	}
 	if selectedContainerProfile != nil && (selectedContainerProfile.HostWorkspace == "" || filepath.Clean(workspace) != filepath.Clean(selectedContainerProfile.HostWorkspace)) {
 		return Issue{}, errors.New("任务工作目录必须与容器绑定的宿主机工作目录一致")
 	}
@@ -586,7 +645,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -631,7 +690,7 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 		return Task{}, Issue{}, errors.New("任务定义不能包含父 Issue")
 	}
 	now := time.Now()
-	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: strings.TrimSpace(input.Constraints), CreatedAt: now, UpdatedAt: now}
+	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: strings.TrimSpace(input.Constraints), TimeBudgetMinutes: input.TimeBudgetMinutes, CreatedAt: now, UpdatedAt: now}
 	if err := s.db.Create(&task).Error; err != nil {
 		return Task{}, Issue{}, err
 	}
@@ -645,6 +704,7 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	task.ProjectID, task.Title, task.Description, task.Objective = issue.ProjectID, issue.Title, issue.Description, issue.Objective
 	task.Priority, task.WorkMode, task.AssigneeAgentID = issue.Priority, issue.WorkMode, issue.AssigneeAgentID
 	task.Workspace, task.ContainerProfileID, task.Context, task.Constraints = issue.Workspace, issue.ContainerProfileID, issue.Context, issue.Constraints
+	task.TimeBudgetMinutes = issue.TimeBudgetMinutes
 	if err = s.db.Save(&task).Error; err != nil {
 		return Task{}, Issue{}, err
 	}

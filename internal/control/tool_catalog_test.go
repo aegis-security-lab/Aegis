@@ -44,6 +44,30 @@ func TestProgressToolSnapshotHasStructuredParameters(t *testing.T) {
 	}
 }
 
+func TestGetIssueProgressToolSnapshotHasModesAndSeparateLimits(t *testing.T) {
+	tools := snapshotTools([]string{"aegis_get_issue_progress"})
+	if len(tools) != 1 || len(tools[0].Parameters) != 6 {
+		t.Fatalf("issue progress tool snapshot=%+v", tools)
+	}
+	mode := tools[0].Parameters[3]
+	if mode.Name != "mode" || len(mode.Enum) != 3 || mode.Enum[0] != "progress" {
+		t.Fatalf("issue progress mode=%+v", mode)
+	}
+	if tools[0].Parameters[4].Name != "progressLimit" || tools[0].Parameters[5].Name != "messageLimit" {
+		t.Fatalf("issue progress limits=%+v", tools[0].Parameters)
+	}
+}
+
+func TestIssueCommentToolSnapshotDescribesLiveSessionSteering(t *testing.T) {
+	tools := snapshotTools([]string{"aegis_comment_issue"})
+	if len(tools) != 1 || tools[0].Source != "aegis_extension" || !strings.Contains(tools[0].Description, "固定 Pi Session") {
+		t.Fatalf("unexpected Issue comment tool snapshot: %+v", tools)
+	}
+	if len(tools[0].Parameters) != 4 || tools[0].Parameters[2].Name != "issueId" || tools[0].Parameters[3].Name != "body" {
+		t.Fatalf("unexpected Issue comment parameters: %+v", tools[0].Parameters)
+	}
+}
+
 func TestBroadcastToolSnapshotsHaveStructuredParameters(t *testing.T) {
 	tools := snapshotTools([]string{"aegis_broadcast", "aegis_list_broadcasts"})
 	if len(tools) != 2 || len(tools[0].Parameters) != 5 || len(tools[1].Parameters) != 3 {

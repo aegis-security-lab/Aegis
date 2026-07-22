@@ -1,3 +1,4 @@
+@import "@xyflow/react/dist/style.css" layer(base);
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -132,5 +133,23 @@
   }
   ::selection {
     @apply bg-primary/20 text-foreground;
+  }
+}
+
+@layer components {
+  .react-flow {
+    --xy-background-color-default: var(--card);
+    --xy-edge-stroke-default: var(--muted-foreground);
+    --xy-edge-stroke-selected-default: var(--primary);
+    --xy-controls-button-background-color-default: var(--card);
+    --xy-controls-button-background-color-hover-default: var(--accent);
+    --xy-controls-button-color-default: var(--foreground);
+    --xy-controls-button-border-color-default: var(--border);
+    --xy-minimap-background-color-default: var(--card);
+    --xy-minimap-mask-background-color-default: color-mix(
+      in oklab,
+      var(--muted) 72%,
+      transparent
+    );
   }
 }

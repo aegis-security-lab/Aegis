@@ -272,8 +272,18 @@ func createSystemComment(tx *gorm.DB, issueID, body string, now time.Time) error
 }
 
 func (m *Manager) summarizingSessionForIssue(issue Issue) *PiSession {
+	if issue.CurrentExecutionID != "" {
+		var current Execution
+		if m.store.db.First(&current, "id = ? AND issue_id = ?", issue.CurrentExecutionID, issue.ID).Error == nil &&
+			current.Kind != "validation" &&
+			(issue.AssigneeAgentID == "" || current.AgentID == issue.AssigneeAgentID) {
+			if session := m.getSession(current.ID); session != nil && !session.closed.Load() {
+				return session
+			}
+		}
+	}
 	var executions []Execution
-	query := m.store.db.Where("issue_id = ? AND kind NOT IN ?", issue.ID, []string{"validation", "wakeup"})
+	query := m.store.db.Where("issue_id = ? AND kind <> ?", issue.ID, "validation")
 	if issue.AssigneeAgentID != "" {
 		query = query.Where("agent_id = ?", issue.AssigneeAgentID)
 	}

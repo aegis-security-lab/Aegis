@@ -1,4 +1,4 @@
-.PHONY: dev run test build
+.PHONY: dev run test build worker-image
 
 dev:
 	@go run ./cmd/server & server_pid=$$!; \
@@ -18,3 +18,6 @@ build:
 	npm run build
 	@mkdir -p bin
 	go build -o bin/aegis ./cmd/server
+
+worker-image:
+	./build-worker-image.sh

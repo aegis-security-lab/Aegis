@@ -112,10 +112,13 @@ func TestCancelledIssueCommentWakeupSettlesWithoutChangingIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "cancelled", "execution_phase": "completed", "cancelled_at": now}).Error; err != nil {
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "cancelled", "execution_phase": "completed", "cancelled_at": now,
+		"objective_abandoned": true, "abandon_requested_at": now, "abandoned_at": now,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	execution, err := store.createExecution(issue, "backend-engineer", "work")
+	execution, err := store.createExecution(issue, "backend-engineer", "wakeup")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,15 +129,29 @@ func TestCancelledIssueCommentWakeupSettlesWithoutChangingIssue(t *testing.T) {
 	if err = store.db.Create(&comment).Error; err != nil {
 		t.Fatal(err)
 	}
-	wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID, AgentID: execution.AgentID, ExecutionID: execution.ID, Reason: "issue_comment_assignee", Status: "delivered", CreatedAt: now, DeliveredAt: &now}
+	wakeup := AgentWakeup{
+		ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID, AgentID: execution.AgentID, ExecutionID: execution.ID,
+		Reason: "issue_comment_assignee", Status: "delivered", PriorIssueStatus: "cancelled", PriorExecutionPhase: "completed",
+		CreatedAt: now, DeliveredAt: &now,
+	}
 	if err = store.db.Create(&wakeup).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = store.db.Create(&Message{ID: nextID("message"), ExecutionID: execution.ID, IssueID: issue.ID, Role: "assistant", Content: "Summary response", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "in_progress", "execution_phase": "active", "checkout_execution_id": execution.ID, "current_execution_id": execution.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	result := "Summary response"
+	if err = store.db.Create(&Message{ID: nextID("message"), ExecutionID: execution.ID, IssueID: issue.ID, Role: "assistant", Content: result, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	attachment := IssueAttachment{ID: nextID("attachment"), IssueID: issue.ID, ExecutionID: execution.ID, Name: "evidence.txt", SourcePath: "evidence.txt", StoragePath: "artifacts/evidence.txt", MimeType: "text/plain", Size: 8, CreatedAt: now}
+	if err = store.db.Create(&attachment).Error; err != nil {
 		t.Fatal(err)
 	}
 	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
-	manager.handleSettled(&PiSession{executionID: execution.ID, issueID: issue.ID, agentID: execution.AgentID, kind: "work"})
+	manager.handleSettled(&PiSession{executionID: execution.ID, issueID: issue.ID, agentID: execution.AgentID, kind: execution.Kind})
 	if err = store.db.First(&execution, "id = ?", execution.ID).Error; err != nil || execution.Status != "completed" {
 		t.Fatalf("execution was not completed: execution=%+v err=%v", execution, err)
 	}
@@ -144,6 +161,157 @@ func TestCancelledIssueCommentWakeupSettlesWithoutChangingIssue(t *testing.T) {
 	unchanged, _ := store.GetIssue(issue.ID)
 	if unchanged.Status != "cancelled" || unchanged.ExecutionPhase != "completed" {
 		t.Fatalf("comment response changed cancelled Issue: %+v", unchanged)
+	}
+	var response IssueComment
+	if err = store.db.Where("issue_id = ? AND execution_id = ? AND author_type = ?", issue.ID, execution.ID, "agent").First(&response).Error; err != nil {
+		t.Fatal(err)
+	}
+	if response.Body != result {
+		t.Fatalf("unexpected comment response: %+v", response)
+	}
+	if err = store.db.First(&attachment, "id = ?", attachment.ID).Error; err != nil || attachment.CommentID != response.ID {
+		t.Fatalf("attachment was not bound to comment: attachment=%+v err=%v", attachment, err)
+	}
+}
+
+func TestRestartRecoversCompletedCommentWakeupAndBindsAttachments(t *testing.T) {
+	store := configuredStore(t)
+	issue, _ := store.CreateIssue(CreateIssueInput{Title: "Recovered comment", Objective: "Original objective", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	execution, _ := store.createExecution(issue, "backend-engineer", "wakeup")
+	now := time.Now()
+	result := "Recovered response with attachment."
+	if err := store.db.Model(&Execution{}).Where("id = ?", execution.ID).Updates(map[string]any{
+		"status": "completed", "result": result, "finished_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	wakeup := AgentWakeup{
+		ID: nextID("wakeup"), IssueID: issue.ID, AgentID: execution.AgentID, ExecutionID: execution.ID,
+		Reason: "issue_comment_assignee", Status: "completed", PriorIssueStatus: "cancelled",
+		PriorExecutionPhase: "completed", CreatedAt: now, DeliveredAt: &now, CompletedAt: &now,
+	}
+	if err := store.db.Create(&wakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	existingResponse := IssueComment{ID: nextID("comment"), IssueID: issue.ID, AuthorType: "agent", AuthorID: execution.AgentID, ExecutionID: execution.ID, Body: result, CreatedAt: now}
+	if err := store.db.Create(&existingResponse).Error; err != nil {
+		t.Fatal(err)
+	}
+	attachment := IssueAttachment{ID: nextID("attachment"), IssueID: issue.ID, ExecutionID: execution.ID, Name: "proof.txt", SourcePath: "proof.txt", StoragePath: "artifacts/proof.txt", MimeType: "text/plain", Size: 5, CreatedAt: now}
+	if err := store.db.Create(&attachment).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "in_progress", "execution_phase": "active", "checkout_execution_id": execution.ID,
+		"current_execution_id": execution.ID, "objective_abandoned": true,
+		"abandon_requested_at": now, "abandoned_at": now, "cancelled_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewStore(store.DataDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovering, _ := reopened.GetIssue(issue.ID)
+	if recovering.Status != "todo" || recovering.ExecutionPhase != "recovering" || recovering.RecoveryPhase != "settled" {
+		t.Fatalf("completed wakeup was not queued for settled recovery: %+v", recovering)
+	}
+	manager := &Manager{store: reopened, sessions: map[string]*PiSession{}}
+	if err = manager.resumeSettledIssueLocked(recovering); err != nil {
+		t.Fatal(err)
+	}
+	finished, _ := reopened.GetIssue(issue.ID)
+	if finished.Status != "cancelled" || finished.ExecutionPhase != "completed" || finished.CheckoutExecutionID != "" {
+		t.Fatalf("recovered wakeup did not restore prior Issue state: %+v", finished)
+	}
+	if err = reopened.db.First(&wakeup, "id = ?", wakeup.ID).Error; err != nil || wakeup.Status != "completed" {
+		t.Fatalf("recovered wakeup was not completed: wakeup=%+v err=%v", wakeup, err)
+	}
+	var response IssueComment
+	if err = reopened.db.Where("issue_id = ? AND execution_id = ?", issue.ID, execution.ID).First(&response).Error; err != nil || response.Body != result {
+		t.Fatalf("recovered response comment missing: response=%+v err=%v", response, err)
+	}
+	var responseCount int64
+	if err = reopened.db.Model(&IssueComment{}).Where("issue_id = ? AND execution_id = ? AND author_type = ?", issue.ID, execution.ID, "agent").Count(&responseCount).Error; err != nil || responseCount != 1 {
+		t.Fatalf("recovery duplicated existing response: count=%d err=%v", responseCount, err)
+	}
+	if err = reopened.db.First(&attachment, "id = ?", attachment.ID).Error; err != nil || attachment.CommentID != response.ID {
+		t.Fatalf("recovered attachment was not bound: attachment=%+v err=%v", attachment, err)
+	}
+}
+
+func TestCompletedWakeupChainRestoresOriginalTerminalIssue(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Chained discussion", Objective: "Original objective", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	firstExecution, err := store.createExecution(issue, "backend-engineer", "wakeup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(firstExecution.ID, map[string]any{"status": "completed", "result": "First response", "finished_at": now}); err != nil {
+		t.Fatal(err)
+	}
+	firstWakeup := AgentWakeup{
+		ID: nextID("wakeup"), IssueID: issue.ID, AgentID: firstExecution.AgentID, ExecutionID: firstExecution.ID,
+		Reason: "issue_comment_assignee", Status: "delivered", PriorIssueStatus: "cancelled", PriorExecutionPhase: "completed",
+		CreatedAt: now.Add(-time.Minute), DeliveredAt: &now,
+	}
+	if err = store.db.Create(&firstWakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	firstAttachment := IssueAttachment{ID: nextID("attachment"), IssueID: issue.ID, ExecutionID: firstExecution.ID, Name: "old-proof.txt", SourcePath: "old-proof.txt", StoragePath: "artifacts/old-proof.txt", MimeType: "text/plain", Size: 5, CreatedAt: now}
+	if err = store.db.Create(&firstAttachment).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	secondExecution, err := store.createExecution(issue, "backend-engineer", "wakeup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(secondExecution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	secondWakeup := AgentWakeup{
+		ID: nextID("wakeup"), IssueID: issue.ID, AgentID: secondExecution.AgentID, ExecutionID: secondExecution.ID,
+		Reason: "issue_comment_assignee", Status: "delivered", PriorIssueStatus: "in_progress", PriorExecutionPhase: "active", PriorExecutionID: firstExecution.ID,
+		CreatedAt: now, DeliveredAt: &now,
+	}
+	if err = store.db.Create(&secondWakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "in_progress", "execution_phase": "active", "checkout_execution_id": secondExecution.ID, "current_execution_id": secondExecution.ID,
+		"objective_abandoned": true, "abandon_requested_at": now, "abandoned_at": now, "cancelled_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Create(&Message{ID: nextID("message"), ExecutionID: secondExecution.ID, IssueID: issue.ID, Role: "assistant", Content: "Second response", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.handleSettled(&PiSession{executionID: secondExecution.ID, issueID: issue.ID, agentID: secondExecution.AgentID, kind: "wakeup", wakeupID: secondWakeup.ID})
+
+	finished, err := store.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != "cancelled" || finished.ExecutionPhase != "completed" || finished.CheckoutExecutionID != "" {
+		t.Fatalf("completed wakeup chain did not restore original terminal state: %+v", finished)
+	}
+	if err = store.db.First(&firstWakeup, "id = ?", firstWakeup.ID).Error; err != nil || firstWakeup.Status != "completed" {
+		t.Fatalf("older delivered wakeup was not reconciled: wakeup=%+v err=%v", firstWakeup, err)
+	}
+	var firstResponse IssueComment
+	if err = store.db.Where("issue_id = ? AND execution_id = ? AND author_type = ?", issue.ID, firstExecution.ID, "agent").First(&firstResponse).Error; err != nil || firstResponse.Body != "First response" {
+		t.Fatalf("older completed wakeup response was not recovered: response=%+v err=%v", firstResponse, err)
+	}
+	if err = store.db.First(&firstAttachment, "id = ?", firstAttachment.ID).Error; err != nil || firstAttachment.CommentID != firstResponse.ID {
+		t.Fatalf("older completed wakeup attachment was not bound: attachment=%+v err=%v", firstAttachment, err)
 	}
 }
 
@@ -301,21 +469,8 @@ func TestCompletedIssueReworkRequestCreatesTypedApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "pending" || result.ApprovalID == "" {
+	if result.Status != "approved" || result.ApprovalID != "" {
 		t.Fatalf("unexpected rework request result: %+v", result)
-	}
-	var approval Approval
-	if err = store.db.First(&approval, "id = ?", result.ApprovalID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if approval.Type != "issue_rework" || approval.IssueID != issue.ID || approval.ExecutionID != execution.ID {
-		t.Fatalf("unexpected typed approval: %+v", approval)
-	}
-	if _, err = manager.ResolveApproval(approval.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.First(&approval, "id = ?", approval.ID).Error; err != nil || approval.Status != "rejected" {
-		t.Fatalf("rework approval was not rejected: err=%v approval=%+v", err, approval)
 	}
 }
 

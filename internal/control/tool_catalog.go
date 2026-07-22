@@ -104,6 +104,14 @@ func toolCatalog() map[string]ToolSnapshot {
 				{Name: "mode", Type: "enum", Description: "summarize_then_cancel：先总结、保存 result，再取消并恢复父 Issue；immediate：立即终止，可能留下空 result。", Required: true, Enum: []string{"summarize_then_cancel", "immediate"}},
 			},
 		},
+		"aegis_comment_issue": {
+			Name: "aegis_comment_issue", Label: "Comment on a direct child Issue", Source: "aegis_extension",
+			Description: "向当前 Issue 的直属子 Issue 发送 Markdown 评论并唤醒负责 Agent。运行中或等待中的子 Issue 会在固定 Pi Session 中收到纠正或催促信息；正在验收或最终总结的子 Issue 不会被打断。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("issueId", "string", "目标直属子 Issue 的数据库 ID。", true),
+				parameter("body", "string", "具体、可执行且基于证据的 Markdown 评论，最多 10000 个字符。", true),
+			},
+		},
 		"aegis_create_subissues": {
 			Name: "aegis_create_subissues", Label: "Create child Issues", Source: "aegis_extension",
 			Description: "把当前 Issue 原子拆分为 2–8 个持久化子 Issues，并把执行权交还给调度器；评论唤醒已完成 Issue 后调用会自动重新打开父 Issue。",
@@ -158,10 +166,12 @@ func toolCatalog() map[string]ToolSnapshot {
 		},
 		"aegis_get_issue_progress": {
 			Name: "aegis_get_issue_progress", Label: "Get Issue progress", Source: "aegis_extension",
-			Description: "读取当前顶层任务树内指定 Pi Session 的 Issue、Agent、执行状态、checkpoint 和阶段性工作进度。",
+			Description: "读取当前任务树内子 Issue 的执行状态、checkpoint、阶段性进度和最近聊天记录；默认只返回进度，超限内容会转存到工作区文件。",
 			Parameters: []ToolParameterSnapshot{
-				parameter("sessionId", "string", "Session 页面 URL 中的 Execution/Session ID，例如 execution-1784538750397-490。", true),
-				parameter("limit", "number", "最多返回的阶段性进度条数，默认 50，最大 100。", false),
+				parameter("sessionId", "string", "子 Issue 的 currentExecutionId，或 Session 页面 URL 中的 Execution ID。", true),
+				{Name: "mode", Type: "enum", Description: "progress：只返回阶段进度（默认）；messages：只返回最近聊天；all：同时返回两者。", Required: false, Enum: []string{"progress", "messages", "all"}},
+				parameter("progressLimit", "number", "最多内联的最近进度条数，默认 20，最大 100；输出仍受 6 KiB 字符预算限制。", false),
+				parameter("messageLimit", "number", "最多内联的最近消息条数，默认 10，最大 50；输出仍受 12 KiB 字符预算限制。", false),
 			},
 		},
 		"aegis_broadcast": {

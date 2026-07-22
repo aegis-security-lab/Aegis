@@ -93,6 +93,40 @@ func TestManualAbandonWithoutOwnerSessionFinishesImmediately(t *testing.T) {
 	}
 }
 
+func TestBudgetAbandonReusesActiveWakeupForCancellationSummary(t *testing.T) {
+	store := configuredStore(t)
+	issue, _ := store.CreateIssue(CreateIssueInput{
+		Title: "Restarted issue", Objective: "Finish current request.", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	execution, _ := store.createExecution(issue, "backend-engineer", "wakeup")
+	if err := store.db.Model(&Execution{}).Where("id = ?", execution.ID).Update("status", "running").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "in_progress", "execution_phase": "active", "checkout_execution_id": execution.ID, "current_execution_id": execution.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	session := &PiSession{manager: manager, key: execution.ID, executionID: execution.ID, issueID: issue.ID, agentID: execution.AgentID, kind: execution.Kind, stdin: &trackedWriteCloser{}}
+	manager.sessions[execution.ID] = session
+
+	requested, err := manager.abandonIssueWithSummary(issue.ID, "本次 Execution 超出预算", issueBudgetSummaryInstruction, "Issue 执行预算已耗尽", "issue_budget_exhausted", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested.ExecutionPhase != "summarizing" || requested.CurrentExecutionID != execution.ID || requested.ObjectiveAbandoned {
+		t.Fatalf("active wakeup was not retained for cancellation summary: %+v", requested)
+	}
+	var prompt Message
+	if err := store.db.Where("execution_id = ? AND role = ?", execution.ID, "user").Order("created_at desc").First(&prompt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt.Content, "issue_budget_exhausted") || !strings.Contains(prompt.Content, "最终总结") {
+		t.Fatalf("active wakeup did not receive cancellation summary prompt: %s", prompt.Content)
+	}
+}
+
 func TestDisableValidationStopsCurrentValidatorAndCompletesCandidate(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{

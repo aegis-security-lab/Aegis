@@ -2,8 +2,103 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="aegis-pi-worker:latest"
+IMAGE_NAME="${AEGIS_WORKER_IMAGE:-aegis-pi-worker:latest}"
 KALI_BASE_IMAGE="${AEGIS_KALI_BASE_IMAGE:-docker.io/kalilinux/kali-rolling:latest}"
+PI_VERSION="${AEGIS_PI_VERSION:-0.80.10}"
+AGENT_BROWSER_VERSION="${AEGIS_AGENT_BROWSER_VERSION:-latest}"
+PLATFORM="${AEGIS_DOCKER_PLATFORM:-}"
+VERIFY_IMAGE="true"
+DOCKER_BUILD_ARGS=()
+DOCKER_BUILD_ARG_COUNT=0
+
+usage() {
+  cat <<'EOF'
+构建 Aegis Pi Worker 镜像。
+
+用法：
+  ./build-worker-image.sh [脚本选项] [Docker build 参数]
+
+脚本选项：
+  --image NAME                  镜像名，默认 aegis-pi-worker:latest
+  --base-image NAME             Kali 基础镜像
+  --pi-version VERSION          Pi CLI 版本，默认 0.80.10
+  --agent-browser-version VER   agent-browser 版本，默认 latest
+  --platform PLATFORM           构建平台，例如 linux/amd64 或 linux/arm64
+  --no-verify                   构建后不启动临时容器验证工具链
+  -h, --help                    显示帮助
+
+其他参数会原样传递给 docker build，例如 --no-cache、--pull 或 --progress=plain。
+
+对应环境变量：
+  AEGIS_WORKER_IMAGE
+  AEGIS_KALI_BASE_IMAGE
+  AEGIS_PI_VERSION
+  AEGIS_AGENT_BROWSER_VERSION
+  AEGIS_DOCKER_PLATFORM
+  AEGIS_SKIP_IMAGE_VERIFY=true
+EOF
+}
+
+require_value() {
+  if [[ $# -lt 2 || -z "$2" ]]; then
+    echo "错误：$1 需要一个值。" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image)
+      require_value "$@"
+      IMAGE_NAME="$2"
+      shift 2
+      ;;
+    --base-image)
+      require_value "$@"
+      KALI_BASE_IMAGE="$2"
+      shift 2
+      ;;
+    --pi-version)
+      require_value "$@"
+      PI_VERSION="$2"
+      shift 2
+      ;;
+    --agent-browser-version)
+      require_value "$@"
+      AGENT_BROWSER_VERSION="$2"
+      shift 2
+      ;;
+    --platform)
+      require_value "$@"
+      PLATFORM="$2"
+      shift 2
+      ;;
+    --no-verify)
+      VERIFY_IMAGE="false"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      DOCKER_BUILD_ARGS+=("$@")
+      DOCKER_BUILD_ARG_COUNT=$((DOCKER_BUILD_ARG_COUNT + $#))
+      break
+      ;;
+    *)
+      DOCKER_BUILD_ARGS+=("$1")
+      DOCKER_BUILD_ARG_COUNT=$((DOCKER_BUILD_ARG_COUNT + 1))
+      shift
+      ;;
+  esac
+done
+
+case "${AEGIS_SKIP_IMAGE_VERIFY:-false}" in
+  1|true|TRUE|yes|YES) VERIFY_IMAGE="false" ;;
+esac
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "错误：未找到 Docker CLI。" >&2
@@ -20,24 +115,45 @@ if [[ ! -f "${SCRIPT_DIR}/Dockerfile" ]]; then
   exit 1
 fi
 
-echo "正在构建 ${IMAGE_NAME} ..."
-echo "Kali 基础镜像：${KALI_BASE_IMAGE}"
-docker build \
-  --tag "${IMAGE_NAME}" \
-  --build-arg "KALI_BASE_IMAGE=${KALI_BASE_IMAGE}" \
-  "$@" \
-  "${SCRIPT_DIR}"
+BUILD_COMMAND=(
+  docker build
+  --tag "${IMAGE_NAME}"
+  --build-arg "KALI_BASE_IMAGE=${KALI_BASE_IMAGE}"
+  --build-arg "PI_VERSION=${PI_VERSION}"
+  --build-arg "AGENT_BROWSER_VERSION=${AGENT_BROWSER_VERSION}"
+)
+if [[ -n "${PLATFORM}" ]]; then
+  BUILD_COMMAND+=(--platform "${PLATFORM}")
+fi
+if (( DOCKER_BUILD_ARG_COUNT > 0 )); then
+  BUILD_COMMAND+=("${DOCKER_BUILD_ARGS[@]}")
+fi
+BUILD_COMMAND+=("${SCRIPT_DIR}")
 
-echo "正在验证镜像 ..."
+echo "正在构建 Worker 镜像"
+echo "  镜像：${IMAGE_NAME}"
+echo "  基础镜像：${KALI_BASE_IMAGE}"
+echo "  Pi CLI：${PI_VERSION}"
+echo "  agent-browser：${AGENT_BROWSER_VERSION}"
+if [[ -n "${PLATFORM}" ]]; then
+  echo "  平台：${PLATFORM}"
+fi
+"${BUILD_COMMAND[@]}"
+
 docker image inspect "${IMAGE_NAME}" >/dev/null
-docker run --rm "${IMAGE_NAME}" sh -ec '
-  echo "System:  $(grep PRETTY_NAME /etc/os-release | cut -d= -f2- | tr -d \"\\\"\")"
-  echo "Node.js: $(node --version)"
-  echo "Python:  $(python --version 2>&1)"
-  echo "Go:      $(go version)"
-  echo "Java:    $(java -version 2>&1 | head -n 1)"
-  echo "Pi:      $(pi --version)"
-  echo "Browser: $(agent-browser --version)"
-'
+if [[ "${VERIFY_IMAGE}" == "true" ]]; then
+  echo "正在验证镜像中的运行环境 ..."
+  docker run --rm "${IMAGE_NAME}" sh -ec '
+    echo "System:  $(grep PRETTY_NAME /etc/os-release | cut -d= -f2- | tr -d "\"")"
+    echo "Node.js: $(node --version)"
+    echo "Python:  $(python --version 2>&1)"
+    echo "Go:      $(go version)"
+    echo "Java:    $(java -version 2>&1 | head -n 1)"
+    echo "Pi:      $(pi --version)"
+    echo "Browser: $(agent-browser --version)"
+  '
+else
+  echo "已跳过运行环境验证。"
+fi
 
 echo "构建完成：${IMAGE_NAME}"

@@ -104,12 +104,26 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, profile)
 	})
-	api.DELETE("/container-profiles/:id", func(c *gin.Context) {
-		if err := store.DeleteContainerProfile(c.Param("id")); err != nil {
-			writeError(c, http.StatusConflict, err)
+	api.GET("/container-profiles/:id/delete-impact", func(c *gin.Context) {
+		impact, err := store.ContainerProfileDeleteImpact(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
 			return
 		}
-		c.Status(http.StatusNoContent)
+		c.JSON(http.StatusOK, impact)
+	})
+	api.DELETE("/container-profiles/:id", func(c *gin.Context) {
+		cascadeIssues := c.Query("cascadeIssues") == "true"
+		result, err := manager.DeleteContainerProfile(c.Param("id"), cascadeIssues)
+		if err != nil {
+			status := http.StatusUnprocessableEntity
+			if errors.Is(err, control.ErrContainerProfileReferenced) {
+				status = http.StatusConflict
+			}
+			writeError(c, status, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
 	})
 	api.GET("/container-profiles/probe/docker", func(c *gin.Context) {
 		if err := control.ProbeDocker(); err != nil {
@@ -727,6 +741,18 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, issue)
 	})
+	api.POST("/issues/:id/validation/manual-reject", func(c *gin.Context) {
+		var in control.ManualValidationOverrideInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		issue, err := manager.ManuallyRejectValidation(c.Param("id"), in.Reason)
+		if err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.JSON(http.StatusOK, issue)
+	})
 	api.POST("/issues/:id/relations", func(c *gin.Context) {
 		var in control.CreateRelationInput
 		if !bindJSON(c, &in) {
@@ -911,7 +937,11 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		v, err := store.SaveAgentTemplate(in)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			status := http.StatusBadRequest
+			if errors.Is(err, control.ErrAgentTemplateIDConflict) {
+				status = http.StatusConflict
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusCreated, v)
@@ -925,6 +955,19 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		v, err := store.SetAgentTemplateHidden(c.Param("id"), in.Hidden)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.PATCH("/agent-templates/:id/note", func(c *gin.Context) {
+		var in control.UpdateAgentTemplateNoteInput
+		if c.ShouldBindJSON(&in) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid note input"})
+			return
+		}
+		v, err := store.UpdateAgentTemplateNote(c.Param("id"), in.Note)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
 			return
 		}
 		c.JSON(http.StatusOK, v)
