@@ -33,6 +33,7 @@ const (
 	agentBrowserSeedMigrationID     = "agent-browser-red-team-defaults-v1"
 	redTeamComplexityMigrationID    = "red-team-lead-complexity-boundary-v1"
 	openAgentPermissionsMigrationID = "open-all-agent-permissions-v1"
+	requiredAgentToolsMigrationID   = "required-agent-tools-v2"
 )
 
 const redTeamComplexityBoundary = `COMPLEX TASK BOUNDARY (mandatory)
@@ -659,7 +660,48 @@ func (s *Store) applyRegistrySeedMigrations(now time.Time) error {
 	if err := s.applyRedTeamComplexityBoundaryMigration(now); err != nil {
 		return err
 	}
+	if err := s.applyRequiredAgentToolsMigration(now); err != nil {
+		return err
+	}
 	return s.applyUncoverUIConfigSeedMigration(now)
+}
+
+func (s *Store) applyRequiredAgentToolsMigration(now time.Time) error {
+	var applied int64
+	if err := s.db.Model(&registrySeedMigrationRecord{}).Where("id = ?", requiredAgentToolsMigrationID).Count(&applied).Error; err != nil {
+		return fmt.Errorf("check registry seed migration %s: %w", requiredAgentToolsMigrationID, err)
+	}
+	if applied > 0 {
+		return nil
+	}
+	updated := make(map[int]AgentDefinition)
+	for index, current := range s.agents {
+		if current.Internal || current.ID == conciergeAgentID {
+			continue
+		}
+		next := cloneAgent(current)
+		next.Tools = ensureRequiredAgentTools(next.Tools)
+		if slices.Equal(next.Tools, current.Tools) {
+			continue
+		}
+		next.UpdatedAt = now
+		updated[index] = next
+	}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		for _, agent := range updated {
+			record := agentRecord{ID: agent.ID, Definition: agent, CreatedAt: agent.CreatedAt, UpdatedAt: now}
+			if err := tx.Save(&record).Error; err != nil {
+				return fmt.Errorf("update Agent %s: %w", agent.ID, err)
+			}
+		}
+		return tx.Create(&registrySeedMigrationRecord{ID: requiredAgentToolsMigrationID, AppliedAt: now}).Error
+	}); err != nil {
+		return fmt.Errorf("apply registry seed migration %s: %w", requiredAgentToolsMigrationID, err)
+	}
+	for index, agent := range updated {
+		s.agents[index] = agent
+	}
+	return nil
 }
 
 func (s *Store) applyOpenAgentPermissionsMigration(now time.Time) error {

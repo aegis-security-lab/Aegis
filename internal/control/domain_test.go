@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func configuredStore(t *testing.T) *Store {
@@ -152,6 +153,41 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	}
 	if !slices.Contains(updated.Tools, "aegis_broadcast") || !slices.Contains(updated.Tools, "aegis_list_broadcasts") {
 		t.Fatalf("updated agent tools=%v, broadcast capabilities were removed", updated.Tools)
+	}
+}
+
+func TestRequiredAgentToolsMigrationUpdatesExistingWorkers(t *testing.T) {
+	s := configuredStore(t)
+	index, exists := agentIndex(s.agents, "backend-engineer")
+	if !exists {
+		t.Fatal("backend-engineer is missing")
+	}
+	legacy := cloneAgent(s.agents[index])
+	legacy.Tools = stringsWithout(legacy.Tools, "aegis_submit_final_result")
+	s.agents[index] = legacy
+	if err := s.db.Save(&agentRecord{ID: legacy.ID, Definition: legacy, CreatedAt: legacy.CreatedAt, UpdatedAt: legacy.UpdatedAt}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Delete(&registrySeedMigrationRecord{}, "id = ?", requiredAgentToolsMigrationID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.applyRequiredAgentToolsMigration(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.GetAgent(legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(updated.Tools, "aegis_submit_final_result") {
+		t.Fatalf("migrated Agent tools=%v", updated.Tools)
+	}
+	var record agentRecord
+	if err := s.db.First(&record, "id = ?", legacy.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(record.Definition.Tools, "aegis_submit_final_result") {
+		t.Fatalf("persisted Agent tools=%v", record.Definition.Tools)
 	}
 }
 
