@@ -1,19 +1,20 @@
 import * as React from "react"
 import {
   Boxes,
+  Container as ContainerIcon,
   Pencil,
   Play,
   Plus,
   RefreshCw,
+  Settings2,
   Square,
   Trash2,
   TriangleAlert,
 } from "lucide-react"
+import { Link } from "react-router-dom"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,10 +26,14 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -49,6 +54,7 @@ import {
 } from "@/components/ui/empty"
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
@@ -57,26 +63,42 @@ import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
+import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  createContainerProfile,
   buildWorkerContainerImage,
+  createContainerProfile,
+  deleteContainer,
   deleteContainerProfile,
+  fetchContainerDeleteImpact,
   fetchContainerProfileDeleteImpact,
   probeDocker,
-  startContainerProfile,
-  stopContainerProfile,
+  startContainer,
+  stopContainer,
   updateContainerProfile,
   type SaveContainerProfileInput,
 } from "@/lib/api"
+import { formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import type {
+  ContainerDeleteImpact,
+  ContainerInstance,
   ContainerProfile,
   ContainerProfileDeleteImpact,
 } from "@/types"
@@ -88,249 +110,493 @@ const defaults: SaveContainerProfileInput = {
   nodePath: "node",
   piPath: "/usr/local/bin/pi",
   workspacePath: "/workspace",
-  hostWorkspace: "",
   networkMode: "bridge",
   memoryMb: 2048,
   cpus: 2,
   enabled: true,
 }
 
+const runtimeLabels: Record<ContainerInstance["runtimeStatus"], string> = {
+  created: "已创建",
+  running: "运行中",
+  paused: "已暂停",
+  restarting: "重启中",
+  removing: "删除中",
+  exited: "已停止",
+  dead: "异常",
+  missing: "待重建",
+  unavailable: "Docker 不可用",
+}
+
+function runtimeBadgeVariant(
+  status: ContainerInstance["runtimeStatus"]
+): "default" | "secondary" | "outline" | "destructive" {
+  if (status === "running") return "default"
+  if (status === "dead" || status === "unavailable") return "destructive"
+  if (status === "missing") return "outline"
+  return "secondary"
+}
+
 export function ContainersPage() {
   const { state, refresh } = useAppState()
   const profiles = state?.containerProfiles ?? []
+  const containers = state?.containers ?? []
+  const tasks = state?.tasks ?? []
+  const issues = state?.issues ?? []
+  const [activeTab, setActiveTab] = React.useState("profiles")
   const [editing, setEditing] = React.useState<ContainerProfile | "new" | null>(
     null
   )
-  const [busy, setBusy] = React.useState(false)
-  const [deleteTarget, setDeleteTarget] =
+  const [busyAction, setBusyAction] = React.useState<string | null>(null)
+  const [profileDeleteTarget, setProfileDeleteTarget] =
     React.useState<ContainerProfile | null>(null)
-  const [deleteImpact, setDeleteImpact] =
+  const [profileDeleteImpact, setProfileDeleteImpact] =
     React.useState<ContainerProfileDeleteImpact | null>(null)
-  const [checkingDelete, setCheckingDelete] = React.useState<string | null>(
-    null
-  )
-  const [deleting, setDeleting] = React.useState(false)
+  const [containerDeleteTarget, setContainerDeleteTarget] =
+    React.useState<ContainerInstance | null>(null)
+  const [containerDeleteImpact, setContainerDeleteImpact] =
+    React.useState<ContainerDeleteImpact | null>(null)
 
   const checkDocker = async () => {
+    setBusyAction("probe")
     try {
       await probeDocker()
       toast.success("Docker daemon 可用")
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "Docker 不可用")
+    } finally {
+      setBusyAction(null)
     }
   }
 
   const buildImage = async () => {
-    setBusy(true)
+    setBusyAction("build")
     try {
       const result = await buildWorkerContainerImage()
       toast.success(`镜像 ${result.image} 构建完成`)
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "镜像构建失败")
     } finally {
-      setBusy(false)
+      setBusyAction(null)
     }
   }
 
-  const prepareDelete = async (profile: ContainerProfile) => {
-    setCheckingDelete(profile.id)
+  const prepareProfileDelete = async (profile: ContainerProfile) => {
+    setBusyAction(`profile-impact:${profile.id}`)
     try {
-      const impact = await fetchContainerProfileDeleteImpact(profile.id)
-      setDeleteTarget(profile)
-      setDeleteImpact(impact)
+      setProfileDeleteImpact(
+        await fetchContainerProfileDeleteImpact(profile.id)
+      )
+      setProfileDeleteTarget(profile)
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "无法检查删除影响")
     } finally {
-      setCheckingDelete(null)
+      setBusyAction(null)
     }
   }
 
-  const remove = async () => {
-    if (!deleteTarget || !deleteImpact || deleting) return
-    setDeleting(true)
+  const removeProfile = async () => {
+    if (!profileDeleteTarget || !profileDeleteImpact) return
+    setBusyAction(`profile-delete:${profileDeleteTarget.id}`)
     try {
-      const result = await deleteContainerProfile(deleteTarget.id, true)
+      await deleteContainerProfile(profileDeleteTarget.id, false)
       await refresh()
-      toast.success("容器环境已删除", {
-        description:
-          result.deletedIssues > 0
-            ? `同时删除 ${result.deletedIssues} 个 Issues、${result.deletedExecutions} 条执行记录和 ${result.deletedTasks} 个任务定义。`
-            : "没有关联 Issue 被删除。",
-      })
-      setDeleteTarget(null)
-      setDeleteImpact(null)
+      toast.success("环境配置已删除")
+      setProfileDeleteTarget(null)
+      setProfileDeleteImpact(null)
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "删除失败")
     } finally {
-      setDeleting(false)
+      setBusyAction(null)
     }
   }
 
-  const changeRuntime = async (profile: ContainerProfile) => {
-    setBusy(true)
+  const changeRuntime = async (container: ContainerInstance) => {
+    setBusyAction(`runtime:${container.id}`)
     try {
-      if (profile.runtimeStatus === "running")
-        await stopContainerProfile(profile.id)
-      else await startContainerProfile(profile.id)
+      if (container.runtimeStatus === "running") await stopContainer(container.id)
+      else await startContainer(container.id)
       await refresh()
       toast.success(
-        profile.runtimeStatus === "running" ? "容器已停止" : "容器已启动"
+        container.runtimeStatus === "running" ? "容器已停止" : "容器已启动"
       )
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "容器操作失败")
     } finally {
-      setBusy(false)
+      setBusyAction(null)
     }
   }
+
+  const prepareContainerDelete = async (container: ContainerInstance) => {
+    setBusyAction(`container-impact:${container.id}`)
+    try {
+      setContainerDeleteImpact(await fetchContainerDeleteImpact(container.id))
+      setContainerDeleteTarget(container)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "无法检查删除影响")
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const removeContainer = async () => {
+    if (!containerDeleteTarget || !containerDeleteImpact) return
+    setBusyAction(`container-delete:${containerDeleteTarget.id}`)
+    try {
+      const result = await deleteContainer(containerDeleteTarget.id, true)
+      await refresh()
+      toast.success("容器及关联任务已删除", {
+        description: `同时删除 ${result.deletedTasks} 个任务、${result.deletedIssues} 个 Issues 和 ${result.deletedExecutions} 条执行记录。`,
+      })
+      setContainerDeleteTarget(null)
+      setContainerDeleteImpact(null)
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "删除失败")
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const profileHasReferences = Boolean(
+    profileDeleteImpact &&
+      (profileDeleteImpact.containerCount > 0 ||
+        profileDeleteImpact.taskCount > 0 ||
+        profileDeleteImpact.issueCount > 0)
+  )
 
   return (
     <div className="flex flex-col gap-7">
       <PageHeader
         eyebrow="Execution runtime"
         title="容器管理"
-        description="配置任务可选择的 Docker 执行环境。所有环境统一使用项目 Dockerfile 构建的 aegis-pi-worker:latest 镜像。"
+        description={`环境配置只保存创建模板；任务开始前才创建并绑定独立容器。当前有 ${profiles.length} 个配置、${containers.length} 个任务容器。`}
         actions={
           <>
-            <Button variant="outline" onClick={() => void checkDocker()}>
-              <RefreshCw />
+            <Button
+              variant="outline"
+              disabled={busyAction !== null}
+              onClick={() => void checkDocker()}
+            >
+              {busyAction === "probe" ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <RefreshCw data-icon="inline-start" />
+              )}
               检测 Docker
             </Button>
             <Button
               variant="outline"
-              disabled={busy}
+              disabled={busyAction !== null}
               onClick={() => void buildImage()}
             >
-              <Boxes />
-              {busy ? "构建中…" : "构建 Worker 镜像"}
+              {busyAction === "build" ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Boxes data-icon="inline-start" />
+              )}
+              {busyAction === "build" ? "构建中…" : "构建 Worker 镜像"}
             </Button>
-            <Button onClick={() => setEditing("new")}>
-              <Plus />
-              新增环境
+            <Button
+              onClick={() => {
+                setActiveTab("profiles")
+                setEditing("new")
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              新增环境配置
             </Button>
           </>
         }
       />
-      {profiles.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Boxes />
-            </EmptyMedia>
-            <EmptyTitle>还没有容器环境</EmptyTitle>
-            <EmptyDescription>
-              创建一个已包含 Node.js 和 Pi CLI 的镜像配置。
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {profiles.map((profile) => (
-            <Card key={profile.id}>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="profiles">
+            <Settings2 data-icon="inline-start" />
+            环境配置
+            <Badge variant="secondary">{profiles.length}</Badge>
+          </TabsTrigger>
+          <TabsTrigger value="containers">
+            <ContainerIcon data-icon="inline-start" />
+            容器管理
+            <Badge variant="secondary">{containers.length}</Badge>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="profiles" className="pt-4">
+          {profiles.length === 0 ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Settings2 />
+                </EmptyMedia>
+                <EmptyTitle>还没有环境配置</EmptyTitle>
+                <EmptyDescription>
+                  创建配置只会保存镜像、资源和网络设置，不会立即创建容器。
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {profiles.map((profile) => {
+                const configuredTasks = tasks.filter(
+                  (task) => task.containerProfileId === profile.id
+                )
+                const createdContainers = containers.filter(
+                  (container) => container.containerProfileId === profile.id
+                )
+                const checking =
+                  busyAction === `profile-impact:${profile.id}`
+                return (
+                  <Card key={profile.id}>
+                    <CardHeader>
+                      <CardTitle>{profile.name}</CardTitle>
+                      <CardDescription>
+                        {profile.description || "任务容器创建模板"}
+                      </CardDescription>
+                      <CardAction>
+                        <Badge variant={profile.enabled ? "outline" : "secondary"}>
+                          {profile.enabled ? "可供任务选择" : "已停用"}
+                        </Badge>
+                      </CardAction>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                      <dl className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="col-span-2 min-w-0">
+                          <dt className="text-muted-foreground">镜像</dt>
+                          <dd className="truncate font-mono" title={profile.image}>
+                            {profile.image}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">容器工作目录</dt>
+                          <dd className="font-mono">{profile.workspacePath}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">网络</dt>
+                          <dd className="font-mono">{profile.networkMode}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">资源限制</dt>
+                          <dd>
+                            {profile.cpus || "不限"} CPU · {profile.memoryMb ? `${profile.memoryMb} MB` : "内存不限"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">运行命令</dt>
+                          <dd className="truncate font-mono" title={`${profile.nodePath} · ${profile.piPath}`}>
+                            {profile.nodePath} · {profile.piPath}
+                          </dd>
+                        </div>
+                      </dl>
+                      <Separator />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary">
+                          {configuredTasks.length} 个关联任务
+                        </Badge>
+                        <Badge variant="secondary">
+                          {createdContainers.length} 个已创建容器
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        修改此配置只影响以后创建的容器，现有任务容器继续使用创建时的配置快照。
+                      </p>
+                    </CardContent>
+                    <CardFooter className="justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditing(profile)}
+                      >
+                        <Pencil data-icon="inline-start" />
+                        编辑
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={checking}
+                        onClick={() => void prepareProfileDelete(profile)}
+                      >
+                        {checking ? (
+                          <Spinner data-icon="inline-start" />
+                        ) : (
+                          <Trash2 data-icon="inline-start" />
+                        )}
+                        删除
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                )
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="containers" className="pt-4">
+          {containers.length === 0 ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <ContainerIcon />
+                </EmptyMedia>
+                <EmptyTitle>还没有任务容器</EmptyTitle>
+                <EmptyDescription>
+                  新建任务选择环境配置后，系统会在任务真正执行前创建容器。
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <Card>
               <CardHeader>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <CardTitle>{profile.name}</CardTitle>
-                    <CardDescription className="mt-1 font-mono">
-                      固定镜像 · {profile.image}
-                    </CardDescription>
-                  </div>
-                  <Badge
-                    variant={
-                      profile.runtimeStatus === "running"
-                        ? "default"
-                        : "secondary"
-                    }
-                  >
-                    {profile.runtimeStatus === "running" ? "运行中" : "已停止"}
-                  </Badge>
-                </div>
+                <CardTitle>全部任务容器</CardTitle>
+                <CardDescription>
+                  停止容器会保留任务数据；再次执行任务时会自动启动。删除容器会同时删除绑定的任务和 Issues。
+                </CardDescription>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {profile.description ? (
-                  <p className="text-sm text-muted-foreground">
-                    {profile.description}
-                  </p>
-                ) : null}
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">工作目录</p>
-                    <p className="font-mono">{profile.workspacePath}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">资源限制</p>
-                    <p>
-                      {profile.cpus || "不限"} CPU ·{" "}
-                      {profile.memoryMb ? `${profile.memoryMb} MB` : "内存不限"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy || !profile.enabled}
-                    onClick={() => void changeRuntime(profile)}
-                  >
-                    {profile.runtimeStatus === "running" ? (
-                      <Square />
-                    ) : (
-                      <Play />
-                    )}
-                    {profile.runtimeStatus === "running" ? "停止" : "启动"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditing(profile)}
-                  >
-                    <Pencil />
-                    编辑
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={checkingDelete === profile.id}
-                    onClick={() => void prepareDelete(profile)}
-                  >
-                    {checkingDelete === profile.id ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <Trash2 data-icon="inline-start" />
-                    )}
-                    {checkingDelete === profile.id ? "检查中" : "删除"}
-                  </Button>
-                </div>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>容器</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>环境配置</TableHead>
+                      <TableHead>关联任务</TableHead>
+                      <TableHead>工作目录</TableHead>
+                      <TableHead>创建时间</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {containers.map((container) => {
+                      const profile = profiles.find(
+                        (candidate) => candidate.id === container.containerProfileId
+                      )
+                      const task = tasks.find(
+                        (candidate) => candidate.id === container.taskId
+                      )
+                      const latestRun = issues
+                        .filter(
+                          (issue) =>
+                            !issue.parentId && issue.taskSourceId === container.taskId
+                        )
+                        .sort((left, right) =>
+                          right.createdAt.localeCompare(left.createdAt)
+                        )[0]
+                      const changing = busyAction === `runtime:${container.id}`
+                      const checkingDelete =
+                        busyAction === `container-impact:${container.id}`
+                      return (
+                        <TableRow key={container.id}>
+                          <TableCell>
+                            <div className="flex max-w-64 flex-col gap-1">
+                              <span className="truncate font-medium" title={container.name}>
+                                {container.name}
+                              </span>
+                              <span className="truncate font-mono text-xs text-muted-foreground" title={container.image}>
+                                {container.image}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={runtimeBadgeVariant(container.runtimeStatus)}>
+                              {runtimeLabels[container.runtimeStatus]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{profile?.name ?? "配置已删除"}</TableCell>
+                          <TableCell>
+                            {latestRun ? (
+                              <Link
+                                to={`/tasks/${latestRun.id}`}
+                                className="font-medium hover:underline"
+                              >
+                                {task?.title ?? latestRun.title}
+                                <span className="ml-2 text-xs text-muted-foreground">
+                                  {latestRun.identifier}
+                                </span>
+                              </Link>
+                            ) : (
+                              task?.title ?? "任务已删除"
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono">
+                            {container.workspacePath}
+                          </TableCell>
+                          <TableCell>{formatTime(container.createdAt)}</TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={changing || busyAction !== null && !changing}
+                                onClick={() => void changeRuntime(container)}
+                              >
+                                {changing ? (
+                                  <Spinner data-icon="inline-start" />
+                                ) : container.runtimeStatus === "running" ? (
+                                  <Square data-icon="inline-start" />
+                                ) : (
+                                  <Play data-icon="inline-start" />
+                                )}
+                                {container.runtimeStatus === "running" ? "停止" : "启动"}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={checkingDelete}
+                                onClick={() => void prepareContainerDelete(container)}
+                              >
+                                {checkingDelete ? (
+                                  <Spinner data-icon="inline-start" />
+                                ) : (
+                                  <Trash2 data-icon="inline-start" />
+                                )}
+                                删除
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      )}
+          )}
+        </TabsContent>
+      </Tabs>
+
       <ProfileDialog
         key={editing === "new" ? "new" : (editing?.id ?? "closed")}
         value={editing}
-        busy={busy}
+        busy={busyAction === "profile-save"}
         onClose={() => setEditing(null)}
         onSave={async (input) => {
-          setBusy(true)
+          setBusyAction("profile-save")
           try {
             if (editing === "new") await createContainerProfile(input)
             else if (editing) await updateContainerProfile(editing.id, input)
             await refresh()
             setEditing(null)
-            toast.success("容器环境已保存")
+            toast.success("环境配置已保存", {
+              description:
+                editing === "new"
+                  ? "尚未创建容器；任务选择此配置并开始执行时才会创建。"
+                  : "现有容器不变，新配置将用于以后创建的容器。",
+            })
           } catch (reason) {
             toast.error(reason instanceof Error ? reason.message : "保存失败")
           } finally {
-            setBusy(false)
+            setBusyAction(null)
           }
         }}
       />
+
       <AlertDialog
-        open={deleteTarget !== null}
+        open={profileDeleteTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !deleting) {
-            setDeleteTarget(null)
-            setDeleteImpact(null)
+          if (!open && busyAction?.startsWith("profile-delete:") !== true) {
+            setProfileDeleteTarget(null)
+            setProfileDeleteImpact(null)
           }
         }}
       >
@@ -339,29 +605,76 @@ export function ContainersPage() {
             <AlertDialogMedia>
               <TriangleAlert />
             </AlertDialogMedia>
-            <AlertDialogTitle>删除容器环境？</AlertDialogTitle>
+            <AlertDialogTitle>
+              {profileHasReferences ? "环境配置仍被使用" : "删除环境配置？"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteImpact && deleteImpact.issueCount > 0
-                ? `“${deleteTarget?.name ?? "该容器环境"}”已被 ${deleteImpact.issueCount} 个 Issues 引用。继续删除将永久删除这些 Issues、${deleteImpact.executionCount} 条执行记录和 ${deleteImpact.taskCount} 个任务定义。此操作不可撤销。`
-                : `“${deleteTarget?.name ?? "该容器环境"}”当前没有关联 Issue。删除后无法恢复。`}
-              {deleteImpact && deleteImpact.activeExecutionCount > 0
-                ? ` 其中 ${deleteImpact.activeExecutionCount} 个执行仍在运行，确认后将立即中止。`
+              {profileHasReferences
+                ? `“${profileDeleteTarget?.name ?? "该配置"}”仍关联 ${profileDeleteImpact?.containerCount ?? 0} 个容器、${profileDeleteImpact?.taskCount ?? 0} 个任务和 ${profileDeleteImpact?.issueCount ?? 0} 个 Issues。请先处理关联容器或任务，配置不会级联删除业务数据。`
+                : `“${profileDeleteTarget?.name ?? "该配置"}”只包含创建模板，删除后无法恢复。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {profileHasReferences ? "关闭" : "取消"}
+            </AlertDialogCancel>
+            {!profileHasReferences ? (
+              <AlertDialogAction
+                variant="destructive"
+                disabled={busyAction?.startsWith("profile-delete:")}
+                onClick={() => void removeProfile()}
+              >
+                {busyAction?.startsWith("profile-delete:") ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <Trash2 data-icon="inline-start" />
+                )}
+                确认删除
+              </AlertDialogAction>
+            ) : null}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={containerDeleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && busyAction?.startsWith("container-delete:") !== true) {
+            setContainerDeleteTarget(null)
+            setContainerDeleteImpact(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <TriangleAlert />
+            </AlertDialogMedia>
+            <AlertDialogTitle>删除容器及关联任务？</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`“${containerDeleteTarget?.name ?? "该容器"}”绑定了 1 个任务、${containerDeleteImpact?.issueCount ?? 0} 个 Issues 和 ${containerDeleteImpact?.executionCount ?? 0} 条执行记录。确认后会停止并删除容器及数据卷，同时永久删除这些关联数据。`}
+              {(containerDeleteImpact?.activeExecutionCount ?? 0) > 0
+                ? ` 其中 ${containerDeleteImpact?.activeExecutionCount} 个执行仍在运行，将立即中止。`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            <AlertDialogCancel
+              disabled={busyAction?.startsWith("container-delete:")}
+            >
+              取消
+            </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={deleting}
-              onClick={() => void remove()}
+              disabled={busyAction?.startsWith("container-delete:")}
+              onClick={() => void removeContainer()}
             >
-              {deleting ? (
+              {busyAction?.startsWith("container-delete:") ? (
                 <Spinner data-icon="inline-start" />
               ) : (
                 <Trash2 data-icon="inline-start" />
               )}
-              {deleting ? "正在删除" : "确认删除"}
+              确认删除
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -390,7 +703,6 @@ function ProfileDialog({
           nodePath: value.nodePath,
           piPath: value.piPath,
           workspacePath: value.workspacePath,
-          hostWorkspace: value.hostWorkspace,
           networkMode: value.networkMode,
           memoryMb: value.memoryMb,
           cpus: value.cpus,
@@ -402,102 +714,100 @@ function ProfileDialog({
     key: K,
     next: SaveContainerProfileInput[K]
   ) => setForm((current) => ({ ...current, [key]: next }))
+
   return (
     <Dialog
       open={value !== null}
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open && !busy) onClose()
       }}
     >
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
-            {value === "new" ? "新增容器环境" : "编辑容器环境"}
+            {value === "new" ? "新增环境配置" : "编辑环境配置"}
           </DialogTitle>
           <DialogDescription>
-            固定使用项目 Dockerfile 构建的
-            aegis-pi-worker:latest；宿主工作区会挂载到容器工作目录。
+            此处只保存容器创建模板，不会创建或启动 Docker 容器。任务选择配置并开始执行时才会创建独立容器。
           </DialogDescription>
         </DialogHeader>
         <FieldGroup>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <FieldGroup className="grid sm:grid-cols-2">
             <Field>
-              <FieldLabel>名称</FieldLabel>
+              <FieldLabel htmlFor="container-name">名称</FieldLabel>
               <Input
+                id="container-name"
                 required
                 value={form.name}
                 onChange={(event) => set("name", event.target.value)}
               />
             </Field>
             <Field>
-              <FieldLabel>Docker Image</FieldLabel>
-              <Input disabled value="aegis-pi-worker:latest" />
+              <FieldLabel htmlFor="container-image">Docker Image</FieldLabel>
+              <Input
+                id="container-image"
+                disabled
+                value="aegis-pi-worker:latest"
+              />
               <FieldDescription>
-                由项目根目录 Dockerfile 统一构建，不允许环境单独覆盖。
+                由项目 Dockerfile 统一构建，不允许配置单独覆盖。
               </FieldDescription>
             </Field>
-          </div>
+          </FieldGroup>
           <Field>
-            <FieldLabel>说明</FieldLabel>
+            <FieldLabel htmlFor="container-description">说明</FieldLabel>
             <Textarea
+              id="container-description"
               rows={2}
               value={form.description}
               onChange={(event) => set("description", event.target.value)}
             />
           </Field>
-          <div className="grid gap-4 sm:grid-cols-1">
+          <Field>
+            <FieldLabel htmlFor="container-workspace">容器工作目录</FieldLabel>
+            <Input
+              id="container-workspace"
+              value={form.workspacePath}
+              onChange={(event) => set("workspacePath", event.target.value)}
+            />
+            <FieldDescription>
+              工作区保存在任务容器自己的 Docker Volume 中，不映射宿主机目录。
+            </FieldDescription>
+          </Field>
+          <FieldGroup className="grid sm:grid-cols-3">
             <Field>
-              <FieldLabel>宿主机工作目录</FieldLabel>
-              <Input
-                required
-                placeholder="/absolute/path/to/workspace"
-                value={form.hostWorkspace}
-                onChange={(event) => set("hostWorkspace", event.target.value)}
-              />
-              <FieldDescription>
-                启动容器时挂载到下方容器工作目录；选择该容器的任务将自动使用此目录。
-              </FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel>容器工作目录</FieldLabel>
-              <Input
-                value={form.workspacePath}
-                onChange={(event) => set("workspacePath", event.target.value)}
-              />
-            </Field>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field>
-              <FieldLabel>网络</FieldLabel>
+              <FieldLabel htmlFor="container-network">网络</FieldLabel>
               <Select
                 value={form.networkMode}
                 onValueChange={(next) =>
                   set("networkMode", next as "bridge" | "none")
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger id="container-network">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="bridge">bridge</SelectItem>
-                  <SelectItem value="none">none</SelectItem>
+                  <SelectGroup>
+                    <SelectItem value="bridge">bridge</SelectItem>
+                    <SelectItem value="none">none</SelectItem>
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </Field>
             <Field>
-              <FieldLabel>内存 (MB)</FieldLabel>
+              <FieldLabel htmlFor="container-memory">内存 (MB)</FieldLabel>
               <Input
+                id="container-memory"
                 type="number"
                 min={0}
                 value={form.memoryMb}
-                onChange={(event) =>
-                  set("memoryMb", Number(event.target.value))
-                }
+                onChange={(event) => set("memoryMb", Number(event.target.value))}
               />
             </Field>
             <Field>
-              <FieldLabel>CPU</FieldLabel>
+              <FieldLabel htmlFor="container-cpus">CPU</FieldLabel>
               <Input
+                id="container-cpus"
                 type="number"
                 min={0}
                 step="0.1"
@@ -505,29 +815,31 @@ function ProfileDialog({
                 onChange={(event) => set("cpus", Number(event.target.value))}
               />
             </Field>
-          </div>
+          </FieldGroup>
           <Field orientation="horizontal">
             <Switch
+              id="container-enabled"
               checked={form.enabled}
               onCheckedChange={(checked) => set("enabled", checked)}
             />
-            <div>
-              <FieldLabel>允许任务选择</FieldLabel>
+            <FieldContent>
+              <FieldLabel htmlFor="container-enabled">允许任务选择</FieldLabel>
               <FieldDescription>
-                停用不会影响历史 Execution，但新任务不能再选择。
+                停用后，新任务不能选择此配置；已经创建的容器不受影响。
               </FieldDescription>
-            </div>
+            </FieldContent>
           </Field>
         </FieldGroup>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
             取消
           </Button>
           <Button
             disabled={busy || !form.name.trim()}
             onClick={() => void onSave(form)}
           >
-            {busy ? "保存中…" : "保存"}
+            {busy ? <Spinner data-icon="inline-start" /> : null}
+            {busy ? "保存中…" : "保存配置"}
           </Button>
         </DialogFooter>
       </DialogContent>

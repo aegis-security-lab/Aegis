@@ -111,7 +111,7 @@ func (m *Manager) queueDueIssueHeartbeats(now time.Time) []string {
 }
 
 func (m *Manager) issueHeartbeatEligibility(issue Issue) (bool, string) {
-	if issue.Hidden || strings.TrimSpace(issue.AssigneeAgentID) == "" || slices.Contains([]string{"done", "cancelled"}, issue.Status) {
+	if issue.Hidden || strings.TrimSpace(issue.AssigneeAgentID) == "" || issueStatusTerminal(issue.Status) {
 		return false, ""
 	}
 	if issue.Status == "in_progress" && issue.ExecutionPhase == "waiting_children" && issue.CheckoutExecutionID == "" {
@@ -139,7 +139,7 @@ func (m *Manager) heartbeatPrompt(issue Issue, wakeup AgentWakeup) (string, erro
 	var blockers []Issue
 	if err := m.store.db.Table("issues i").
 		Joins("join issue_relations r on r.issue_id = i.id").
-		Where("r.related_issue_id = ? AND r.type = ? AND i.status NOT IN ?", issue.ID, "blocks", []string{"done", "cancelled"}).
+		Where("r.related_issue_id = ? AND r.type = ? AND i.status NOT IN ?", issue.ID, "blocks", terminalIssueStatuses).
 		Order("i.number asc").Find(&blockers).Error; err != nil {
 		return "", err
 	}

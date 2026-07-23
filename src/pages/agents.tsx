@@ -162,6 +162,13 @@ export function AgentsPage() {
   React.useEffect(() => {
     void fetchAgentTemplates().then(setTemplates)
   }, [])
+  React.useEffect(() => {
+    const requestedAgent = searchParams.get("agent")
+    if (requestedAgent) {
+      const agent = agents.find((item) => item.id === requestedAgent)
+      if (agent) setEditing(agent)
+    }
+  }, [agents, searchParams])
 
   return (
     <div className="flex flex-col gap-7">
@@ -219,6 +226,7 @@ export function AgentsPage() {
               )}
               globalProvider={state?.config.provider ?? "—"}
               globalModel={state?.config.model ?? "—"}
+              departmentName={state?.departments?.find((department) => department.id === agent.departmentId)?.name}
               onEdit={() => setEditing(agent)}
             />
           ))}
@@ -231,6 +239,7 @@ export function AgentsPage() {
           agent={editingAgent}
           skills={skills}
           knowledgeBases={knowledgeBases}
+          departments={state?.departments ?? []}
           globalProvider={state?.config.provider ?? ""}
           globalModel={state?.config.model ?? ""}
           globalPricing={state?.config.pricing ?? zeroPricing}
@@ -240,11 +249,11 @@ export function AgentsPage() {
           }
           onOpenChange={(open) => {
             if (!open) setEditing(null)
-            if (!open && searchParams.has("template")) setSearchParams({})
+            if (!open && (searchParams.has("template") || searchParams.has("agent"))) setSearchParams({})
           }}
           onSaved={async () => {
             setEditing(null)
-            if (searchParams.has("template")) setSearchParams({})
+            if (searchParams.has("template") || searchParams.has("agent")) setSearchParams({})
             await refresh()
           }}
         />
@@ -259,6 +268,7 @@ function AgentCard({
   knowledgeBaseNames,
   globalProvider,
   globalModel,
+  departmentName,
   onEdit,
 }: {
   agent: AgentDefinition
@@ -266,6 +276,7 @@ function AgentCard({
   knowledgeBaseNames: string[]
   globalProvider: string
   globalModel: string
+  departmentName?: string
   onEdit: () => void
 }) {
   const provider = agent.model.provider || globalProvider
@@ -317,6 +328,7 @@ function AgentCard({
           <Badge variant="secondary">
             {categoryLabels[agent.category] ?? agent.category}
           </Badge>
+          <Badge variant="outline">{departmentName ?? "未分配部门"}</Badge>
           <BoundaryBadge allowed={agent.permissions.allowWrite} label="写入" />
           <BoundaryBadge allowed={agent.permissions.allowShell} label="Shell" />
           <BoundaryBadge
@@ -362,6 +374,7 @@ function AgentDialog({
   agent,
   skills,
   knowledgeBases,
+  departments,
   globalProvider,
   globalModel,
   globalPricing,
@@ -373,6 +386,7 @@ function AgentDialog({
   agent: AgentDefinition | "new"
   skills: { id: string; displayName: string; description: string }[]
   knowledgeBases: { id: string; name: string; description: string }[]
+  departments: { id: string; name: string }[]
   globalProvider: string
   globalModel: string
   globalPricing: ModelPricing
@@ -411,6 +425,12 @@ function AgentDialog({
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!form.name.trim() || !form.systemPrompt.trim() || saving) return
+    if (agent === "new" || !agent.internal) {
+      if (!form.departmentId?.trim()) {
+        toast.error("员工必须先选择所属部门")
+        return
+      }
+    }
     setSaving(true)
     try {
       const provider = form.model.provider || globalProvider
@@ -571,6 +591,13 @@ function AgentDialog({
                           <SelectItem value="security">安全</SelectItem>
                         </SelectGroup>
                       </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="agent-department">所属部门</FieldLabel>
+                    <Select value={form.departmentId ?? "none"} onValueChange={(value) => set("departmentId", value === "none" ? "" : (value ?? ""))}>
+                      <SelectTrigger id="agent-department" className="w-full"><SelectValue placeholder="未分配部门" /></SelectTrigger>
+                      <SelectContent><SelectItem value="none">未分配部门</SelectItem>{departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}</SelectContent>
                     </Select>
                   </Field>
                   <Field

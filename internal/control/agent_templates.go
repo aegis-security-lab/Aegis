@@ -128,6 +128,36 @@ func (s *Store) seedAgentTemplates(now time.Time) error {
 			if err := s.db.Create(&template).Error; err != nil {
 				return err
 			}
+		} else {
+			// Older installations may have template rows without the display
+			// metadata. Backfill them from the referenced employee definition.
+			var template AgentTemplate
+			if err := s.db.First(&template, "id = ?", id).Error; err != nil {
+				return err
+			}
+			changed := false
+			if strings.TrimSpace(template.Metadata.EnglishName) == "" {
+				template.Metadata.EnglishName = agent.ID
+				changed = true
+			}
+			if strings.TrimSpace(template.Metadata.ChineseName) == "" {
+				template.Metadata.ChineseName = agent.Name
+				changed = true
+			}
+			if strings.TrimSpace(template.Metadata.Introduction) == "" {
+				template.Metadata.Introduction = fallback(agent.Description, agent.Name)
+				changed = true
+			}
+			if len(template.Metadata.Positions) == 0 {
+				template.Metadata.Positions = []string{fallback(agent.Category, "general")}
+				changed = true
+			}
+			if changed {
+				template.UpdatedAt = now
+				if err := s.db.Save(&template).Error; err != nil {
+					return err
+				}
+			}
 		}
 		if agent.TemplateID != id || agent.Model.Provider != provider || agent.Model.Model != model {
 			agent.TemplateID = id

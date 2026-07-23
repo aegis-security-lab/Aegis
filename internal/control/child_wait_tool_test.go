@@ -53,6 +53,10 @@ func TestWaitForChildIssuesPersistsSelectionAndReleasesParent(t *testing.T) {
 	if !childWaitConditionSatisfied(IssueChildWait{WaitForAll: true}, children) {
 		t.Fatal("wait-for-all was not satisfied after every child became terminal")
 	}
+	children[1].Status = "failed"
+	if !childWaitConditionSatisfied(IssueChildWait{WaitForAll: true}, children) {
+		t.Fatal("wait-for-all was not satisfied after a child failed terminally")
+	}
 }
 
 func TestWaitForChildIssuesRejectsInvalidSelection(t *testing.T) {

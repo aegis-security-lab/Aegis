@@ -61,9 +61,11 @@ export interface Task {
   assigneeAgentId?: string
   workspace: string
   containerProfileId?: string
+  containerId?: string
   context?: string
   constraints?: string
   timeBudgetMinutes?: number
+  humanValidationFallback?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -75,23 +77,62 @@ export interface ContainerProfile {
   nodePath: string
   piPath: string
   workspacePath: string
-  hostWorkspace: string
   networkMode: "bridge" | "none"
   memoryMb: number
   cpus: number
   enabled: boolean
-  runtimeStatus: "running" | "stopped"
-  containerName: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ContainerInstance {
+  id: string
+  containerProfileId: string
+  taskId: string
+  name: string
+  image: string
+  nodePath: string
+  piPath: string
+  workspacePath: string
+  networkMode: "bridge" | "none"
+  memoryMb: number
+  cpus: number
+  runtimeStatus:
+    | "created"
+    | "running"
+    | "paused"
+    | "restarting"
+    | "removing"
+    | "exited"
+    | "dead"
+    | "missing"
+    | "unavailable"
   createdAt: string
   updatedAt: string
 }
 
 export interface ContainerProfileDeleteImpact {
   containerProfileId: string
+  containerCount: number
   issueCount: number
   taskCount: number
   executionCount: number
   activeExecutionCount: number
+}
+
+export interface ContainerDeleteImpact {
+  containerId: string
+  taskId: string
+  issueCount: number
+  executionCount: number
+  activeExecutionCount: number
+}
+
+export interface ContainerDeleteResult {
+  containerId: string
+  deletedIssues: number
+  deletedTasks: number
+  deletedExecutions: number
 }
 
 export interface ContainerProfileDeleteResult {
@@ -144,9 +185,11 @@ export interface Issue {
   recoveryRequestedAt?: string
   workspace: string
   containerProfileId?: string
+  containerId?: string
   context?: string
   constraints?: string
   timeBudgetMinutes?: number
+  humanValidationFallback?: boolean
   result?: string
   error?: string
   objectiveAbandoned: boolean
@@ -316,7 +359,7 @@ export interface Approval {
   id: string
   executionId: string
   issueId?: string
-  type: "tool_call" | "issue_rework"
+  type: "tool_call" | "issue_rework" | "validation_review"
   title: string
   detail: string
   status: "pending" | "approved" | "rejected"
@@ -512,6 +555,18 @@ export interface AgentDefinition {
   skillIds: string[]
   knowledgeBaseIds: string[]
   permissions: PermissionBoundary
+  departmentId?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface Department {
+  id: string
+  parentId?: string
+  name: string
+  code: string
+  description: string
+  leaderAgentId?: string
+  enabled: boolean
   createdAt: string
   updatedAt: string
 }
@@ -596,12 +651,14 @@ export interface AppState {
   runtime: RuntimeProbe
   projects: Project[]
   containerProfiles: ContainerProfile[]
+  containers: ContainerInstance[]
   tasks: Task[]
   issues: Issue[]
   relations: IssueRelation[]
   executions: Execution[]
   approvals: Approval[]
   agents: AgentDefinition[]
+  departments: Department[]
   skills: SkillDefinition[]
   knowledgeBases: KnowledgeBase[]
   sessions: SessionSummary[]
@@ -643,6 +700,7 @@ export interface CreateIssueInput {
   context: string
   constraints: string
   timeBudgetMinutes?: number
+  humanValidationFallback?: boolean
   blockedBy?: string[]
 }
 export interface ConnectionTestResult {

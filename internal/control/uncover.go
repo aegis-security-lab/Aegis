@@ -707,7 +707,7 @@ func (m *Manager) UncoverExecutionSearch(ctx context.Context, executionID, token
 		return UncoverSearchResult{}, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxAttachmentSize+1))
+	data, err := io.ReadAll(io.LimitReader(file, MaxAttachmentSize+1))
 	if err != nil {
 		return UncoverSearchResult{}, err
 	}

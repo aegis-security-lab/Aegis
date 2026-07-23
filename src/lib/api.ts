@@ -8,6 +8,9 @@ import type {
   ConciergeConversationDetail,
   ConnectionTestResult,
   ContainerProfile,
+  ContainerInstance,
+  ContainerDeleteImpact,
+  ContainerDeleteResult,
   ContainerProfileDeleteImpact,
   ContainerProfileDeleteResult,
   CreateIssueInput,
@@ -35,6 +38,7 @@ import type {
   ToolInterruptResult,
   TaskTimeline,
   TaskWorkspace,
+  Department,
   UncoverEngine,
   UncoverSearchInput,
   UncoverSearchResult,
@@ -42,7 +46,7 @@ import type {
 } from "@/types"
 export type SaveContainerProfileInput = Omit<
   ContainerProfile,
-  "id" | "createdAt" | "updatedAt" | "runtimeStatus" | "containerName"
+  "id" | "createdAt" | "updatedAt"
 >
 export type SaveAgentInput = Omit<
   AgentDefinition,
@@ -111,14 +115,23 @@ export const deleteContainerProfile = (id: string, cascadeIssues: boolean) =>
     `/api/container-profiles/${encodeURIComponent(id)}?cascadeIssues=${cascadeIssues}`,
     { method: "DELETE" }
   )
-export const startContainerProfile = (id: string) =>
-  request<ContainerProfile>(
-    `/api/container-profiles/${encodeURIComponent(id)}/start`,
+export const fetchContainerDeleteImpact = (id: string) =>
+  request<ContainerDeleteImpact>(
+    `/api/containers/${encodeURIComponent(id)}/delete-impact`
+  )
+export const deleteContainer = (id: string, cascadeIssues: boolean) =>
+  request<ContainerDeleteResult>(
+    `/api/containers/${encodeURIComponent(id)}?cascadeIssues=${cascadeIssues}`,
+    { method: "DELETE" }
+  )
+export const startContainer = (id: string) =>
+  request<ContainerInstance>(
+    `/api/containers/${encodeURIComponent(id)}/start`,
     { method: "POST" }
   )
-export const stopContainerProfile = (id: string) =>
-  request<ContainerProfile>(
-    `/api/container-profiles/${encodeURIComponent(id)}/stop`,
+export const stopContainer = (id: string) =>
+  request<ContainerInstance>(
+    `/api/containers/${encodeURIComponent(id)}/stop`,
     { method: "POST" }
   )
 export const fetchConciergeConversations = () =>
@@ -209,6 +222,11 @@ export const restartTask = (id: string) =>
   request<Issue>(`/api/tasks/${encodeURIComponent(id)}/restart`, {
     method: "POST",
   })
+export const updateTaskBudget = (id: string, timeBudgetMinutes: number) =>
+  request<Task>(`/api/tasks/${encodeURIComponent(id)}/budget`, {
+    method: "PATCH",
+    body: JSON.stringify({ timeBudgetMinutes }),
+  })
 export const fetchTaskWorkspace = (id: string) =>
   request<TaskWorkspace>(`/api/tasks/${encodeURIComponent(id)}/workspace`)
 export const abandonIssue = (id: string, reason = "") =>
@@ -238,10 +256,10 @@ export const sendChat = (id: string, message: string, executionId?: string) =>
     method: "POST",
     body: JSON.stringify({ message, executionId }),
   })
-export const resolveApproval = (id: string, approved: boolean) =>
+export const resolveApproval = (id: string, approved: boolean, reviewContent = "") =>
   request<Approval>(`/api/approvals/${encodeURIComponent(id)}`, {
     method: "POST",
-    body: JSON.stringify({ approved }),
+    body: JSON.stringify({ approved, reviewContent }),
   })
 export const stopExecution = (id: string) =>
   request<void>(`/api/executions/${encodeURIComponent(id)}/stop`, {
@@ -284,6 +302,10 @@ export const deleteAgent = (id: string) =>
   request<void>(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" })
 export const fetchAgentTemplates = () =>
   request<AgentTemplate[]>("/api/agent-templates")
+export const fetchDepartments = () => request<Department[]>("/api/departments")
+export const createDepartment = (input: Omit<Department,"id"|"createdAt"|"updatedAt">) => request<Department>("/api/departments", { method:"POST", body:JSON.stringify(input) })
+export const updateDepartment = (id:string,input: Omit<Department,"id"|"createdAt"|"updatedAt">) => request<Department>(`/api/departments/${encodeURIComponent(id)}`, { method:"PUT", body:JSON.stringify(input) })
+export const deleteDepartment = (id:string) => request<void>(`/api/departments/${encodeURIComponent(id)}`, { method:"DELETE" })
 export const createAgentTemplate = (input: SaveAgentTemplateInput) =>
   request<AgentTemplate>("/api/agent-templates", {
     method: "POST",

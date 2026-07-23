@@ -1,12 +1,16 @@
 package control
 
 import (
+	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -32,6 +36,18 @@ type Store struct {
 	updatedAt        time.Time
 	subscribers      map[chan StateView]struct{}
 	broadcastPending bool
+}
+
+func withSQLiteRetry(operation func() error) error {
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		err = operation()
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "database is locked") {
+			return err
+		}
+		time.Sleep(time.Duration(100*(1<<attempt)) * time.Millisecond)
+	}
+	return err
 }
 
 type configRecord struct {
@@ -67,7 +83,7 @@ func migrateTasks(db *gorm.DB) error {
 			if now.IsZero() {
 				now = time.Now()
 			}
-			task := Task{ID: nextID("task"), ProjectID: root.ProjectID, Title: root.Title, Description: root.Description, Objective: root.Objective, Priority: root.Priority, WorkMode: root.WorkMode, AssigneeAgentID: root.AssigneeAgentID, Workspace: root.Workspace, ContainerProfileID: root.ContainerProfileID, Context: root.Context, Constraints: root.Constraints, CreatedAt: now, UpdatedAt: root.UpdatedAt}
+			task := Task{ID: nextID("task"), ProjectID: root.ProjectID, Title: root.Title, Description: root.Description, Objective: root.Objective, Priority: root.Priority, WorkMode: root.WorkMode, AssigneeAgentID: root.AssigneeAgentID, Workspace: root.Workspace, ContainerProfileID: root.ContainerProfileID, ContainerID: root.ContainerID, Context: root.Context, Constraints: root.Constraints, CreatedAt: now, UpdatedAt: root.UpdatedAt}
 			if err := tx.Create(&task).Error; err != nil {
 				return err
 			}
@@ -95,9 +111,19 @@ func NewStore(dataDir string) (*Store, error) {
 	}
 	dbLog := logger.New(log.New(os.Stderr, "", log.LstdFlags), logger.Config{SlowThreshold: time.Second, LogLevel: logger.Error, IgnoreRecordNotFoundError: true})
 	dbPath := filepath.Join(abs, "aegis.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on"), &gorm.Config{Logger: dbLog})
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_journal_mode=WAL&_busy_timeout=30000&_foreign_keys=on&_synchronous=NORMAL"), &gorm.Config{Logger: dbLog})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	// SQLite permits concurrent readers but only one writer. A single pooled
+	// connection prevents goroutines in this process from competing through
+	// multiple SQLite connections and lets the busy timeout serialize writes.
+	if sqlDB, dbErr := db.DB(); dbErr != nil {
+		return nil, fmt.Errorf("configure sqlite pool: %w", dbErr)
+	} else {
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+		sqlDB.SetConnMaxLifetime(0)
 	}
 	if err := os.Chmod(dbPath, 0o600); err != nil {
 		return nil, fmt.Errorf("secure sqlite database: %w", err)
@@ -107,7 +133,7 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := db.Exec("DROP INDEX IF EXISTS idx_executions_session_id").Error; err != nil {
 		return nil, fmt.Errorf("migrate reusable execution sessions: %w", err)
 	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &AgentTemplate{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &Task{}, &Issue{}, &ConciergeConversation{}, &IssueRelation{}, &IssueAgentSession{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &Finding{}); err != nil {
+	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &AgentTemplate{}, &Department{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{}, &Task{}, &Issue{}, &ConciergeConversation{}, &IssueRelation{}, &IssueAgentSession{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &Finding{}); err != nil {
 		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
 	}
 	if err := db.Model(&IssueComment{}).Where("type = '' OR type IS NULL").Update("type", "normal").Error; err != nil {
@@ -138,6 +164,9 @@ func NewStore(dataDir string) (*Store, error) {
 	}
 	if err := s.loadRegistry(); err != nil {
 		return nil, err
+	}
+	if err := s.seedOrganization(); err != nil {
+		return nil, fmt.Errorf("seed organization: %w", err)
 	}
 	if err := s.seedAgentTemplates(time.Now()); err != nil {
 		return nil, fmt.Errorf("seed Agent templates: %w", err)
@@ -196,6 +225,18 @@ func NewStore(dataDir string) (*Store, error) {
 			}
 		}
 		if err := tx.Model(&IssueValidation{}).Where("status = ?", "running").Updates(map[string]any{"status": "interrupted", "error": "Aegis 服务重启，正在恢复原验收轮次"}).Error; err != nil {
+			return err
+		}
+		// Older versions represented runtime failures as blocked Issues. A failed
+		// execution is terminal, so migrate those records before the scheduler
+		// evaluates dependency edges and waiting parents.
+		failedExecutions := tx.Model(&Execution{}).Select("id").Where("status IN ?", []string{"failed", "disconnected", "stopped"})
+		if err := tx.Model(&Issue{}).
+			Where("status = ? AND current_execution_id IN (?)", "blocked", failedExecutions).
+			Updates(map[string]any{
+				"status": "failed", "execution_phase": "completed", "checkout_execution_id": "",
+				"completed_at": now, "updated_at": now,
+			}).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&Issue{}).Where("status = ? AND execution_phase = ?", "in_progress", "summarizing").Updates(map[string]any{
@@ -490,29 +531,33 @@ func (s *Store) State() StateView { s.mu.RLock(); defer s.mu.RUnlock(); return s
 func (s *Store) stateViewLocked() StateView {
 	var projects []Project
 	var containerProfiles []ContainerProfile
+	var containers []ContainerInstance
 	var tasks []Task
 	var issues []Issue
 	var relations []IssueRelation
 	var executions []Execution
 	var approvals []Approval
+	var departments []Department
 	knowledgeBases, _ := s.listKnowledgeBases()
 	s.db.Order("created_at asc").Find(&projects)
 	s.db.Order("created_at asc").Find(&containerProfiles)
+	s.db.Order("created_at desc").Find(&containers)
 	s.db.Order("updated_at desc").Find(&tasks)
-	for index := range containerProfiles {
-		containerProfiles[index] = containerRuntimeState(containerProfiles[index])
+	for index := range containers {
+		containers[index] = containerRuntimeState(containers[index])
 	}
 	s.db.Where("hidden = ?", false).Order("updated_at desc").Find(&issues)
 	s.db.Order("created_at asc").Find(&relations)
 	s.db.Where("issue_id IN (?)", s.db.Model(&Issue{}).Select("id").Where("hidden = ?", false)).Order("started_at desc").Limit(300).Find(&executions)
 	s.db.Order("created_at desc").Limit(200).Find(&approvals)
+	s.db.Order("name asc").Find(&departments)
 	for index := range issues {
 		issues[index] = compactIssueForState(issues[index])
 	}
 	for index := range executions {
 		executions[index] = compactExecution(executions[index])
 	}
-	return StateView{Configured: s.config.Configured, Config: configView(s.config), Runtime: s.runtime, Projects: projects, ContainerProfiles: containerProfiles, Tasks: tasks, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
+	return StateView{Configured: s.config.Configured, Config: configView(s.config), Runtime: s.runtime, Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), Departments: departments, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
 }
 func (s *Store) Subscribe() (<-chan StateView, func()) {
 	ch := make(chan StateView, 4)
@@ -584,18 +629,21 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		if input.ContainerProfileID == "" {
 			input.ContainerProfileID = parent.ContainerProfileID
 		}
+		if input.ContainerID == "" {
+			input.ContainerID = parent.ContainerID
+		}
 	}
-	var selectedContainerProfile *ContainerProfile
 	if input.ContainerProfileID != "" {
 		var profile ContainerProfile
-		if err := s.db.First(&profile, "id = ? AND enabled = ?", input.ContainerProfileID, true).Error; err != nil {
+		if err := s.db.First(&profile, "id = ?", input.ContainerProfileID).Error; err != nil || (!profile.Enabled && input.ContainerID == "") {
 			return Issue{}, errors.New("容器执行环境不存在或已停用")
 		}
-		profile = containerRuntimeState(profile)
-		if profile.RuntimeStatus != "running" {
-			return Issue{}, errors.New("只能选择已启动的容器")
+		if input.ContainerID != "" {
+			var container ContainerInstance
+			if err := s.db.First(&container, "id = ? AND container_profile_id = ?", input.ContainerID, input.ContainerProfileID).Error; err != nil {
+				return Issue{}, errors.New("任务绑定的容器不存在或与环境配置不匹配")
+			}
 		}
-		selectedContainerProfile = &profile
 	}
 	var project Project
 	if input.ProjectID != "" {
@@ -606,11 +654,21 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, err
 	}
 	workspace := strings.TrimSpace(input.Workspace)
-	if workspace == "" {
-		workspace = project.Workspace
-	}
-	if workspace == "" {
-		workspace = s.config.Workspace
+	if input.ParentID != "" {
+		var parent Issue
+		if err := s.db.First(&parent, "id = ?", input.ParentID).Error; err != nil {
+			return Issue{}, errors.New("parent issue not found")
+		}
+		workspace = parent.Workspace
+	} else if workspace == "" {
+		base := project.Workspace
+		if base == "" {
+			base = s.config.Workspace
+		}
+		workspace = filepath.Join(base, ".aegis", "workspaces", nextID("workspace"))
+		if err := os.MkdirAll(workspace, 0o700); err != nil {
+			return Issue{}, err
+		}
 	}
 	info, err := os.Stat(workspace)
 	if err != nil || !info.IsDir() {
@@ -619,9 +677,6 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	workspace, err = filepath.Abs(workspace)
 	if input.TimeBudgetMinutes != nil && *input.TimeBudgetMinutes <= 0 {
 		return Issue{}, errors.New("任务时间预算必须大于 0 分钟，或留空使用全局配置")
-	}
-	if selectedContainerProfile != nil && (selectedContainerProfile.HostWorkspace == "" || filepath.Clean(workspace) != filepath.Clean(selectedContainerProfile.HostWorkspace)) {
-		return Issue{}, errors.New("任务工作目录必须与容器绑定的宿主机工作目录一致")
 	}
 	if err != nil {
 		return Issue{}, err
@@ -645,7 +700,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -658,6 +713,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			issue.RequestDepth = parent.RequestDepth + 1
 			issue.ValidationMode, issue.MaxValidationAttempts = normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
 			issue.ValidationDisabled = parent.ValidationDisabled || strings.TrimSpace(parent.Objective) == ""
+			issue.HumanValidationFallback = parent.HumanValidationFallback
 		}
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
@@ -690,7 +746,7 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 		return Task{}, Issue{}, errors.New("任务定义不能包含父 Issue")
 	}
 	now := time.Now()
-	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, Context: strings.TrimSpace(input.Context), Constraints: strings.TrimSpace(input.Constraints), TimeBudgetMinutes: input.TimeBudgetMinutes, CreatedAt: now, UpdatedAt: now}
+	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Context: strings.TrimSpace(input.Context), Constraints: strings.TrimSpace(input.Constraints), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedAt: now, UpdatedAt: now}
 	if err := s.db.Create(&task).Error; err != nil {
 		return Task{}, Issue{}, err
 	}
@@ -703,8 +759,9 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	// Persist normalized/defaulted values from the actual run.
 	task.ProjectID, task.Title, task.Description, task.Objective = issue.ProjectID, issue.Title, issue.Description, issue.Objective
 	task.Priority, task.WorkMode, task.AssigneeAgentID = issue.Priority, issue.WorkMode, issue.AssigneeAgentID
-	task.Workspace, task.ContainerProfileID, task.Context, task.Constraints = issue.Workspace, issue.ContainerProfileID, issue.Context, issue.Constraints
+	task.Workspace, task.ContainerProfileID, task.ContainerID, task.Context, task.Constraints = issue.Workspace, issue.ContainerProfileID, issue.ContainerID, issue.Context, issue.Constraints
 	task.TimeBudgetMinutes = issue.TimeBudgetMinutes
+	task.HumanValidationFallback = issue.HumanValidationFallback
 	if err = s.db.Save(&task).Error; err != nil {
 		return Task{}, Issue{}, err
 	}
@@ -720,6 +777,30 @@ func (s *Store) GetTask(id string) (Task, error) {
 	return task, nil
 }
 
+func (s *Store) UpdateTaskBudget(id string, minutes *int) (Task, Issue, error) {
+	if minutes == nil || *minutes <= 0 {
+		return Task{}, Issue{}, errors.New("任务时间预算必须大于 0 分钟")
+	}
+	var task Task
+	if err := s.db.First(&task, "id = ?", id).Error; err != nil {
+		return Task{}, Issue{}, errors.New("task not found")
+	}
+	var issue Issue
+	if err := s.db.Where("task_source_id = ? AND parent_id = ''", id).Order("created_at desc").First(&issue).Error; err != nil {
+		return Task{}, Issue{}, errors.New("根 Issue 不存在")
+	}
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&task).Updates(map[string]any{"time_budget_minutes": *minutes, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"time_budget_minutes": *minutes, "updated_at": time.Now()}).Error
+	}); err != nil {
+		return Task{}, Issue{}, err
+	}
+	updated, err := s.GetTask(id)
+	return updated, issue, err
+}
+
 func (s *Store) GetIssue(id string) (Issue, error) {
 	var issue Issue
 	err := s.db.First(&issue, "id = ?", id).Error
@@ -731,12 +812,30 @@ func (s *Store) GetIssue(id string) (Issue, error) {
 
 func (s *Store) TaskWorkspace(id string) (TaskWorkspace, error) {
 	workspace := ""
+	containerID := ""
+	containerProfileID := ""
 	if task, err := s.GetTask(id); err == nil {
 		workspace = task.Workspace
+		containerID = task.ContainerID
+		containerProfileID = task.ContainerProfileID
 	} else if issue, issueErr := s.GetIssue(id); issueErr == nil && issue.ParentID == "" {
 		workspace = issue.Workspace
+		containerID = issue.ContainerID
+		containerProfileID = issue.ContainerProfileID
 	} else {
 		return TaskWorkspace{}, errors.New("task not found")
+	}
+	if containerID != "" {
+		container, err := s.GetContainer(containerID)
+		if err != nil {
+			return TaskWorkspace{}, err
+		}
+		return containerTaskWorkspace(container)
+	}
+	if containerProfileID != "" {
+		if profile, err := s.GetContainerProfile(containerProfileID); err == nil {
+			return TaskWorkspace{Root: profile.WorkspacePath, Entries: []WorkspaceEntry{}}, nil
+		}
 	}
 	root, err := filepath.Abs(workspace)
 	if err != nil {
@@ -769,6 +868,53 @@ func (s *Store) TaskWorkspace(id string) (TaskWorkspace, error) {
 	})
 	if err != nil {
 		return TaskWorkspace{}, err
+	}
+	slices.SortFunc(result.Entries, func(a, b WorkspaceEntry) int { return strings.Compare(a.Path, b.Path) })
+	return result, nil
+}
+
+func containerTaskWorkspace(container ContainerInstance) (TaskWorkspace, error) {
+	result := TaskWorkspace{Root: container.WorkspacePath, Entries: []WorkspaceEntry{}}
+	if container.RuntimeStatus == "missing" || container.RuntimeStatus == "unavailable" {
+		return result, nil
+	}
+	cmd := exec.Command("docker", "cp", container.Name+":"+container.WorkspacePath+"/.", "-")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return TaskWorkspace{}, err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err = cmd.Start(); err != nil {
+		return TaskWorkspace{}, err
+	}
+	reader := tar.NewReader(stdout)
+	for len(result.Entries) < 5000 {
+		header, nextErr := reader.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			_ = cmd.Wait()
+			return TaskWorkspace{}, fmt.Errorf("读取容器工作区失败: %w", nextErr)
+		}
+		name := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(header.Name)), "./")
+		if name == "" || name == "." || name == ".." || strings.HasPrefix(name, "../") || filepath.IsAbs(name) {
+			continue
+		}
+		kind := "file"
+		switch header.Typeflag {
+		case tar.TypeDir:
+			kind = "directory"
+		case tar.TypeSymlink, tar.TypeLink:
+			kind = "symlink"
+		}
+		result.Entries = append(result.Entries, WorkspaceEntry{
+			Path: name, Kind: kind, Size: header.Size, ModifiedAt: header.ModTime,
+		})
+	}
+	if err = cmd.Wait(); err != nil {
+		return TaskWorkspace{}, fmt.Errorf("读取容器工作区失败: %s", strings.TrimSpace(stderr.String()))
 	}
 	slices.SortFunc(result.Entries, func(a, b WorkspaceEntry) int { return strings.Compare(a.Path, b.Path) })
 	return result, nil
@@ -868,6 +1014,15 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if input.Objective != nil {
 		updates["objective"] = strings.TrimSpace(*input.Objective)
 	}
+	if input.TimeBudgetMinutes != nil {
+		if *input.TimeBudgetMinutes <= 0 {
+			return Issue{}, errors.New("任务时间预算必须大于 0 分钟")
+		}
+		if issue.ParentID != "" {
+			return Issue{}, errors.New("只有根 Issue 可以调整任务时间预算")
+		}
+		updates["time_budget_minutes"] = *input.TimeBudgetMinutes
+	}
 	if input.Priority != nil {
 		if !slices.Contains([]string{"critical", "high", "medium", "low"}, *input.Priority) {
 			return Issue{}, errors.New("invalid priority")
@@ -905,7 +1060,7 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		}
 		updates["status"] = *input.Status
 		now := time.Now()
-		if *input.Status == "done" {
+		if *input.Status == "done" || *input.Status == "failed" {
 			updates["completed_at"] = &now
 			updates["checkout_execution_id"] = ""
 			updates["execution_phase"] = "completed"
@@ -935,7 +1090,13 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 }
 
 func validIssueStatus(v string) bool {
-	return slices.Contains([]string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"}, v)
+	return slices.Contains([]string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "failed", "cancelled"}, v)
+}
+
+var terminalIssueStatuses = []string{"done", "failed", "cancelled"}
+
+func issueStatusTerminal(status string) bool {
+	return slices.Contains(terminalIssueStatuses, status)
 }
 
 var validFindingCategories = []string{"recon", "headers", "tls", "cors", "cookie", "subdomain", "vuln"}
@@ -947,7 +1108,7 @@ func validFindingSeverity(v string) bool { return slices.Contains(validFindingSe
 func validFindingStatus(v string) bool   { return slices.Contains(validFindingStatuses, v) }
 func (s *Store) unresolvedBlockers(issueID string) (int64, error) {
 	var count int64
-	err := s.db.Table("issue_relations r").Joins("join issues i on i.id = r.issue_id").Where("r.related_issue_id = ? AND r.type = ? AND i.status NOT IN ?", issueID, "blocks", []string{"done", "cancelled"}).Count(&count).Error
+	err := s.db.Table("issue_relations r").Joins("join issues i on i.id = r.issue_id").Where("r.related_issue_id = ? AND r.type = ? AND i.status NOT IN ?", issueID, "blocks", terminalIssueStatuses).Count(&count).Error
 	return count, err
 }
 
@@ -1231,7 +1392,8 @@ func (s *Store) createExecutionRecord(issue Issue, agent AgentDefinition, kind, 
 	containerImage := ""
 	if issue.ContainerProfileID != "" {
 		var profile ContainerProfile
-		if err := s.db.First(&profile, "id = ? AND enabled = ?", issue.ContainerProfileID, true).Error; err != nil {
+		query := s.db.First(&profile, "id = ?", issue.ContainerProfileID)
+		if query.Error != nil || (!profile.Enabled && issue.ContainerID == "") {
 			return Execution{}, errors.New("容器执行环境不存在或已停用")
 		}
 		runtimeType = "container"
@@ -1241,7 +1403,7 @@ func (s *Store) createExecutionRecord(issue Issue, agent AgentDefinition, kind, 
 	if err != nil {
 		return Execution{}, err
 	}
-	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agent.ID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: binding.SessionID, IssueAgentSessionID: binding.ID, RuntimeType: runtimeType, ContainerProfileID: issue.ContainerProfileID, ContainerImage: containerImage, SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
+	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agent.ID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: binding.SessionID, IssueAgentSessionID: binding.ID, RuntimeType: runtimeType, RuntimeID: issue.ContainerID, ContainerProfileID: issue.ContainerProfileID, ContainerImage: containerImage, SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
 	err = s.db.Create(&e).Error
 	return e, err
 }

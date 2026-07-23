@@ -1,5 +1,5 @@
 import {
-  Bot,
+  Building2,
   Boxes,
   CheckSquare2,
   CircleGauge,
@@ -61,7 +61,7 @@ const navigation = [
     label: "Agent 系统",
     items: [
       { to: "/talent-library", label: "人才库", icon: Users },
-      { to: "/agents", label: "员工管理", icon: Bot },
+      { to: "/departments", label: "组织架构", icon: Building2 },
       { to: "/skills", label: "Skills", icon: Wrench },
       { to: "/knowledge-bases", label: "知识库", icon: LibraryBig },
     ],

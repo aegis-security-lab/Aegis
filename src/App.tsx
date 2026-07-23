@@ -14,6 +14,7 @@ import { useAppState } from "@/lib/state"
 const AgentsPage = React.lazy(() =>
   import("@/pages/agents").then((module) => ({ default: module.AgentsPage }))
 )
+const DepartmentsPage = React.lazy(() => import("@/pages/departments").then((module) => ({ default: module.DepartmentsPage })))
 const TalentLibraryPage = React.lazy(() =>
   import("@/pages/talent-library").then((module) => ({
     default: module.TalentLibraryPage,
@@ -155,6 +156,7 @@ export function App() {
           <Route path="issues" element={<IssuesPage />} />
           <Route path="issues/:issueId" element={<IssueDetailPage />} />
           <Route path="agents" element={<AgentsPage />} />
+          <Route path="departments" element={<DepartmentsPage />} />
           <Route path="talent-library" element={<TalentLibraryPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="knowledge-bases" element={<KnowledgeBasesPage />} />

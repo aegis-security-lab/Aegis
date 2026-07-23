@@ -2,6 +2,7 @@ package control
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -36,6 +37,52 @@ func TestIssueCompletionGuardContinuesSameSessionForUnfinishedChildren(t *testin
 	}
 	if !strings.Contains(input.String(), "\"type\":\"prompt\"") {
 		t.Fatalf("guard prompt was not sent to the same Pi session: %s", input.String())
+	}
+}
+
+func TestFailedChildIsTerminalForCompletionAndDependencies(t *testing.T) {
+	store := configuredStore(t)
+	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	failedChild, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Failed prerequisite", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	dependent, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Dependent work", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	now := time.Now()
+	if err := store.db.Create(&IssueRelation{ID: nextID("relation"), IssueID: failedChild.ID, RelatedIssueID: dependent.ID, Type: "blocks", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Model(&Issue{}).Where("id = ?", failedChild.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "completed_at": now, "error": "execution failed"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	blockers, err := store.unresolvedBlockers(dependent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockers != 0 {
+		t.Fatalf("failed prerequisite still blocks dependent Issue: %d", blockers)
+	}
+	execution, _ := store.createExecution(parent, "backend-engineer", "continuation")
+	parent, _ = store.CheckoutIssue(parent.ID, CheckoutIssueInput{AgentID: "backend-engineer", ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"}})
+	if err = store.db.Model(&Issue{}).Where("id = ?", dependent.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed", "completed_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	if manager.continueForUnfinishedChildren(parent, &PiSession{executionID: execution.ID, issueID: parent.ID}) {
+		t.Fatal("failed child was treated as unfinished by the parent completion guard")
+	}
+}
+
+func TestExecutionFailureMarksIssueTerminal(t *testing.T) {
+	store := configuredStore(t)
+	issue, _ := store.CreateIssue(CreateIssueInput{Title: "Fail once", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	execution, _ := store.createExecution(issue, "backend-engineer", "work")
+	issue, _ = store.CheckoutIssue(issue.ID, CheckoutIssueInput{AgentID: "backend-engineer", ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"}})
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.failExecution(issue, execution, errors.New("runtime failed"))
+	failed, err := store.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != "failed" || failed.ExecutionPhase != "completed" || failed.CompletedAt == nil || failed.CheckoutExecutionID != "" {
+		t.Fatalf("execution failure did not terminate Issue: %+v", failed)
 	}
 }
 

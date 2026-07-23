@@ -1,93 +1,223 @@
 package control
 
 import (
+	"archive/tar"
+	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestDockerPiCommandBuildsIsolatedRuntime(t *testing.T) {
-	dataDir := t.TempDir()
-	profile := ContainerProfile{
-		Image: "example/pi:latest", NodePath: "node", PiPath: "/opt/pi/cli.js",
-		WorkspacePath: "/workspace", NetworkMode: "bridge", MemoryMB: 1024, CPUs: 1.5,
+func installFakeDocker(t *testing.T) (string, string) {
+	t.Helper()
+	fakeBin := t.TempDir()
+	dockerPath := filepath.Join(fakeBin, "docker")
+	logPath := filepath.Join(t.TempDir(), "docker.log")
+	statePath := filepath.Join(t.TempDir(), "state")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "$1" in
+  inspect)
+    if [ -f "$FAKE_DOCKER_STATE" ]; then cat "$FAKE_DOCKER_STATE"; else printf 'no such container\n' >&2; exit 1; fi
+    ;;
+  version)
+    printf '25.0.0\n'
+    ;;
+  run|start)
+    printf 'running\n' > "$FAKE_DOCKER_STATE"
+    printf 'fake-container-id\n'
+    ;;
+  stop)
+    printf 'exited\n' > "$FAKE_DOCKER_STATE"
+    ;;
+  rm)
+    command rm -f "$FAKE_DOCKER_STATE"
+    ;;
+  volume)
+    ;;
+  cp)
+    if [ -n "$FAKE_DOCKER_TAR" ]; then command cat "$FAKE_DOCKER_TAR"; fi
+    ;;
+esac
+`
+	if err := os.WriteFile(dockerPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	command, args := dockerPiCommand(profile, "aegis-execution-1", "/host/project", dataDir, "/host/guard.ts", Config{Provider: "openai"}, []string{"--mode", "rpc"}, []string{
-		"PATH=/host/bin", "HOME=/secret/home", "OPENAI_API_KEY=test-key",
-		"AEGIS_CONTROL_URL=http://127.0.0.1:8080", "AEGIS_WORKSPACE=/workspace",
-	}, "http://127.0.0.1:8080")
-	if command != "docker" {
-		t.Fatalf("command = %q", command)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_DOCKER_LOG", logPath)
+	t.Setenv("FAKE_DOCKER_STATE", statePath)
+	return logPath, statePath
+}
+
+func TestContainerWorkspaceIsListedDirectlyFromDockerArchive(t *testing.T) {
+	_, statePath := installFakeDocker(t)
+	if err := os.WriteFile(statePath, []byte("exited\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	joined := strings.Join(args, "\n")
-	for _, expected := range []string{
-		"aegis-execution-1", "/host/project:/workspace",
-		filepath.Join(dataDir, "sessions") + ":/aegis/sessions",
-		"AEGIS_CONTROL_URL=http://host.docker.internal:8080",
-		"OPENAI_API_KEY=test-key", "example/pi:latest", "/opt/pi/cli.js",
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	now := time.Now().Truncate(time.Second)
+	for _, header := range []*tar.Header{
+		{Name: "./nested/", Typeflag: tar.TypeDir, Mode: 0o700, ModTime: now},
+		{Name: "./nested/report.txt", Typeflag: tar.TypeReg, Mode: 0o600, Size: 6, ModTime: now},
 	} {
-		if !strings.Contains(joined, expected) {
-			t.Errorf("docker arguments do not contain %q", expected)
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Typeflag == tar.TypeReg {
+			if _, err := writer.Write([]byte("report")); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
-	for _, forbidden := range []string{"PATH=/host/bin", "HOME=/secret/home"} {
-		if strings.Contains(joined, forbidden) {
-			t.Errorf("host environment leaked into container: %q", forbidden)
-		}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
 	}
-	if !slices.Contains(args, "--rm") {
-		t.Error("container must be ephemeral")
+	archivePath := filepath.Join(t.TempDir(), "workspace.tar")
+	if err := os.WriteFile(archivePath, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_DOCKER_TAR", archivePath)
+	workspace, err := containerTaskWorkspace(ContainerInstance{
+		Name: "aegis-task-workspace", WorkspacePath: "/workspace", RuntimeStatus: "exited",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.Root != "/workspace" || len(workspace.Entries) != 2 {
+		t.Fatalf("unexpected container workspace: %+v", workspace)
+	}
+	if workspace.Entries[0].Path != "nested" || workspace.Entries[0].Kind != "directory" || workspace.Entries[1].Path != "nested/report.txt" || workspace.Entries[1].Size != 6 {
+		t.Fatalf("unexpected container workspace entries: %+v", workspace.Entries)
 	}
 }
 
-func TestContainerHostURLOnlyRewritesLoopbackHost(t *testing.T) {
-	if got := containerHostURL("http://localhost:3000/api"); got != "http://host.docker.internal:3000/api" {
-		t.Fatalf("localhost rewrite = %q", got)
-	}
-	if got := containerHostURL("https://api.example.test/v1"); got != "https://api.example.test/v1" {
-		t.Fatalf("external URL changed = %q", got)
-	}
-}
-
-func TestDeleteContainerProfileRequiresConfirmationAndCascadesIssueData(t *testing.T) {
+func TestSavingContainerProfileOnlyPersistsConfiguration(t *testing.T) {
+	logPath, _ := installFakeDocker(t)
 	store := configuredStore(t)
 	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{
-		Name: "isolated worker", HostWorkspace: t.TempDir(), WorkspacePath: "/workspace",
+		Name: "on-demand worker", WorkspacePath: "/workspace",
 		NetworkMode: "bridge", MemoryMB: 1024, CPUs: 1, Enabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if profile.ID == "" || len(store.Containers()) != 0 {
+		t.Fatalf("saving a profile unexpectedly created a container: profile=%+v containers=%+v", profile, store.Containers())
+	}
+	if data, readErr := os.ReadFile(logPath); readErr == nil && strings.TrimSpace(string(data)) != "" {
+		t.Fatalf("saving a profile called Docker:\n%s", data)
+	}
+}
+
+func TestTaskExecutionCreatesAndBindsPersistentContainer(t *testing.T) {
+	logPath, _ := installFakeDocker(t)
+	store := configuredStore(t)
+	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{
+		Name: "persistent worker", WorkspacePath: "/workspace",
+		NetworkMode: "bridge", MemoryMB: 1024, CPUs: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, issue, err := store.CreateTask(CreateIssueInput{
+		Title: "run in an on-demand container", Objective: "the task is queued",
+		Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Workspace: t.TempDir(), ContainerProfileID: profile.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ContainerID != "" || issue.ContainerID != "" {
+		t.Fatalf("container was created before execution: task=%+v issue=%+v", task, issue)
+	}
+	container, err := store.ensureTaskContainer(issue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if container.RuntimeStatus != "running" || container.TaskID != task.ID || container.ContainerProfileID != profile.ID {
+		t.Fatalf("unexpected task container: %+v", container)
+	}
+	task, err = store.GetTask(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err = store.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ContainerID != container.ID || issue.ContainerID != container.ID {
+		t.Fatalf("container binding was not persisted: task=%q issue=%q container=%q", task.ContainerID, issue.ContainerID, container.ID)
+	}
 	now := time.Now()
-	task := Task{
-		ID: nextID("task"), Title: "container task", Objective: "verify cascade", Priority: "medium",
-		WorkMode: "autonomous", ContainerProfileID: profile.ID, CreatedAt: now, UpdatedAt: now,
-	}
-	root := Issue{
-		ID: nextID("issue"), Number: now.UnixNano(), Identifier: "TEST-DELETE-ROOT", TaskSourceID: task.ID,
-		Title: task.Title, Objective: task.Objective, Status: "in_progress", ExecutionPhase: "active",
-		Priority: task.Priority, WorkMode: task.WorkMode, ContainerProfileID: profile.ID, CreatedAt: now, UpdatedAt: now,
-	}
 	child := Issue{
-		ID: nextID("issue"), Number: now.UnixNano() + 1, Identifier: "TEST-DELETE-CHILD", ParentID: root.ID,
-		Title: "child", Objective: "child work", Status: "in_progress", ExecutionPhase: "active",
-		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID, CreatedAt: now, UpdatedAt: now,
-	}
-	if err = store.db.Create(&task).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Create(&root).Error; err != nil {
-		t.Fatal(err)
+		ID: nextID("issue"), Number: now.UnixNano(), Identifier: "TEST-CONTAINER-CHILD", ParentID: issue.ID,
+		Title: "child container work", Objective: "reuse the task container", Status: "todo", ExecutionPhase: "active",
+		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID, ContainerID: container.ID,
+		CreatedAt: now, UpdatedAt: now,
 	}
 	if err = store.db.Create(&child).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Descendants belong to the deleted tree even if a future edit gives them a
-	// different runtime reference.
-	if err = store.db.Model(&Issue{}).Where("id = ?", child.ID).Update("container_profile_id", "").Error; err != nil {
+	childContainer, err := store.ensureTaskContainer(child)
+	if err != nil {
+		t.Fatalf("child Issue could not resolve its root task container: %v", err)
+	}
+	if childContainer.ID != container.ID || childContainer.TaskID != task.ID {
+		t.Fatalf("child Issue resolved a different task container: %+v", childContainer)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedVolume := taskContainerVolumeName(container.ID) + ":/workspace"
+	if !strings.Contains(string(logData), "--volume "+expectedVolume) {
+		t.Fatalf("docker run does not use task volume %q:\n%s", expectedVolume, logData)
+	}
+	if strings.Contains(string(logData), task.Workspace+":/workspace") {
+		t.Fatalf("task host workspace was mounted into the container:\n%s", logData)
+	}
+	stopped, err := store.StopContainer(container.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.RuntimeStatus != "exited" {
+		t.Fatalf("runtime status after stop = %q", stopped.RuntimeStatus)
+	}
+}
+
+func TestDeleteContainerRequiresConfirmationAndCascadesTaskData(t *testing.T) {
+	logPath, _ := installFakeDocker(t)
+	store := configuredStore(t)
+	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{
+		Name: "isolated worker", WorkspacePath: "/workspace",
+		NetworkMode: "bridge", MemoryMB: 1024, CPUs: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, root, err := store.CreateTask(CreateIssueInput{
+		Title: "container task", Objective: "verify cascade", Priority: "medium",
+		WorkMode: "autonomous", Workspace: t.TempDir(), ContainerProfileID: profile.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	container, err := store.ensureTaskContainer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	child := Issue{
+		ID: nextID("issue"), Number: now.UnixNano(), Identifier: "TEST-DELETE-CHILD", ParentID: root.ID,
+		Title: "child", Objective: "child work", Status: "in_progress", ExecutionPhase: "active",
+		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID, ContainerID: container.ID,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err = store.db.Create(&child).Error; err != nil {
 		t.Fatal(err)
 	}
 	execution := Execution{
@@ -104,18 +234,21 @@ func TestDeleteContainerProfileRequiresConfirmationAndCascadesIssueData(t *testi
 		t.Fatal(err)
 	}
 
-	impact, err := store.ContainerProfileDeleteImpact(profile.ID)
+	impact, err := store.ContainerDeleteImpact(container.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if impact.IssueCount != 2 || impact.TaskCount != 1 || impact.ExecutionCount != 1 || impact.ActiveExecutionCount != 1 {
+	if impact.TaskID != task.ID || impact.IssueCount != 2 || impact.ExecutionCount != 1 || impact.ActiveExecutionCount != 1 {
 		t.Fatalf("unexpected delete impact: %+v", impact)
 	}
-	if _, err = store.DeleteContainerProfile(profile.ID, false); !errors.Is(err, ErrContainerProfileReferenced) {
+	if _, err = store.DeleteContainer(container.ID, false); !errors.Is(err, ErrContainerProfileReferenced) {
 		t.Fatalf("delete without confirmation error = %v", err)
 	}
+	if _, err = store.DeleteContainerProfile(profile.ID, true); !errors.Is(err, ErrContainerProfileReferenced) {
+		t.Fatalf("profile deletion should be blocked while a container exists: %v", err)
+	}
 
-	result, err := store.DeleteContainerProfile(profile.ID, true)
+	result, err := store.DeleteContainer(container.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,14 +256,14 @@ func TestDeleteContainerProfileRequiresConfirmationAndCascadesIssueData(t *testi
 		t.Fatalf("unexpected delete result: %+v", result)
 	}
 	for name, model := range map[string]any{
-		"profile": &ContainerProfile{}, "task": &Task{}, "issue": &Issue{},
+		"container": &ContainerInstance{}, "task": &Task{}, "issue": &Issue{},
 		"execution": &Execution{}, "event": &ExecutionEvent{}, "comment": &IssueComment{},
 	} {
 		var count int64
 		query := store.db.Model(model)
 		switch name {
-		case "profile":
-			query = query.Where("id = ?", profile.ID)
+		case "container":
+			query = query.Where("id = ?", container.ID)
 		case "task":
 			query = query.Where("id = ?", task.ID)
 		case "issue":
@@ -145,5 +278,15 @@ func TestDeleteContainerProfileRequiresConfirmationAndCascadesIssueData(t *testi
 		if err = query.Count(&count).Error; err != nil || count != 0 {
 			t.Fatalf("%s remains after cascade: count=%d err=%v", name, count, err)
 		}
+	}
+	if _, err = store.GetContainerProfile(profile.ID); err != nil {
+		t.Fatalf("deleting a task container also deleted its environment profile: %v", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), "volume rm -f "+taskContainerVolumeName(container.ID)) {
+		t.Fatalf("container volume was not deleted:\n%s", logData)
 	}
 }

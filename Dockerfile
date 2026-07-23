@@ -10,6 +10,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
+		make \
+		pkg-config \
+		libsqlite3-dev \
         ca-certificates \
         chromium \
         curl \
@@ -18,6 +21,13 @@ RUN apt-get update \
         git \
         golang-go \
         jq \
+		sqlite3 \
+		tree \
+		rsync \
+		file \
+		less \
+		shellcheck \
+		httpie \
         netcat-openbsd \
         nmap \
         nodejs \
@@ -29,12 +39,16 @@ RUN apt-get update \
         python3-venv \
         ripgrep \
         unzip \
+		zip \
+		tar \
         whois \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && ln -sf /usr/bin/pip3 /usr/local/bin/pip \
     && npm install --global \
         "@earendil-works/pi-coding-agent@${PI_VERSION}" \
         "agent-browser@${AGENT_BROWSER_VERSION}" \
+		pnpm \
+		yarn \
     && if [ "$(dpkg --print-architecture)" = "amd64" ]; then agent-browser install; fi \
     && npm cache clean --force \
     && apt-get clean \

@@ -212,7 +212,7 @@ func (m *Manager) RestartTask(id string) (Issue, error) {
 		ProjectID: task.ProjectID, Title: task.Title, Description: task.Description,
 		Objective: task.Objective, Priority: task.Priority, WorkMode: task.WorkMode,
 		AssigneeAgentID: task.AssigneeAgentID, Workspace: task.Workspace, TaskSourceID: task.ID,
-		ContainerProfileID: task.ContainerProfileID, Context: task.Context, Constraints: task.Constraints, TimeBudgetMinutes: task.TimeBudgetMinutes,
+		ContainerProfileID: task.ContainerProfileID, ContainerID: task.ContainerID, Context: task.Context, Constraints: task.Constraints, TimeBudgetMinutes: task.TimeBudgetMinutes, HumanValidationFallback: task.HumanValidationFallback,
 	})
 	if err != nil {
 		return Issue{}, err
@@ -278,21 +278,16 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	if !cfg.Configured {
 		return nil, errors.New("Aegis 尚未配置")
 	}
-	var containerProfile *ContainerProfile
+	var taskContainer *ContainerInstance
 	runtimeWorkspace := issue.Workspace
 	if e.ContainerProfileID != "" {
-		profile, profileErr := m.store.GetContainerProfile(e.ContainerProfileID)
-		if profileErr != nil || !profile.Enabled {
-			return nil, errors.New("容器执行环境不存在或已停用")
+		container, containerErr := m.store.ensureTaskContainer(issue)
+		if containerErr != nil {
+			return nil, fmt.Errorf("准备任务容器失败: %w", containerErr)
 		}
-		if profile.RuntimeStatus != "running" {
-			return nil, errors.New("选择的容器未启动")
-		}
-		if err := ProbeDocker(); err != nil {
-			return nil, err
-		}
-		containerProfile = &profile
-		runtimeWorkspace = profile.WorkspacePath
+		taskContainer = &container
+		runtimeWorkspace = container.WorkspacePath
+		issue, _ = m.store.GetIssue(issue.ID)
 	}
 	knowledgeBases, err := m.store.knowledgeBasesByIDs(agent.KnowledgeBaseIDs)
 	if err != nil {
@@ -308,7 +303,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 		systemPrompt = agentBroadcastSystemPrompt(systemPrompt)
 	}
 	if e.Kind != "concierge" {
-		if containerProfile != nil && issue.Workspace != "" {
+		if taskContainer != nil && issue.Workspace != "" {
 			prompt = strings.ReplaceAll(prompt, issue.Workspace, runtimeWorkspace)
 		}
 		prompt = agentPermissionInitialPrompt(prompt, runtimeWorkspace, agent.Permissions)
@@ -324,7 +319,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	}
 	sessionDir := filepath.Join(m.store.DataDir(), "sessions")
 	guardPath := m.guardPath
-	if containerProfile != nil {
+	if taskContainer != nil {
 		sessionDir = "/aegis/sessions"
 		guardPath = "/aegis/runtime/aegis-guard.ts"
 	}
@@ -335,7 +330,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 		activeTools = append(activeTools, validationAttachmentTools...)
 	} else {
 		for _, p := range m.store.skillPaths(agent.SkillIDs) {
-			if containerProfile != nil {
+			if taskContainer != nil {
 				if relative, relativeErr := filepath.Rel(filepath.Join(m.store.DataDir(), "skills"), p); relativeErr == nil && !strings.HasPrefix(relative, "..") {
 					p = filepath.ToSlash(filepath.Join("/aegis/skills", relative))
 				}
@@ -382,9 +377,9 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	cmd := exec.Command(command, commandArgs...)
 	cmd.Dir = issue.Workspace
 	cmd.Env = runtimeEnvironment
-	if containerProfile != nil {
-		containerName = containerProfile.ContainerName
-		command, commandArgs = dockerPiExecCommand(*containerProfile, args, runtimeEnvironment, cfg, m.controlURL)
+	if taskContainer != nil {
+		containerName = taskContainer.Name
+		command, commandArgs = dockerPiExecCommand(*taskContainer, runtimeWorkspace, args, runtimeEnvironment, cfg, m.controlURL)
 		cmd = exec.Command(command, commandArgs...)
 		cmd.Env = os.Environ()
 	}
@@ -407,6 +402,9 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 		"system_prompt":  systemPrompt,
 		"tools_snapshot": snapshotTools(activeTools),
 	}
+	if taskContainer != nil {
+		executionUpdates["runtime_id"] = taskContainer.ID
+	}
 	// A restarted wakeup session keeps the original prompt snapshot. The wakeup
 	// prompt is persisted as another user message below instead of replacing it.
 	if e.InitialPrompt == "" {
@@ -427,7 +425,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	runtimeDetail := "RPC process PID " + runtimeID
 	if containerName != "" {
 		runtimeID = containerName
-		runtimeDetail = "Docker container " + containerName + " · " + containerProfile.Image
+		runtimeDetail = "Docker container " + containerName + " · " + taskContainer.Image
 	}
 	m.checkpointExecution(e.ID, "Pi Session 正在连接，等待 Agent 开始执行", map[string]any{"status": "starting", "pid": cmd.Process.Pid, "runtime_id": runtimeID})
 	m.store.addEvent(e.ID, issue.ID, "runtime", agent.Name+" 已连接 Pi", runtimeDetail)
@@ -456,29 +454,34 @@ func (m *Manager) closePreviousRuntimeForSession(sessionID, executionID string) 
 	m.mu.RLock()
 	previous := make([]*PiSession, 0, 1)
 	for _, session := range m.sessions {
-		if session.sessionID == sessionID && session.executionID != executionID && !session.closed.Load() {
+		if session.sessionID == sessionID && !session.closed.Load() {
 			previous = append(previous, session)
 		}
 	}
 	m.mu.RUnlock()
 	for _, session := range previous {
 		session.Close()
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for len(previous) > 0 && time.Now().Before(deadline) {
-		remaining := previous[:0]
-		m.mu.RLock()
-		for _, session := range previous {
-			if m.sessions[session.key] == session {
-				remaining = append(remaining, session)
-			}
+		m.mu.Lock()
+		if m.sessions[session.key] == session {
+			delete(m.sessions, session.key)
 		}
-		m.mu.RUnlock()
-		previous = remaining
-		if len(previous) > 0 {
-			time.Sleep(10 * time.Millisecond)
-		}
+		m.mu.Unlock()
 	}
+}
+
+func (m *Manager) closeRuntime(executionID string) {
+	m.mu.RLock()
+	session := m.sessions[executionID]
+	m.mu.RUnlock()
+	if session == nil {
+		return
+	}
+	session.Close()
+	m.mu.Lock()
+	if m.sessions[executionID] == session {
+		delete(m.sessions, executionID)
+	}
+	m.mu.Unlock()
 }
 
 func agentToolDescriptionSystemPrompt(systemPrompt string) string {
@@ -568,18 +571,30 @@ func (s *PiSession) Close() {
 	if s.stdin != nil {
 		_ = s.stdin.Close()
 	}
-	if s.containerName != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pattern := s.sessionID
-		if len(pattern) > 0 {
-			pattern = "[" + pattern[:1] + "]" + pattern[1:]
-			_ = exec.CommandContext(ctx, "docker", "exec", s.containerName, "pkill", "-TERM", "-f", pattern).Run()
-		}
-		cancel()
+	if s.containerName != "" && s.executionID != "" {
+		terminateContainerExecution(s.containerName, s.executionID, "TERM")
+		time.Sleep(100 * time.Millisecond)
+		terminateContainerExecution(s.containerName, s.executionID, "KILL")
 	}
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
+}
+
+const terminateContainerExecutionScript = `target="AEGIS_EXECUTION_ID=$1"
+for environment in /proc/[0-9]*/environ; do
+  [ -r "$environment" ] || continue
+  if tr '\000' '\n' < "$environment" 2>/dev/null | grep -Fqx "$target"; then
+    pid=${environment#/proc/}
+    pid=${pid%/environ}
+    [ "$pid" = "$$" ] || kill -"$2" "$pid" 2>/dev/null || true
+  fi
+done`
+
+func terminateContainerExecution(containerName, executionID, signal string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "docker", "exec", containerName, "sh", "-c", terminateContainerExecutionScript, "aegis-cleanup", executionID, signal).Run()
 }
 func (s *PiSession) readLoop(r io.Reader) {
 	reader := bufio.NewReaderSize(r, 64*1024)
@@ -810,9 +825,13 @@ func (m *Manager) handleApproval(s *PiSession, event map[string]any) {
 	m.checkpointExecution(s.executionID, "等待操作员审批工具调用："+a.Title, map[string]any{"status": "waiting_approval"})
 	m.store.addEvent(s.executionID, s.issueID, "approval", "等待工具审批", a.Title)
 }
-func (m *Manager) ResolveApproval(id string, approved bool) (Approval, error) {
+func (m *Manager) ResolveApproval(id string, approved bool, reviewContents ...string) (Approval, error) {
 	m.scheduleMu.Lock()
 	defer m.scheduleMu.Unlock()
+	reviewContent := ""
+	if len(reviewContents) > 0 {
+		reviewContent = reviewContents[0]
+	}
 	var a Approval
 	if err := m.store.db.First(&a, "id = ? AND status = ?", id, "pending").Error; err != nil {
 		return Approval{}, errors.New("pending approval not found")
@@ -830,6 +849,37 @@ func (m *Manager) ResolveApproval(id string, approved bool) (Approval, error) {
 		a.Status = status
 		a.ResolvedAt = &now
 		m.store.notify()
+		return a, nil
+	}
+	if a.Type == "validation_review" {
+		var issue Issue
+		if err := m.store.db.First(&issue, "id = ?", a.IssueID).Error; err != nil {
+			return Approval{}, err
+		}
+		var validation IssueValidation
+		if err := m.store.db.Where("issue_id = ? AND status IN ?", issue.ID, []string{"failed", "error"}).Order("attempt desc").First(&validation).Error; err != nil {
+			return Approval{}, errors.New("待审阅验收记录不存在")
+		}
+		reviewContent = strings.TrimSpace(reviewContent)
+		if reviewContent == "" {
+			return Approval{}, errors.New("人工审阅内容不能为空")
+		}
+		now := time.Now()
+		status := "rejected"
+		if approved {
+			status = "approved"
+			_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed", "result": validation.CandidateResult, "error": "", "updated_at": now}).Error
+			m.addTypedAgentComment(issue.ID, "operator", "validation_review_passed", "## 人工验收通过\n\n"+reviewContent, validation.ValidationExecutionID, []commentWakeupTarget{})
+		} else {
+			_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "active", "error": reviewContent, "updated_at": now}).Error
+			m.addTypedAgentComment(issue.ID, "operator", "validation_review_rejected", "## 人工验收不通过\n\n"+reviewContent, validation.ValidationExecutionID, []commentWakeupTarget{{AgentID: issue.AssigneeAgentID, Reason: "validation_review"}})
+		}
+		_ = m.store.db.Model(&a).Updates(map[string]any{"status": status, "detail": a.Detail + "\n\n人工审阅：\n" + reviewContent, "resolved_at": now}).Error
+		a.Status, a.ResolvedAt = status, &now
+		m.store.notify()
+		if approved && issue.ParentID != "" {
+			go m.scheduleChildren(issue.ParentID)
+		}
 		return a, nil
 	}
 	s := m.getSession(a.ExecutionID)
@@ -931,7 +981,6 @@ func (m *Manager) handleSettled(s *PiSession) {
 	// the abandonment workflow.
 	if issue.AbandonRequestedAt != nil && issue.ExecutionPhase == "summarizing" {
 		_ = m.store.updateExecution(s.executionID, map[string]any{"status": "completed", "result": result, "current_tool": "", "finished_at": now, "pid": 0})
-		m.collectExecutionAttachments(issue, s.executionID)
 		m.finalizeManualAbandon(issue, s.executionID, s.agentID, result)
 		return
 	}
@@ -951,25 +1000,44 @@ func (m *Manager) handleSettled(s *PiSession) {
 		return
 	}
 	_ = m.store.updateExecution(s.executionID, map[string]any{"status": "completed", "result": result, "current_tool": "", "finished_at": now, "pid": 0})
-	m.collectExecutionAttachments(issue, s.executionID)
 	if s.kind == "wakeup" || s.kind == "heartbeat" {
+		m.closeRuntime(s.executionID)
 		m.completeWakeup(s, result)
 		return
 	}
 	issue, _ = m.store.GetIssue(s.issueID)
 	if issue.ExecutionPhase == "waiting_children" {
+		m.closeRuntime(s.executionID)
 		m.addAgentComment(issue.ID, s.agentID, fallback(result, "已拆分子 Issues，等待调度器完成子树。"), s.executionID)
 		m.store.addEvent(s.executionID, issue.ID, "delegation", "父 Issue 正在等待子树", "当前 Execution 已结束；所有直属子 Issues 完成后将创建 continuation Execution。")
 		m.store.notify()
 		go m.scheduleChildren(issue.ID)
 		return
 	}
+	if !settledFromCommentWakeup && strings.Contains(execution.InitialPrompt, "aegis_submit_final_result") && !execution.FinalResultSubmitted {
+		agent, agentErr := m.store.GetAgent(s.agentID)
+		if agentErr != nil {
+			m.failExecution(issue, execution, agentErr)
+			return
+		}
+		prompt := fmt.Sprintf("本轮执行尚未提交最终结果，因此不能结束任务。请围绕 Issue 目标整理最终交付内容，必要时发布附件，然后必须调用 aegis_submit_final_result 提交正文（可选文件或目录）。不要只回复验收意见。Issue：%s", issue.Title)
+		_ = m.store.updateExecution(s.executionID, map[string]any{"status": "running", "error": "", "current_tool": "", "finished_at": nil, "result": ""})
+		if _, restartErr := m.startSession(issue, execution, agent, prompt); restartErr != nil {
+			m.failExecution(issue, execution, restartErr)
+			return
+		}
+		m.store.addEvent(s.executionID, issue.ID, "delivery", "未提交最终结果，要求 Agent 补交", "只有 aegis_submit_final_result 才能结束 Worker 任务。")
+		m.store.notify()
+		return
+	}
+	result = fallback(execution.FinalResult, result)
 	if settledFromCommentWakeup && issue.Status != "in_progress" {
 		m.addAgentComment(issue.ID, s.agentID, result, s.executionID)
 		m.store.notify()
 		return
 	}
 	if issue.ValidationDisabled || strings.TrimSpace(issue.Objective) == "" {
+		m.closeRuntime(s.executionID)
 		m.addTypedAgentComment(issue.ID, s.agentID, "delivery", result, s.executionID, []commentWakeupTarget{})
 		m.completeIssueWithoutValidation(issue, s.executionID, result, now)
 		return
@@ -981,7 +1049,7 @@ func (m *Manager) handleSettled(s *PiSession) {
 
 func (m *Manager) continueForUnfinishedChildren(issue Issue, session *PiSession) bool {
 	var children []Issue
-	if err := m.store.db.Where("parent_id = ? AND status NOT IN ?", issue.ID, []string{"done", "cancelled"}).Order("number asc").Find(&children).Error; err != nil || len(children) == 0 {
+	if err := m.store.db.Where("parent_id = ? AND status NOT IN ?", issue.ID, terminalIssueStatuses).Order("number asc").Find(&children).Error; err != nil || len(children) == 0 {
 		return false
 	}
 	var summary strings.Builder
@@ -991,7 +1059,7 @@ func (m *Manager) continueForUnfinishedChildren(issue Issue, session *PiSession)
 	prompt := fmt.Sprintf(`You attempted to finish this Issue, but it still has %d non-terminal direct child Issues:
 
 %s
-The parent Issue cannot complete while direct children remain outside done/cancelled. Review their current state with aegis_list_child_issues. Then choose explicitly:
+The parent Issue cannot complete while direct children remain non-terminal. Failed children are terminal and are included as evidence for parent integration; only active, queued, blocked, or review-pending children must be resolved. Review their current state with aegis_list_child_issues. Then choose explicitly:
 1. Call aegis_wait_for_child_issues to release this parent and resume the same session after the relevant children finish; or
 2. If a child is no longer needed, call aegis_cancel_issue with that direct child Issue id, a concrete reason, and an explicit mode. Prefer summarize_then_cancel when its partial work may be useful; use immediate only when no summary is worth preserving.
 
@@ -1044,23 +1112,25 @@ func (m *Manager) beginIssueValidationWithContext(issue Issue, source Execution,
 		Objective: objective, CandidateResult: strings.TrimSpace(candidateResult), Status: "running", CreatedAt: now,
 		ManualOverrideReason: strings.TrimSpace(manualReason),
 	}
-	if err := m.store.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&validation).Error; err != nil {
-			return err
-		}
-		updated := tx.Model(&Issue{}).Where("id = ? AND status = ?", issue.ID, "in_progress").Updates(map[string]any{
-			"execution_phase": "validating", "result": strings.TrimSpace(candidateResult),
-			"checkout_execution_id": "", "current_execution_id": validationExecution.ID,
-			"validation_execution_id": validationExecution.ID,
-			"error":                   "", "updated_at": now,
+	if err := withSQLiteRetry(func() error {
+		return m.store.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&validation).Error; err != nil {
+				return err
+			}
+			updated := tx.Model(&Issue{}).Where("id = ? AND status = ?", issue.ID, "in_progress").Updates(map[string]any{
+				"execution_phase": "validating", "result": strings.TrimSpace(candidateResult),
+				"checkout_execution_id": "", "current_execution_id": validationExecution.ID,
+				"validation_execution_id": validationExecution.ID,
+				"error":                   "", "updated_at": now,
+			})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return errors.New("Issue 已不处于可验收状态")
+			}
+			return nil
 		})
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != 1 {
-			return errors.New("Issue 已不处于可验收状态")
-		}
-		return nil
 	}); err != nil {
 		_ = m.store.updateExecution(validationExecution.ID, map[string]any{"status": "failed", "error": err.Error(), "finished_at": now})
 		return err
@@ -1179,6 +1249,8 @@ func (m *Manager) completeValidatedIssue(issue Issue, validation IssueValidation
 		updates["completed_at"] = now
 	}
 	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error
+	m.closeRuntime(validation.SourceExecutionID)
+	m.closeRuntime(validation.ValidationExecutionID)
 	m.addTypedAgentComment(issue.ID, "acceptance-validator", "validation_passed", fmt.Sprintf("## 验收通过\n\n%s", decision.Summary), validation.ValidationExecutionID, []commentWakeupTarget{})
 	m.store.addEvent(validation.ValidationExecutionID, issue.ID, "validation", "目标验收通过", decision.Summary)
 	m.store.notify()
@@ -1205,6 +1277,21 @@ func (m *Manager) abandonValidatedObjective(issue Issue, validation IssueValidat
 
 func (m *Manager) blockValidationAfterLimit(issue Issue, validation IssueValidation, decision validationDecision, now time.Time) {
 	message := "固定验收次数已耗尽，但验收 Agent 未能提供足以放弃目标的证明，需要人工决定。"
+	if !issue.HumanValidationFallback {
+		_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "checkout_execution_id": "", "current_execution_id": validation.ValidationExecutionID, "result": validation.CandidateResult, "error": message, "completed_at": now, "updated_at": now}).Error
+		m.addTypedAgentComment(issue.ID, "acceptance-validator", "validation_failed", fmt.Sprintf("## 验收失败\n\n**判断：** %s\n\n%s\n\n已保留最后一次 Worker 交付结果。", decision.Summary, message), validation.ValidationExecutionID, []commentWakeupTarget{})
+		m.store.addEvent(validation.ValidationExecutionID, issue.ID, "validation", "验收次数耗尽，任务失败但释放依赖", decision.Summary)
+		m.store.notify()
+		if issue.ParentID != "" {
+			go m.scheduleChildren(issue.ParentID)
+		}
+		return
+	}
+	approval := Approval{ID: nextID("approval"), ExecutionID: validation.ValidationExecutionID, IssueID: issue.ID, Type: "validation_review", Title: "人工验收审阅 " + issue.Identifier, Detail: fmt.Sprintf("Issue 目标：\n%s\n\n最后一次交付：\n%s\n\n验收判断：\n%s", issue.Objective, validation.CandidateResult, decision.Summary), Status: "pending", CreatedAt: now}
+	if err := m.store.db.Create(&approval).Error; err != nil {
+		m.blockIssue(issue, "创建人工验收审阅失败", err)
+		return
+	}
 	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
 		"status": "blocked", "execution_phase": "blocked", "checkout_execution_id": "",
 		"current_execution_id": validation.ValidationExecutionID, "error": message, "updated_at": now,
@@ -1309,7 +1396,7 @@ func (m *Manager) scheduleChildren(parentID string) {
 		waitSatisfied := hasExplicitWait && m.childWaitConditionSatisfied(childWait, children)
 		allTerminal := true
 		for _, c := range children {
-			if !slices.Contains([]string{"done", "cancelled"}, c.Status) {
+			if !issueStatusTerminal(c.Status) {
 				allTerminal = false
 				break
 			}
@@ -1346,8 +1433,10 @@ func (m *Manager) scheduleChildren(parentID string) {
 			return
 		}
 		if err := m.dispatchIssue(ready.ID); err != nil {
-			_ = m.store.db.Model(&Issue{}).Where("id = ?", ready.ID).Updates(map[string]any{"status": "blocked", "error": err.Error(), "updated_at": time.Now()}).Error
-			m.store.notify()
+			failed, loadErr := m.store.GetIssue(ready.ID)
+			if loadErr == nil && !issueStatusTerminal(failed.Status) {
+				m.failExecution(failed, Execution{}, err)
+			}
 			continue
 		}
 	}
@@ -1364,7 +1453,7 @@ func childWaitConditionSatisfied(wait IssueChildWait, children []Issue) bool {
 		if !wait.WaitForAll && !selected[child.ID] {
 			continue
 		}
-		if !slices.Contains([]string{"done", "cancelled"}, child.Status) {
+		if !issueStatusTerminal(child.Status) {
 			return false
 		}
 	}
@@ -1619,7 +1708,7 @@ func (m *Manager) CancelIssueFromExecution(executionID, token string, input Canc
 	if target.ParentID != parent.ID {
 		return Issue{}, errors.New("只能取消当前 Issue 的直属子 Issue")
 	}
-	if slices.Contains([]string{"done", "cancelled"}, target.Status) {
+	if issueStatusTerminal(target.Status) {
 		return Issue{}, errors.New("目标子 Issue 已经结束")
 	}
 	if input.Mode == "summarize_then_cancel" {
@@ -1645,7 +1734,7 @@ func (m *Manager) CancelIssueFromExecution(executionID, token string, input Canc
 				return err
 			}
 		}
-		if err := tx.Model(&Issue{}).Where("id IN ? AND status NOT IN ?", issueIDs, []string{"done", "cancelled"}).Updates(map[string]any{"status": "cancelled", "execution_phase": "completed", "checkout_execution_id": "", "cancelled_at": now, "error": input.Reason, "updated_at": now}).Error; err != nil {
+		if err := tx.Model(&Issue{}).Where("id IN ? AND status NOT IN ?", issueIDs, terminalIssueStatuses).Updates(map[string]any{"status": "cancelled", "execution_phase": "completed", "checkout_execution_id": "", "cancelled_at": now, "error": input.Reason, "updated_at": now}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("issue_id IN ? AND status = ?", issueIDs, "pending").Delete(&Approval{}).Error; err != nil {
@@ -1678,6 +1767,64 @@ func (m *Manager) CancelIssueFromExecution(executionID, token string, input Canc
 	m.store.notify()
 	go m.scheduleChildren(parent.ID)
 	return m.store.GetIssue(target.ID)
+}
+
+// ResumeIssueTreeFromExecution explicitly reopens a cancelled Issue and all
+// cancelled descendants, then starts a fresh execution for the root owner.
+func (m *Manager) ResumeIssueTreeFromExecution(executionID, token string, input ResumeIssueTreeInput) (Issue, error) {
+	session := m.getSession(executionID)
+	if session == nil || token == "" || len(token) != len(session.controlToken) || subtle.ConstantTimeCompare([]byte(token), []byte(session.controlToken)) != 1 {
+		return Issue{}, errors.New("invalid execution control token")
+	}
+	issue, err := m.store.GetIssue(session.issueID)
+	if err != nil {
+		return Issue{}, err
+	}
+	if issue.Status != "cancelled" {
+		return Issue{}, errors.New("只有已取消的 Issue 才能恢复任务树")
+	}
+	ids, err := m.issueDescendantIDs(issue)
+	if err != nil {
+		return Issue{}, err
+	}
+	allIDs := append([]string{issue.ID}, ids...)
+	now := time.Now()
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		reason = "操作员或 Agent 明确要求恢复任务树"
+	}
+	if err := m.store.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Issue{}).Where("id IN ? AND status = ?", allIDs, "cancelled").Updates(map[string]any{
+			"status": "todo", "execution_phase": "queued", "checkout_execution_id": "", "current_execution_id": "", "error": "", "cancelled_at": nil, "abandon_requested_at": nil, "abandoned_at": nil, "objective_abandoned": false, "abandonment_reason": "", "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&IssueComment{ID: nextID("comment"), IssueID: issue.ID, Type: "system", AuthorType: "system", AuthorID: "scheduler", Body: "## 任务树已恢复\n\n" + reason, CreatedAt: now}).Error
+	}); err != nil {
+		return Issue{}, err
+	}
+	restored, err := m.store.GetIssue(issue.ID)
+	if err != nil {
+		return Issue{}, err
+	}
+	agent, err := m.store.executionAgent(issue.AssigneeAgentID)
+	if err != nil {
+		return Issue{}, err
+	}
+	execution, err := m.store.createExecutionWithSession(restored, agent.ID, "recovery", session.sessionID)
+	if err != nil {
+		return Issue{}, err
+	}
+	if _, err = m.store.CheckoutIssue(restored.ID, CheckoutIssueInput{AgentID: agent.ID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo", "backlog", "cancelled"}}); err != nil {
+		return Issue{}, err
+	}
+	prompt := fmt.Sprintf("任务树已被明确恢复。请继续完成 Issue %s：%s。系统已恢复所有被取消的子 Issue；先检查子树状态，再决定直接工作、评论纠正或等待子任务。恢复原因：%s", restored.Identifier, restored.Title, reason)
+	if _, err = m.startSession(restored, execution, agent, prompt); err != nil {
+		return Issue{}, err
+	}
+	m.store.addEvent(execution.ID, restored.ID, "recovery", "任务树已恢复", fmt.Sprintf("恢复父 Issue 及 %d 个后代 Issue。%s", len(ids), reason))
+	m.store.notify()
+	return m.store.GetIssue(restored.ID)
 }
 
 // CommentIssueFromExecution lets an authenticated Agent communicate with an
@@ -2180,7 +2327,7 @@ func (m *Manager) ReconcileIssue(issue Issue) {
 	if issue.ExecutionPhase == "waiting_children" {
 		go m.scheduleChildren(issue.ID)
 	}
-	if issue.ParentID != "" && slices.Contains([]string{"done", "cancelled"}, issue.Status) {
+	if issue.ParentID != "" && issueStatusTerminal(issue.Status) {
 		go m.scheduleChildren(issue.ParentID)
 	}
 }
@@ -2190,16 +2337,22 @@ func (m *Manager) failExecution(issue Issue, e Execution, cause error) {
 	if e.ID != "" {
 		_ = m.store.updateExecution(e.ID, map[string]any{"status": "failed", "error": cause.Error(), "finished_at": now, "pid": 0})
 	}
-	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "blocked", "execution_phase": "blocked", "error": cause.Error(), "checkout_execution_id": "", "updated_at": now}).Error
+	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "error": cause.Error(), "checkout_execution_id": "", "completed_at": now, "updated_at": now}).Error
 	m.store.addEvent(e.ID, issue.ID, "error", "执行失败", cause.Error())
 	m.store.notify()
+	if issue.ParentID != "" {
+		go m.scheduleChildren(issue.ParentID)
+	}
 }
 
 func (m *Manager) blockIssue(issue Issue, title string, cause error) {
 	now := time.Now()
-	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "blocked", "execution_phase": "blocked", "error": cause.Error(), "checkout_execution_id": "", "updated_at": now}).Error
+	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "error": cause.Error(), "checkout_execution_id": "", "completed_at": now, "updated_at": now}).Error
 	m.store.addEvent("", issue.ID, "error", title, cause.Error())
 	m.store.notify()
+	if issue.ParentID != "" {
+		go m.scheduleChildren(issue.ParentID)
+	}
 }
 func (m *Manager) sessionExited(s *PiSession, waitErr error) {
 	m.mu.Lock()
@@ -2230,11 +2383,14 @@ func (m *Manager) sessionExited(s *PiSession, waitErr error) {
 		m.failHeartbeatExecution(s, errors.New(message))
 		return
 	}
-	_ = m.store.updateExecution(s.executionID, map[string]any{"status": "disconnected", "error": message, "finished_at": now, "pid": 0})
 	_ = m.store.db.Where("execution_id = ? AND status = ? AND type = ?", s.executionID, "pending", "tool_call").Delete(&Approval{}).Error
-	_ = m.store.db.Model(&Issue{}).Where("id = ? AND checkout_execution_id = ?", s.issueID, s.executionID).Updates(map[string]any{"status": "blocked", "execution_phase": "blocked", "error": message, "checkout_execution_id": "", "updated_at": now}).Error
-	m.store.addEvent(s.executionID, s.issueID, "error", "Pi session 已断开", message)
-	m.store.notify()
+	issue, err := m.store.GetIssue(s.issueID)
+	if err != nil {
+		_ = m.store.updateExecution(s.executionID, map[string]any{"status": "failed", "error": message, "finished_at": now, "pid": 0})
+		m.store.notify()
+		return
+	}
+	m.failExecution(issue, e, errors.New(message))
 }
 func (m *Manager) latestAssistant(executionID string) string {
 	var msg Message
@@ -2515,13 +2671,6 @@ func (m *Manager) DeleteContainerProfile(id string, cascadeIssues bool) (Contain
 	if !cascadeIssues {
 		return m.store.DeleteContainerProfile(id, false)
 	}
-	profile, err := m.store.GetContainerProfile(id)
-	if err != nil {
-		return ContainerProfileDeleteResult{}, err
-	}
-	if profile.RuntimeStatus == "running" {
-		return ContainerProfileDeleteResult{}, errors.New("请先停止容器再删除环境")
-	}
 	plan, err := m.store.containerProfileDeletePlan(id)
 	if err != nil {
 		return ContainerProfileDeleteResult{}, err
@@ -2543,6 +2692,36 @@ func (m *Manager) DeleteContainerProfile(id string, cascadeIssues bool) (Contain
 	}
 	return m.store.DeleteContainerProfile(id, true)
 }
+
+func (m *Manager) DeleteContainer(id string, cascadeIssues bool) (ContainerDeleteResult, error) {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
+
+	if !cascadeIssues {
+		return m.store.DeleteContainer(id, false)
+	}
+	plan, err := m.store.containerDeletePlan(id)
+	if err != nil {
+		return ContainerDeleteResult{}, err
+	}
+	issueSet := make(map[string]bool, len(plan.IssueIDs))
+	for _, issueID := range plan.IssueIDs {
+		issueSet[issueID] = true
+	}
+	m.mu.RLock()
+	sessions := make([]*PiSession, 0)
+	for _, session := range m.sessions {
+		if issueSet[session.issueID] {
+			sessions = append(sessions, session)
+		}
+	}
+	m.mu.RUnlock()
+	for _, session := range sessions {
+		session.Close()
+	}
+	return m.store.DeleteContainer(id, true)
+}
+
 func (m *Manager) getSession(id string) *PiSession {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -2743,7 +2922,7 @@ func (m *Manager) dispatchValidationDelivery(w AgentWakeup, issue Issue) {
 		m.failWakeup(w, err)
 		return
 	}
-	if err := m.beginIssueValidation(issue, source, source.Result); err != nil {
+	if err := m.beginIssueValidation(issue, source, fallback(source.FinalResult, comment.Body)); err != nil {
 		m.failWakeup(w, err)
 		m.blockIssue(issue, "delivery 评论触发验收失败", err)
 		return
@@ -2794,6 +2973,10 @@ func (m *Manager) failWakeup(w AgentWakeup, err error) {
 }
 func (m *Manager) completeWakeup(s *PiSession, result string) {
 	now := time.Now()
+	var execution Execution
+	if m.store.db.First(&execution, "id = ?", s.executionID).Error == nil && strings.TrimSpace(execution.FinalResult) != "" {
+		result = execution.FinalResult
+	}
 	_ = m.store.db.Model(&AgentWakeup{}).Where("id = ?", s.wakeupID).Updates(map[string]any{"status": "completed", "completed_at": now}).Error
 	m.addAgentComment(s.issueID, s.agentID, result, s.executionID)
 	m.restoreIssueAfterWakeup(s.issueID, s.executionID)
@@ -3148,7 +3331,6 @@ func (m *Manager) resumeSettledIssueLocked(issue Issue) error {
 		return errors.New("Issue 的待收尾状态已发生变化")
 	}
 	issue, _ = m.store.GetIssue(issue.ID)
-	m.collectExecutionAttachments(issue, execution.ID)
 	if execution.Kind == "wakeup" {
 		var wakeups []AgentWakeup
 		if err := m.store.db.Where("execution_id = ? AND status IN ?", execution.ID, []string{"delivered", "completed"}).Find(&wakeups).Error; err != nil {
@@ -3420,9 +3602,9 @@ Enabled agents:
 Create the durable execution plan by calling aegis_create_subissues exactly once. Use a stable requestKey, provide 2-%d independently verifiable implementation/test Issues, and end the turn after the tool succeeds. The configured hierarchy permits depth %d and at most %d direct children per Issue. Each title must be at most 120 characters. Dependencies use earlier 1-based indexes. Every objective must state the concrete outcome and evidence the acceptance Agent can verify. The final response may briefly summarize the created Issues, but it is not the execution plan and must not replace the tool call.`, i.Objective, fallback(i.Context, i.Description), i.Constraints, i.Workspace, roster.String(), maxPerRequest, maxDepth, maxDirect)
 }
 func workerPrompt(i Issue, maxDepth, maxPerRequest, maxDirect int) string {
-	completionInstruction := "Your final response is a candidate result, not an automatic completion. Include concrete evidence for every material part of the objective; the read-only acceptance Agent will evaluate it before Aegis can complete the Issue."
+	completionInstruction := "Before ending the turn, you MUST call aegis_submit_final_result with a standalone result directly addressing the Issue objective. Include concrete evidence and optionally provide a deliverable file or directory; do not use a reply to validation feedback as the final result. Aegis will send this submitted result to the read-only acceptance Agent."
 	if strings.TrimSpace(i.Objective) == "" {
-		completionInstruction = "This Issue has no acceptance objective. No acceptance Agent will run when you finish; submit a concise evidence-based final response and Aegis will complete the Issue directly."
+		completionInstruction = "Before ending the turn, you MUST call aegis_submit_final_result with a concise evidence-based result directly addressing the Issue. You may provide a deliverable file or directory; Aegis will complete the Issue after this explicit submission."
 	}
 	return fmt.Sprintf(`Complete this Issue in the real workspace.
 Issue %s: %s
@@ -3431,7 +3613,7 @@ Objective: %s
 Constraints: %s
 Workspace: %s
 Use tools to inspect and modify the project, run relevant validation, fix in-scope failures, and finish with a concise evidence-based report.
-For every user-facing deliverable file you generate (reports, archives, images, documents, or datasets), call aegis_publish_attachment before ending the turn so Aegis can mount it on your completion comment. Source-code edits are collected separately and should not be published merely as attachments.
+For every user-facing deliverable file you generate (reports, archives, images, documents, or datasets), call aegis_publish_attachment before ending the turn so the tool uploads it directly to Aegis and mounts it on your completion comment. Source-code edits are collected separately and should not be published merely as attachments.
 
 If this Issue is too broad for one reliable execution, call aegis_create_subissues once with 2-%d independently verifiable child Issues and explicit earlier-index dependencies. The configured hierarchy permits depth %d and at most %d direct children per Issue. After the tool succeeds, stop implementation on the parent and end your turn. The scheduler will execute the children and later resume this Issue in a fresh continuation session.
 
@@ -3711,7 +3893,7 @@ Comment from %s:
 %s
 </comment>
 
-Respond to the comment concretely. You may inspect the workspace and perform scoped work using your tools when needed. If the comment requires independently executable child work, call aegis_create_subissues; a successful call automatically reopens a completed Issue and schedules the new child tree. %s Finish with a response suitable for the Issue comment thread. Available agent IDs: %v`, trigger, i.Identifier, i.Title, i.Description, i.Objective, i.Workspace, comment.AuthorID, comment.Body, validationInstruction, func() []string {
+	Respond to the comment concretely. You may inspect the workspace and perform scoped work using your tools when needed. If the comment requests a final summary, complete delivery, or source package, you MUST call aegis_submit_final_result with a standalone objective-focused body and the relevant file or directory path; the tool uploads files directly to Aegis and packages directories locally before upload. Do not treat the final chat reply as the delivery. If the comment requires independently executable child work, call aegis_create_subissues; a successful call automatically reopens a completed Issue and schedules the new child tree. %s Finish with a brief response only after the final-result tool succeeds. Available agent IDs: %v`, trigger, i.Identifier, i.Title, i.Description, i.Objective, i.Workspace, comment.AuthorID, comment.Body, validationInstruction, func() []string {
 		var out []string
 		for _, a := range agents {
 			if a.Enabled && !a.Internal {
@@ -3809,51 +3991,16 @@ func piCommand(c Config, args ...string) (string, []string) {
 	return c.PiPath, args
 }
 
-func dockerPiCommand(profile ContainerProfile, containerName, hostWorkspace, dataDir, guardHostPath string, c Config, piArgs, environment []string, controlURL string) (string, []string) {
-	args := []string{"run", "--rm", "-i", "--name", containerName, "--workdir", profile.WorkspacePath}
-	if profile.NetworkMode != "" {
-		args = append(args, "--network", profile.NetworkMode)
-	}
-	// Docker Desktop provides this name automatically; host-gateway also makes
-	// the callback work on current Linux Docker engines.
-	args = append(args, "--add-host", "host.docker.internal:host-gateway")
-	if profile.MemoryMB > 0 {
-		args = append(args, "--memory", fmt.Sprintf("%dm", profile.MemoryMB))
-	}
-	if profile.CPUs > 0 {
-		args = append(args, "--cpus", strconv.FormatFloat(profile.CPUs, 'f', -1, 64))
-	}
-	args = append(args,
-		"--volume", hostWorkspace+":"+profile.WorkspacePath,
-		"--volume", filepath.Join(dataDir, "sessions")+":/aegis/sessions",
-		"--volume", guardHostPath+":/aegis/runtime/aegis-guard.ts:ro",
-	)
-	if info, err := os.Stat(filepath.Join(dataDir, "skills")); err == nil && info.IsDir() {
-		args = append(args, "--volume", filepath.Join(dataDir, "skills")+":/aegis/skills:ro")
-	}
+func dockerPiExecCommand(container ContainerInstance, workspace string, piArgs, environment []string, c Config, controlURL string) (string, []string) {
+	args := []string{"exec", "-i", "--workdir", workspace}
 	for _, item := range containerRuntimeEnv(environment, c, controlURL) {
 		args = append(args, "--env", item)
 	}
-	args = append(args, profile.Image)
-	if strings.HasSuffix(strings.ToLower(profile.PiPath), ".js") || strings.HasSuffix(strings.ToLower(profile.PiPath), ".mjs") {
-		args = append(args, profile.NodePath, profile.PiPath)
+	args = append(args, container.Name)
+	if strings.HasSuffix(strings.ToLower(container.PiPath), ".js") || strings.HasSuffix(strings.ToLower(container.PiPath), ".mjs") {
+		args = append(args, container.NodePath, container.PiPath)
 	} else {
-		args = append(args, profile.PiPath)
-	}
-	args = append(args, piArgs...)
-	return "docker", args
-}
-
-func dockerPiExecCommand(profile ContainerProfile, piArgs, environment []string, c Config, controlURL string) (string, []string) {
-	args := []string{"exec", "-i", "--workdir", profile.WorkspacePath}
-	for _, item := range containerRuntimeEnv(environment, c, controlURL) {
-		args = append(args, "--env", item)
-	}
-	args = append(args, profile.ContainerName)
-	if strings.HasSuffix(strings.ToLower(profile.PiPath), ".js") || strings.HasSuffix(strings.ToLower(profile.PiPath), ".mjs") {
-		args = append(args, profile.NodePath, profile.PiPath)
-	} else {
-		args = append(args, profile.PiPath)
+		args = append(args, container.PiPath)
 	}
 	return "docker", append(args, piArgs...)
 }

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ArrowRight, ListTodo, Plus, RotateCcw } from "lucide-react"
+import { ArrowRight, Copy, ListTodo, Plus, RotateCcw } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
@@ -68,9 +68,11 @@ export function TasksPage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {tasks.map((task) => {
-            const runs = issues.filter(
-              (issue) => !issue.parentId && issue.taskSourceId === task.id
-            ).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            const runs = issues
+              .filter(
+                (issue) => !issue.parentId && issue.taskSourceId === task.id
+              )
+              .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
             const latest = runs[0]
             if (!latest) return null
             const issueIDs = taskTreeIssueIDs(latest.id, issues)
@@ -131,7 +133,10 @@ export function TasksPage() {
                       variant="ghost"
                       size="icon-sm"
                       render={
-                        <Link to={`/tasks/${latest.id}`} aria-label="查看任务" />
+                        <Link
+                          to={`/tasks/${latest.id}`}
+                          aria-label="查看任务"
+                        />
                       }
                       nativeButton={false}
                     >
@@ -153,30 +158,69 @@ export function TasksPage() {
                     <p className="min-w-0 truncate text-xs text-muted-foreground">
                       {task.workspace} · {formatTime(task.updatedAt)}
                     </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={restarting === task.id}
-                      onClick={async () => {
-                        setRestarting(task.id)
-                        try {
-                          const next = await restartTask(task.id)
-                          toast.success("已创建新的任务执行", {
-                            description: `${next.identifier} · 第 ${runs.length + 1} 次执行`,
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          navigate("/tasks/new", {
+                            state: {
+                              clone: {
+                                projectId: task.projectId,
+                                title: task.title,
+                                description: task.description,
+                                objective: task.objective,
+                                priority: task.priority,
+                                workMode: task.workMode,
+                                assigneeAgentId: task.assigneeAgentId,
+                                containerProfileId:
+                                  state?.containerProfiles.some(
+                                    (profile) =>
+                                      profile.id === task.containerProfileId &&
+                                      profile.enabled
+                                  )
+                                    ? task.containerProfileId
+                                    : undefined,
+                                context: task.context,
+                                constraints: task.constraints,
+                                timeBudgetMinutes: task.timeBudgetMinutes,
+                                humanValidationFallback:
+                                  task.humanValidationFallback,
+                              },
+                            },
                           })
-                          navigate(`/tasks/${next.id}`)
-                        } catch (error) {
-                          toast.error(
-                            error instanceof Error ? error.message : "重新启动失败"
-                          )
-                        } finally {
-                          setRestarting(null)
                         }
-                      }}
-                    >
-                      <RotateCcw data-icon="inline-start" />
-                      重新启动
-                    </Button>
+                      >
+                        <Copy data-icon="inline-start" />
+                        复制
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={restarting === task.id}
+                        onClick={async () => {
+                          setRestarting(task.id)
+                          try {
+                            const next = await restartTask(task.id)
+                            toast.success("已创建新的任务执行", {
+                              description: `${next.identifier} · 第 ${runs.length + 1} 次执行`,
+                            })
+                            navigate(`/tasks/${next.id}`)
+                          } catch (error) {
+                            toast.error(
+                              error instanceof Error
+                                ? error.message
+                                : "重新启动失败"
+                            )
+                          } finally {
+                            setRestarting(null)
+                          }
+                        }}
+                      >
+                        <RotateCcw data-icon="inline-start" />
+                        重新启动
+                      </Button>
+                    </div>
                   </div>
                 </CardFooter>
               </Card>

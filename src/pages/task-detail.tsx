@@ -1,7 +1,7 @@
 import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
-import { File, Folder, LinkIcon } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { Clock3, Copy, File, Folder, LinkIcon, Save } from "lucide-react"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { StatusBadge } from "@/components/status-badge"
@@ -20,7 +20,9 @@ import {
 } from "@/components/ui/empty"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
-import { fetchIssue, fetchTaskWorkspace } from "@/lib/api"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { fetchIssue, fetchTaskWorkspace, updateTaskBudget } from "@/lib/api"
 import { formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
@@ -28,11 +30,20 @@ import type { Issue, IssueDetail, Task, TaskWorkspace } from "@/types"
 
 export function TaskDetailPage() {
   const { issueId } = useParams()
+  const navigate = useNavigate()
   const { state } = useAppState()
   const [detail, setDetail] = React.useState<IssueDetail | null>(null)
   const [workspace, setWorkspace] = React.useState<TaskWorkspace | null>(null)
   const [workspaceError, setWorkspaceError] = React.useState("")
   const [loading, setLoading] = React.useState(true)
+  const [now, setNow] = React.useState(() => Date.now())
+  const [budgetInput, setBudgetInput] = React.useState("")
+  const [savingBudget, setSavingBudget] = React.useState(false)
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 10000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   React.useEffect(() => {
     if (!issueId) return
@@ -45,6 +56,8 @@ export function TaskDetailPage() {
       if (!active) return
       if (issueResult.status === "fulfilled") {
         setDetail(issueResult.value)
+        const minutes = issueResult.value.issue.timeBudgetMinutes
+        setBudgetInput(minutes ? String(minutes) : "")
       } else {
         setDetail(null)
         toast.error(
@@ -99,9 +112,43 @@ export function TaskDetailPage() {
   )
   const parameters = source ?? issue
   const runs = taskRuns(issue, source, state?.issues ?? [issue])
+  const budgetMinutes = issue.timeBudgetMinutes ?? source?.timeBudgetMinutes ?? null
+  const startedAt = issue.startedAt ? Date.parse(issue.startedAt) : Date.parse(issue.createdAt)
+  const elapsedMinutes = Math.max(0, (now - startedAt) / 60000)
+  const progress = budgetMinutes ? Math.min(100, (elapsedMinutes / budgetMinutes) * 100) : 0
+  const remainingMinutes = budgetMinutes ? Math.max(0, budgetMinutes - elapsedMinutes) : null
+  const saveBudget = async () => {
+    const minutes = Number.parseInt(budgetInput, 10)
+    if (!Number.isFinite(minutes) || minutes <= 0) { toast.error("请输入大于 0 的分钟数"); return }
+    setSavingBudget(true)
+    try {
+      await updateTaskBudget(issue.taskSourceId || issue.id, minutes)
+      setDetail((current) => current ? { ...current, issue: { ...current.issue, timeBudgetMinutes: minutes } } : current)
+      toast.success("任务时间预算已更新")
+    } catch (error) { toast.error(error instanceof Error ? error.message : "更新时间预算失败") }
+    finally { setSavingBudget(false) }
+  }
 
   return (
     <div className="flex flex-col gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Clock3 className="size-4" />任务时间进度</CardTitle>
+          <CardDescription>根 Issue 的本次执行预算；子 Issue 不单独消耗任务预算。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span>{budgetMinutes ? `已用 ${formatDuration(elapsedMinutes)} / ${budgetMinutes} 分钟` : "未设置时间预算"}</span>
+            <span className={remainingMinutes !== null && remainingMinutes <= 0 ? "font-medium text-destructive" : "text-muted-foreground"}>{remainingMinutes === null ? "无限制" : remainingMinutes <= 0 ? "已超出预算" : `剩余 ${formatDuration(remainingMinutes)}`}</span>
+          </div>
+          {budgetMinutes ? <div className="h-2 overflow-hidden rounded-full bg-muted"><div className={cn("h-full rounded-full transition-all", progress >= 100 ? "bg-destructive" : progress >= 80 ? "bg-amber-500" : "bg-primary")} style={{ width: `${progress}%` }} /></div> : null}
+          <div className="flex max-w-sm items-center gap-2">
+            <Input type="number" min={1} value={budgetInput} onChange={(event) => setBudgetInput(event.target.value)} placeholder="分钟" />
+            <Button variant="outline" onClick={() => void saveBudget()} disabled={savingBudget}>{savingBudget ? <Spinner data-icon="inline-start" /> : <Save data-icon="inline-start" />}调整预算</Button>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>原始任务参数</CardTitle>
@@ -136,7 +183,21 @@ export function TaskDetailPage() {
             label="执行边界"
             value={parameters.constraints || "未填写"}
           />
-          <TaskParameter label="工作目录" value={parameters.workspace} mono />
+          <TaskParameter
+            label={parameters.containerProfileId ? "容器工作目录" : "工作目录"}
+            value={
+              parameters.containerProfileId
+                ? state?.containers.find(
+                    (container) => container.id === parameters.containerId
+                  )?.workspacePath ??
+                  state?.containerProfiles.find(
+                    (profile) => profile.id === parameters.containerProfileId
+                  )?.workspacePath ??
+                  "容器尚未创建"
+                : parameters.workspace
+            }
+            mono
+          />
           <TaskParameter
             label="执行环境"
             value={
@@ -170,6 +231,7 @@ export function TaskDetailPage() {
             value={formatTime(parameters.createdAt)}
           />
         </CardContent>
+        <div className="flex justify-end border-t px-6 py-4"><Button variant="outline" onClick={() => navigate("/tasks/new", { state: { clone: parameters } })}><Copy data-icon="inline-start" />复制任务</Button></div>
       </Card>
 
       <Card>
@@ -312,4 +374,10 @@ function formatBytes(size: number) {
     return `${(size / 1024 / 1024).toFixed(1)} MB`
   }
   return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+function formatDuration(minutes: number) {
+  if (minutes < 1) return `${Math.round(minutes * 60)} 秒`
+  if (minutes < 60) return `${Math.floor(minutes)} 分钟`
+  return `${Math.floor(minutes / 60)} 小时 ${Math.floor(minutes % 60)} 分钟`
 }

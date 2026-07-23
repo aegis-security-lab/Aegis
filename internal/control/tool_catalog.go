@@ -104,6 +104,11 @@ func toolCatalog() map[string]ToolSnapshot {
 				{Name: "mode", Type: "enum", Description: "summarize_then_cancel：先总结、保存 result，再取消并恢复父 Issue；immediate：立即终止，可能留下空 result。", Required: true, Enum: []string{"summarize_then_cancel", "immediate"}},
 			},
 		},
+		"aegis_resume_issue_tree": {
+			Name: "aegis_resume_issue_tree", Label: "Resume cancelled Issue tree", Source: "aegis_extension",
+			Description: "仅在操作员或 Leader 明确要求时恢复已取消的当前 Issue 及全部已取消后代，并启动新的根 Execution；普通评论不会触发恢复。",
+			Parameters:  []ToolParameterSnapshot{parameter("reason", "string", "明确恢复任务树的原因，最多 2000 个字符。", true)},
+		},
 		"aegis_comment_issue": {
 			Name: "aegis_comment_issue", Label: "Comment on a direct child Issue", Source: "aegis_extension",
 			Description: "向当前 Issue 的直属子 Issue 发送 Markdown 评论并唤醒负责 Agent。运行中或等待中的子 Issue 会在固定 Pi Session 中收到纠正或催促信息；正在验收或最终总结的子 Issue 不会被打断。",
@@ -148,12 +153,17 @@ func toolCatalog() map[string]ToolSnapshot {
 		},
 		"aegis_publish_attachment": {
 			Name: "aegis_publish_attachment", Label: "Publish attachment", Source: "aegis_extension",
-			Description: "把 Issue 工作目录中的交付文件复制为持久化附件，并在 Execution 完成时挂载到 Agent 评论。",
+			Description: "由工具把 Issue 工作目录中的交付文件直接上传为持久化附件，并在 Execution 完成时挂载到 Agent 评论；目录会先在当前运行环境打包。",
 			Parameters: []ToolParameterSnapshot{
-				parameter("path", "string", "已生成文件的绝对路径或工作目录相对路径。", true),
+				parameter("path", "string", "已生成文件或目录的绝对路径或工作目录相对路径。", true),
 				parameter("name", "string", "可选的附件下载文件名。", false),
 				parameter("attachmentDescription", "string", "可选的交付物简短说明。", false),
 			},
+		},
+		"aegis_submit_final_result": {
+			Name: "aegis_submit_final_result", Label: "Submit final result", Source: "aegis_extension",
+			Description: "提交针对当前 Issue 目标的独立最终交付正文，可选文件或目录会由工具直传服务端；目录会在当前运行环境打包为 ZIP。只有提交后 Worker 才能结束并进入后续验收。",
+			Parameters:  []ToolParameterSnapshot{parameter("body", "string", "针对目标的最终结果正文，最多 50000 个字符。", true), parameter("path", "string", "可选的工作区内文件或目录路径。", false), parameter("name", "string", "可选附件名称。", false), parameter("attachmentDescription", "string", "可选附件说明。", false)},
 		},
 		"aegis_report_progress": {
 			Name: "aegis_report_progress", Label: "Report work progress", Source: "aegis_extension",

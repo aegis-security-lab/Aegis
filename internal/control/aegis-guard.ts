@@ -11,8 +11,21 @@ import {
   type ExtensionAPI,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { execFile } from "node:child_process"
+import { openAsBlob } from "node:fs"
 import path from "node:path"
-import { mkdir, writeFile } from "node:fs/promises"
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { promisify } from "node:util"
 
 type AnyToolDefinition = ToolDefinition
 type ObjectParameterSchema = ToolDefinition["parameters"] & {
@@ -592,6 +605,59 @@ const cancelIssueTool = defineTool({
   },
 })
 
+const resumeIssueTreeTool = defineTool({
+  name: "aegis_resume_issue_tree",
+  label: "Resume cancelled Issue tree",
+  description:
+    "Explicitly restore a cancelled Issue and all cancelled descendants, then start a fresh execution for the root Agent. Use only after a clear operator or Leader instruction to resume the task tree.",
+  promptSnippet: "Restore a cancelled Issue tree and continue execution",
+  parameters: Type.Object({
+    reason: Type.String({
+      description:
+        "Why the operator or Leader explicitly requested restoration",
+      minLength: 1,
+      maxLength: 2000,
+    }),
+  }),
+  async execute(_toolCallId, params, signal) {
+    const controlURL = process.env.AEGIS_CONTROL_URL
+    const executionID = process.env.AEGIS_EXECUTION_ID
+    const token = process.env.AEGIS_CONTROL_TOKEN
+    if (!controlURL || !executionID || !token)
+      throw new Error("Aegis execution control context is unavailable")
+    const response = await fetch(
+      `${controlURL.replace(/\/$/, "")}/api/internal/executions/${encodeURIComponent(executionID)}/resume-issue-tree`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params),
+        signal,
+      }
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string
+      identifier?: string
+      id?: string
+    }
+    if (!response.ok)
+      throw new Error(
+        payload.error || `Aegis control API returned HTTP ${response.status}`
+      )
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Restored Issue tree ${payload.identifier ?? payload.id ?? ""} and started a fresh root execution. Re-check the child tree before proceeding.`,
+        },
+      ],
+      details: payload,
+    }
+  },
+})
+
 const commentIssueTool = defineTool({
   name: "aegis_comment_issue",
   label: "Comment on an Issue",
@@ -759,51 +825,111 @@ const createTaskTool = defineTool({
   },
 })
 
-const publishAttachmentTool = defineTool({
-  name: "aegis_publish_attachment",
-  label: "Publish attachment",
-  description:
-    "Publish a generated workspace file as a durable Issue comment attachment. Use this for reports, archives, images, documents, datasets, or other user-facing deliverables. The file must already exist inside the Issue workspace. Call once per deliverable before ending the turn.",
-  promptSnippet: "Attach generated deliverable files to the completion comment",
-  promptGuidelines: [
-    "Publish user-facing deliverable files with aegis_publish_attachment before completing the Issue.",
-    "Do not publish source files merely because they were edited; publish only files useful as downloadable deliverables.",
-    "The attachment path must stay inside the current Issue workspace.",
-  ],
-  parameters: Type.Object({
-    path: Type.String({
-      description:
-        "Absolute path or workspace-relative path of the generated file",
-    }),
-    name: Type.Optional(
-      Type.String({ description: "Optional download filename" })
-    ),
-    attachmentDescription: Type.Optional(
-      Type.String({
-        description: "Optional short description of the deliverable",
-      })
-    ),
-  }),
-  async execute(_toolCallId, params, signal) {
-    const controlURL = process.env.AEGIS_CONTROL_URL
-    const executionID = process.env.AEGIS_EXECUTION_ID
-    const token = process.env.AEGIS_CONTROL_TOKEN
-    if (!controlURL || !executionID || !token) {
-      throw new Error("Aegis execution control context is unavailable")
+const maximumAttachmentBytes = 100 * 1024 * 1024
+const execFileAsync = promisify(execFile)
+
+function isPathWithin(root: string, candidate: string) {
+  const relative = path.relative(root, candidate)
+  return (
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  )
+}
+
+async function validateAttachmentDirectory(directory: string): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const child = path.join(directory, entry.name)
+    const info = await lstat(child)
+    if (info.isSymbolicLink()) {
+      throw new Error("附件目录不能包含符号链接")
     }
+    if (info.isDirectory()) {
+      await validateAttachmentDirectory(child)
+    } else if (!info.isFile()) {
+      throw new Error("附件目录不能包含特殊文件")
+    }
+  }
+}
+
+async function uploadExecutionAttachment(
+  params: {
+    path: string
+    name?: string
+    attachmentDescription?: string
+  },
+  signal: AbortSignal
+) {
+  const controlURL = process.env.AEGIS_CONTROL_URL
+  const executionID = process.env.AEGIS_EXECUTION_ID
+  const token = process.env.AEGIS_CONTROL_TOKEN
+  const workspace = process.env.AEGIS_WORKSPACE
+  if (!controlURL || !executionID || !token || !workspace) {
+    throw new Error("Aegis execution attachment context is unavailable")
+  }
+
+  const requestedPath = params.path.trim()
+  if (!requestedPath) throw new Error("附件路径不能为空")
+  const workspacePath = path.resolve(workspace)
+  const candidatePath = path.resolve(workspacePath, requestedPath)
+  if (!isPathWithin(workspacePath, candidatePath)) {
+    throw new Error("附件必须位于当前 Issue 工作目录中")
+  }
+  const candidateInfo = await lstat(candidatePath).catch(() => undefined)
+  if (!candidateInfo) throw new Error(`附件不存在: ${params.path}`)
+  if (candidateInfo.isSymbolicLink()) {
+    throw new Error("附件符号链接不能作为交付物")
+  }
+  const resolvedWorkspace = await realpath(workspacePath)
+  const resolvedCandidate = await realpath(candidatePath)
+  if (!isPathWithin(resolvedWorkspace, resolvedCandidate)) {
+    throw new Error("附件符号链接不能指向工作目录之外")
+  }
+
+  const relativeSource = path.relative(resolvedWorkspace, resolvedCandidate)
+  const sourcePath = (relativeSource || ".").split(path.sep).join("/")
+  let uploadPath = resolvedCandidate
+  let cleanupDirectory = ""
+  let defaultName = path.basename(resolvedCandidate)
+  let packagedDirectory = false
+  try {
+    if (candidateInfo.isDirectory()) {
+      packagedDirectory = true
+      await validateAttachmentDirectory(resolvedCandidate)
+      cleanupDirectory = await mkdtemp(path.join(tmpdir(), "aegis-attachment-"))
+      uploadPath = path.join(cleanupDirectory, `${defaultName || "files"}.zip`)
+      await execFileAsync(
+        "zip",
+        ["-q", "-r", uploadPath, `./${path.basename(resolvedCandidate)}`],
+        { cwd: path.dirname(resolvedCandidate) }
+      )
+      defaultName = `${defaultName || "files"}.zip`
+    } else if (!candidateInfo.isFile()) {
+      throw new Error("附件必须是普通文件或目录")
+    }
+
+    const uploadInfo = await stat(uploadPath)
+    if (uploadInfo.size > maximumAttachmentBytes) {
+      throw new Error(`附件不能超过 ${maximumAttachmentBytes / 1024 / 1024} MB`)
+    }
+    let uploadName = path.basename(params.name?.trim() || defaultName)
+    if (packagedDirectory && !uploadName.toLowerCase().endsWith(".zip")) {
+      uploadName += ".zip"
+    }
+    if (!uploadName || uploadName === ".") throw new Error("附件名称无效")
+    const form = new FormData()
+    form.append("path", sourcePath)
+    form.append("name", uploadName)
+    if (params.attachmentDescription?.trim()) {
+      form.append("description", params.attachmentDescription.trim())
+    }
+    form.append("file", await openAsBlob(uploadPath), uploadName)
     const response = await fetch(
       `${controlURL.replace(/\/$/, "")}/api/internal/executions/${encodeURIComponent(executionID)}/attachments`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          path: params.path,
-          name: params.name,
-          description: params.attachmentDescription,
-        }),
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
         signal,
       }
     )
@@ -818,6 +944,43 @@ const publishAttachmentTool = defineTool({
         payload.error || `Aegis control API returned HTTP ${response.status}`
       )
     }
+    return payload
+  } finally {
+    if (cleanupDirectory) {
+      await rm(cleanupDirectory, { recursive: true, force: true }).catch(
+        () => undefined
+      )
+    }
+  }
+}
+
+const publishAttachmentTool = defineTool({
+  name: "aegis_publish_attachment",
+  label: "Publish attachment",
+  description:
+    "Upload a generated workspace file or directory directly to the Aegis server as a durable Issue comment attachment. Directories are packaged as ZIP in the current runtime before upload. Use this for reports, archives, images, documents, datasets, or other user-facing deliverables. Call once per deliverable before ending the turn.",
+  promptSnippet: "Attach generated deliverable files to the completion comment",
+  promptGuidelines: [
+    "Publish user-facing deliverable files with aegis_publish_attachment before completing the Issue.",
+    "Do not publish source files merely because they were edited; publish only files useful as downloadable deliverables.",
+    "The attachment path must stay inside the current Issue workspace; the server never reads the runtime path.",
+  ],
+  parameters: Type.Object({
+    path: Type.String({
+      description:
+        "Absolute path or workspace-relative path of the generated file or directory",
+    }),
+    name: Type.Optional(
+      Type.String({ description: "Optional download filename" })
+    ),
+    attachmentDescription: Type.Optional(
+      Type.String({
+        description: "Optional short description of the deliverable",
+      })
+    ),
+  }),
+  async execute(_toolCallId, params, signal) {
+    const payload = await uploadExecutionAttachment(params, signal)
     return {
       content: [
         {
@@ -1344,6 +1507,74 @@ const submitValidationTool = defineTool({
         },
       ],
       details: payload,
+    }
+  },
+})
+
+const submitFinalResultTool = defineTool({
+  name: "aegis_submit_final_result",
+  label: "Submit final result",
+  description:
+    "提交当前 Issue 面向目标的最终交付结果。必须使用正文说明完成内容；可选的文件或目录会由本工具直接上传到 Aegis 服务端（目录会先在当前运行环境打包为 ZIP），随后再提交正文进入验收。",
+  promptSnippet: "Submit the final objective-focused delivery",
+  promptGuidelines: [
+    "最终结果必须直接针对 Issue 目标，不要回复上一次验收意见。",
+    "如果有报告、数据或其他交付物，使用 path 一并提交；工具会直接上传，目录会在当前运行环境中自动打包。",
+    "调用成功后结束当前回合。",
+  ],
+  parameters: Type.Object({
+    body: Type.String({
+      description: "针对 Issue 目标的最终结果正文，最多 50000 字符",
+      minLength: 1,
+      maxLength: 50000,
+    }),
+    path: Type.Optional(
+      Type.String({ description: "工作区内的最终交付文件或目录路径" })
+    ),
+    name: Type.Optional(
+      Type.String({ description: "附件名称；目录打包时默认为目录名.zip" })
+    ),
+    attachmentDescription: Type.Optional(
+      Type.String({ description: "附件简短说明" })
+    ),
+  }),
+  async execute(_toolCallId, params, signal) {
+    const controlURL = process.env.AEGIS_CONTROL_URL,
+      executionID = process.env.AEGIS_EXECUTION_ID,
+      token = process.env.AEGIS_CONTROL_TOKEN
+    if (!controlURL || !executionID || !token)
+      throw new Error("Aegis execution control context is unavailable")
+    const attachment = params.path
+      ? await uploadExecutionAttachment(params, signal)
+      : undefined
+    const response = await fetch(
+      `${controlURL.replace(/\/$/, "")}/api/internal/executions/${encodeURIComponent(executionID)}/final-result`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ body: params.body }),
+        signal,
+      }
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string
+      id?: string
+    }
+    if (!response.ok)
+      throw new Error(
+        payload.error || `Aegis control API returned HTTP ${response.status}`
+      )
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Final result submitted for the Issue objective. End this turn now; the result will be sent to the acceptance Agent.",
+        },
+      ],
+      details: { ...payload, attachment },
     }
   },
 })
@@ -1881,8 +2112,10 @@ export default function aegisGuard(pi: ExtensionAPI) {
     registerDescribedTool(pi, listChildIssuesTool)
     registerDescribedTool(pi, waitForChildIssuesTool)
     registerDescribedTool(pi, cancelIssueTool)
+    registerDescribedTool(pi, resumeIssueTreeTool)
     registerDescribedTool(pi, commentIssueTool)
     registerDescribedTool(pi, publishAttachmentTool)
+    registerDescribedTool(pi, submitFinalResultTool)
     registerDescribedTool(pi, reportProgressTool)
     registerDescribedTool(pi, getIssueProgressTool)
     registerDescribedTool(pi, broadcastTool)

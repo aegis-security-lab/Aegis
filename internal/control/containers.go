@@ -24,9 +24,6 @@ const WorkerContainerImage = "aegis-pi-worker:latest"
 func (s *Store) ContainerProfiles() []ContainerProfile {
 	var profiles []ContainerProfile
 	s.db.Order("created_at asc").Find(&profiles)
-	for index := range profiles {
-		profiles[index] = containerRuntimeState(profiles[index])
-	}
 	return profiles
 }
 
@@ -35,7 +32,7 @@ func (s *Store) GetContainerProfile(id string) (ContainerProfile, error) {
 	if err := s.db.First(&profile, "id = ?", id).Error; err != nil {
 		return ContainerProfile{}, errors.New("container profile not found")
 	}
-	return containerRuntimeState(profile), nil
+	return profile, nil
 }
 
 func (s *Store) SaveContainerProfile(id string, input SaveContainerProfileInput) (ContainerProfile, error) {
@@ -45,16 +42,12 @@ func (s *Store) SaveContainerProfile(id string, input SaveContainerProfileInput)
 	input.NodePath = fallback(strings.TrimSpace(input.NodePath), "node")
 	input.PiPath = fallback(strings.TrimSpace(input.PiPath), "/usr/local/bin/pi")
 	input.WorkspacePath = fallback(strings.TrimSpace(input.WorkspacePath), "/workspace")
-	input.HostWorkspace = strings.TrimSpace(input.HostWorkspace)
 	input.NetworkMode = fallback(strings.TrimSpace(input.NetworkMode), "bridge")
 	if input.Name == "" || !containerImagePattern.MatchString(input.Image) {
 		return ContainerProfile{}, errors.New("容器名称和有效的 Docker Image 必填")
 	}
 	if !strings.HasPrefix(input.WorkspacePath, "/") || strings.Contains(input.WorkspacePath, "..") {
 		return ContainerProfile{}, errors.New("容器工作目录必须是未包含 .. 的绝对路径")
-	}
-	if input.HostWorkspace != "" && !filepath.IsAbs(input.HostWorkspace) {
-		return ContainerProfile{}, errors.New("宿主机工作目录必须是绝对路径")
 	}
 	if !slices.Contains([]string{"bridge", "none"}, input.NetworkMode) {
 		return ContainerProfile{}, errors.New("当前仅支持 bridge 或 none 网络模式")
@@ -63,16 +56,13 @@ func (s *Store) SaveContainerProfile(id string, input SaveContainerProfileInput)
 		return ContainerProfile{}, errors.New("容器资源限制无效")
 	}
 	now := time.Now()
-	profile := ContainerProfile{ID: id, Name: input.Name, Description: input.Description, Image: input.Image, NodePath: input.NodePath, PiPath: input.PiPath, WorkspacePath: input.WorkspacePath, HostWorkspace: input.HostWorkspace, NetworkMode: input.NetworkMode, MemoryMB: input.MemoryMB, CPUs: input.CPUs, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
+	profile := ContainerProfile{ID: id, Name: input.Name, Description: input.Description, Image: input.Image, NodePath: input.NodePath, PiPath: input.PiPath, WorkspacePath: input.WorkspacePath, NetworkMode: input.NetworkMode, MemoryMB: input.MemoryMB, CPUs: input.CPUs, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
 	if id == "" {
 		profile.ID = nextID("container-profile")
 	} else {
 		var existing ContainerProfile
 		if err := s.db.First(&existing, "id = ?", id).Error; err != nil {
 			return ContainerProfile{}, errors.New("container profile not found")
-		}
-		if containerRuntimeState(existing).RuntimeStatus == "running" {
-			return ContainerProfile{}, errors.New("请先停止容器再修改环境配置")
 		}
 		profile.CreatedAt = existing.CreatedAt
 	}
@@ -83,67 +73,267 @@ func (s *Store) SaveContainerProfile(id string, input SaveContainerProfileInput)
 	return profile, nil
 }
 
-func containerName(id string) string { return "aegis-env-" + id }
+func taskContainerName(id string) string { return "aegis-task-" + id }
 
-func containerRuntimeState(profile ContainerProfile) ContainerProfile {
-	profile.ContainerName = containerName(profile.ID)
-	profile.RuntimeStatus = "stopped"
-	if output, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", profile.ContainerName).Output(); err == nil && strings.TrimSpace(string(output)) == "true" {
-		profile.RuntimeStatus = "running"
+func taskContainerVolumeName(id string) string { return "aegis-task-data-" + id }
+
+func containerRuntimeStatus(name string) string {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return "unavailable"
 	}
-	return profile
+	output, err := exec.Command("docker", "inspect", "--format", "{{.State.Status}}", name).CombinedOutput()
+	if err != nil {
+		if strings.Contains(strings.ToLower(string(output)), "no such") {
+			return "missing"
+		}
+		return "unavailable"
+	}
+	status := strings.TrimSpace(string(output))
+	if status == "" {
+		return "unavailable"
+	}
+	return status
 }
 
-func (s *Store) StartContainerProfile(id string) (ContainerProfile, error) {
-	profile, err := s.GetContainerProfile(id)
+func containerRuntimeState(container ContainerInstance) ContainerInstance {
+	container.RuntimeStatus = containerRuntimeStatus(container.Name)
+	return container
+}
+
+func (s *Store) Containers() []ContainerInstance {
+	var containers []ContainerInstance
+	s.db.Order("created_at desc").Find(&containers)
+	for index := range containers {
+		containers[index] = containerRuntimeState(containers[index])
+	}
+	return containers
+}
+
+func (s *Store) GetContainer(id string) (ContainerInstance, error) {
+	var container ContainerInstance
+	if err := s.db.First(&container, "id = ?", id).Error; err != nil {
+		return ContainerInstance{}, errors.New("container not found")
+	}
+	return containerRuntimeState(container), nil
+}
+
+func (s *Store) ensureTaskContainer(issue Issue) (ContainerInstance, error) {
+	if strings.TrimSpace(issue.ContainerProfileID) == "" {
+		return ContainerInstance{}, errors.New("Issue 未配置容器环境")
+	}
+	taskID, err := s.taskIDForIssue(issue)
 	if err != nil {
-		return ContainerProfile{}, err
+		return ContainerInstance{}, err
 	}
-	if !profile.Enabled {
-		return ContainerProfile{}, errors.New("容器环境已停用")
+	var task Task
+	if err = s.db.First(&task, "id = ?", taskID).Error; err != nil {
+		return ContainerInstance{}, errors.New("task not found")
 	}
-	if profile.HostWorkspace == "" {
-		return ContainerProfile{}, errors.New("请先配置宿主机工作目录")
+	var container ContainerInstance
+	if task.ContainerID != "" {
+		container, err = s.GetContainer(task.ContainerID)
+	} else {
+		err = s.db.First(&container, "task_id = ?", task.ID).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			profile, profileErr := s.GetContainerProfile(issue.ContainerProfileID)
+			if profileErr != nil || !profile.Enabled {
+				return ContainerInstance{}, errors.New("容器执行环境不存在或已停用")
+			}
+			now := time.Now()
+			container = ContainerInstance{
+				ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: task.ID,
+				Image: profile.Image, NodePath: profile.NodePath, PiPath: profile.PiPath,
+				WorkspacePath: profile.WorkspacePath, NetworkMode: profile.NetworkMode,
+				MemoryMB: profile.MemoryMB, CPUs: profile.CPUs, CreatedAt: now, UpdatedAt: now,
+			}
+			container.Name = taskContainerName(container.ID)
+			if err = s.db.Create(&container).Error; err != nil {
+				return ContainerInstance{}, err
+			}
+		} else if err != nil {
+			return ContainerInstance{}, err
+		}
 	}
-	if info, statErr := os.Stat(profile.HostWorkspace); statErr != nil || !info.IsDir() {
-		return ContainerProfile{}, errors.New("宿主机工作目录不存在")
+	if container.ContainerProfileID != issue.ContainerProfileID {
+		return ContainerInstance{}, errors.New("任务绑定的容器与当前环境配置不一致")
+	}
+	if err = s.bindTaskContainer(task.ID, container.ID); err != nil {
+		return ContainerInstance{}, err
+	}
+	container, err = s.StartContainer(container.ID)
+	if err != nil {
+		return ContainerInstance{}, err
+	}
+	s.notify()
+	return container, nil
+}
+
+func (s *Store) taskIDForIssue(issue Issue) (string, error) {
+	current := issue
+	for {
+		if current.TaskSourceID != "" {
+			return current.TaskSourceID, nil
+		}
+		if current.ParentID == "" {
+			return "", errors.New("Issue 未关联任务定义")
+		}
+		var parent Issue
+		if err := s.db.First(&parent, "id = ?", current.ParentID).Error; err != nil {
+			return "", errors.New("Issue 根任务不存在")
+		}
+		current = parent
+	}
+}
+
+func (s *Store) bindTaskContainer(taskID, containerID string) error {
+	issueIDs, err := s.issueIDsForTask(taskID)
+	if err != nil {
+		return err
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Task{}).Where("id = ?", taskID).Updates(map[string]any{"container_id": containerID, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		if len(issueIDs) > 0 {
+			return tx.Model(&Issue{}).Where("id IN ?", issueIDs).Updates(map[string]any{"container_id": containerID, "updated_at": time.Now()}).Error
+		}
+		return nil
+	})
+}
+
+func (s *Store) issueIDsForTask(taskID string) ([]string, error) {
+	var issues []Issue
+	if err := s.db.Select("id", "parent_id", "task_source_id").Find(&issues).Error; err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool)
+	for _, issue := range issues {
+		if issue.TaskSourceID == taskID {
+			set[issue.ID] = true
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, issue := range issues {
+			if issue.ParentID != "" && set[issue.ParentID] && !set[issue.ID] {
+				set[issue.ID] = true
+				changed = true
+			}
+		}
+	}
+	ids := make([]string, 0, len(set))
+	for _, issue := range issues {
+		if set[issue.ID] {
+			ids = append(ids, issue.ID)
+		}
+	}
+	return ids, nil
+}
+
+func (s *Store) StartContainer(id string) (ContainerInstance, error) {
+	container, err := s.GetContainer(id)
+	if err != nil {
+		return ContainerInstance{}, err
 	}
 	if err = ProbeDocker(); err != nil {
-		return ContainerProfile{}, err
+		return ContainerInstance{}, err
 	}
-	name := containerName(profile.ID)
-	_ = exec.Command("docker", "rm", "-f", name).Run()
-	args := []string{"run", "--detach", "--name", name, "--workdir", profile.WorkspacePath, "--network", profile.NetworkMode, "--add-host", "host.docker.internal:host-gateway"}
-	if profile.MemoryMB > 0 {
-		args = append(args, "--memory", fmt.Sprintf("%dm", profile.MemoryMB))
+	container = containerRuntimeState(container)
+	switch container.RuntimeStatus {
+	case "running":
+		return container, nil
+	case "created", "exited", "stopped":
+		if output, startErr := exec.Command("docker", "start", container.Name).CombinedOutput(); startErr != nil {
+			return ContainerInstance{}, fmt.Errorf("启动容器失败: %s", strings.TrimSpace(string(output)))
+		}
+	case "paused":
+		if output, unpauseErr := exec.Command("docker", "unpause", container.Name).CombinedOutput(); unpauseErr != nil {
+			return ContainerInstance{}, fmt.Errorf("恢复容器失败: %s", strings.TrimSpace(string(output)))
+		}
+	case "restarting", "removing":
+		return ContainerInstance{}, fmt.Errorf("容器当前状态为 %s，请稍后重试", container.RuntimeStatus)
+	case "dead":
+		if output, removeErr := exec.Command("docker", "rm", "-f", container.Name).CombinedOutput(); removeErr != nil {
+			return ContainerInstance{}, fmt.Errorf("清理异常容器失败: %s", strings.TrimSpace(string(output)))
+		}
+		if err = s.createContainerRuntime(container); err != nil {
+			return ContainerInstance{}, err
+		}
+	default:
+		if err = s.createContainerRuntime(container); err != nil {
+			return ContainerInstance{}, err
+		}
 	}
-	if profile.CPUs > 0 {
-		args = append(args, "--cpus", strconv.FormatFloat(profile.CPUs, 'f', -1, 64))
+	_ = s.db.Model(&ContainerInstance{}).Where("id = ?", id).Update("updated_at", time.Now()).Error
+	s.notify()
+	return s.GetContainer(id)
+}
+
+func (s *Store) createContainerRuntime(container ContainerInstance) error {
+	args := []string{
+		"run", "--detach", "--name", container.Name,
+		"--label", "aegis.managed=true",
+		"--label", "aegis.container-id=" + container.ID,
+		"--label", "aegis.profile-id=" + container.ContainerProfileID,
+		"--label", "aegis.task-id=" + container.TaskID,
+		"--workdir", container.WorkspacePath, "--network", container.NetworkMode,
+		"--add-host", "host.docker.internal:host-gateway",
 	}
-	args = append(args, "--volume", profile.HostWorkspace+":"+profile.WorkspacePath, "--volume", filepath.Join(s.dataDir, "sessions")+":/aegis/sessions", "--volume", filepath.Join(s.dataDir, "runtime", "aegis-guard.ts")+":/aegis/runtime/aegis-guard.ts:ro")
+	if container.MemoryMB > 0 {
+		args = append(args, "--memory", fmt.Sprintf("%dm", container.MemoryMB))
+	}
+	if container.CPUs > 0 {
+		args = append(args, "--cpus", strconv.FormatFloat(container.CPUs, 'f', -1, 64))
+	}
+	args = append(args,
+		"--volume", taskContainerVolumeName(container.ID)+":"+container.WorkspacePath,
+		"--volume", filepath.Join(s.dataDir, "sessions")+":/aegis/sessions",
+		"--volume", filepath.Join(s.dataDir, "runtime", "aegis-guard.ts")+":/aegis/runtime/aegis-guard.ts:ro",
+	)
 	if info, statErr := os.Stat(filepath.Join(s.dataDir, "skills")); statErr == nil && info.IsDir() {
 		args = append(args, "--volume", filepath.Join(s.dataDir, "skills")+":/aegis/skills:ro")
 	}
-	args = append(args, profile.Image, "sleep", "infinity")
+	args = append(args, container.Image, "sleep", "infinity")
 	if output, runErr := exec.Command("docker", args...).CombinedOutput(); runErr != nil {
-		return ContainerProfile{}, fmt.Errorf("启动容器失败: %s", strings.TrimSpace(string(output)))
+		return fmt.Errorf("创建容器失败: %s", strings.TrimSpace(string(output)))
 	}
-	s.notify()
-	return s.GetContainerProfile(id)
+	return nil
 }
 
-func (s *Store) StopContainerProfile(id string) (ContainerProfile, error) {
-	profile, err := s.GetContainerProfile(id)
+func (s *Store) StopContainer(id string) (ContainerInstance, error) {
+	container, err := s.GetContainer(id)
 	if err != nil {
-		return ContainerProfile{}, err
+		return ContainerInstance{}, err
 	}
-	name := containerName(profile.ID)
-	if output, stopErr := exec.Command("docker", "stop", "--time", "5", name).CombinedOutput(); stopErr != nil && profile.RuntimeStatus == "running" {
-		return ContainerProfile{}, fmt.Errorf("停止容器失败: %s", strings.TrimSpace(string(output)))
+	if container.RuntimeStatus == "unavailable" {
+		if err = ProbeDocker(); err != nil {
+			return ContainerInstance{}, err
+		}
+		container = containerRuntimeState(container)
 	}
-	_ = exec.Command("docker", "rm", name).Run()
+	if !slices.Contains([]string{"running", "paused", "restarting"}, container.RuntimeStatus) {
+		return container, nil
+	}
+	if output, stopErr := exec.Command("docker", "stop", "--time", "5", container.Name).CombinedOutput(); stopErr != nil {
+		return ContainerInstance{}, fmt.Errorf("停止容器失败: %s", strings.TrimSpace(string(output)))
+	}
+	_ = s.db.Model(&ContainerInstance{}).Where("id = ?", id).Update("updated_at", time.Now()).Error
 	s.notify()
-	return s.GetContainerProfile(id)
+	return s.GetContainer(id)
+}
+
+func removeContainerRuntime(container ContainerInstance) error {
+	if err := ProbeDocker(); err != nil {
+		return err
+	}
+	if output, err := exec.Command("docker", "rm", "-f", container.Name).CombinedOutput(); err != nil && !strings.Contains(strings.ToLower(string(output)), "no such") {
+		return fmt.Errorf("删除容器失败: %s", strings.TrimSpace(string(output)))
+	}
+	volume := taskContainerVolumeName(container.ID)
+	if output, err := exec.Command("docker", "volume", "rm", "-f", volume).CombinedOutput(); err != nil && !strings.Contains(strings.ToLower(string(output)), "no such") {
+		return fmt.Errorf("删除容器工作区失败: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func BuildWorkerContainerImage(ctx context.Context) (string, error) {
@@ -195,6 +385,10 @@ func (s *Store) containerProfileDeletePlan(id string) (containerProfileDeletePla
 
 	var tasks []Task
 	if err := s.db.Select("id").Where("container_profile_id = ?", id).Find(&tasks).Error; err != nil {
+		return containerProfileDeletePlan{}, err
+	}
+	var containerCount int64
+	if err := s.db.Model(&ContainerInstance{}).Where("container_profile_id = ?", id).Count(&containerCount).Error; err != nil {
 		return containerProfileDeletePlan{}, err
 	}
 	taskIDs := make([]string, 0, len(tasks))
@@ -258,7 +452,7 @@ func (s *Store) containerProfileDeletePlan(id string) (containerProfileDeletePla
 	}
 	return containerProfileDeletePlan{
 		Impact: ContainerProfileDeleteImpact{
-			ContainerProfileID: id, IssueCount: len(issueIDs), TaskCount: len(taskIDs),
+			ContainerProfileID: id, ContainerCount: int(containerCount), IssueCount: len(issueIDs), TaskCount: len(taskIDs),
 			ExecutionCount: len(executionIDs), ActiveExecutionCount: activeExecutions,
 		},
 		IssueIDs: issueIDs, TaskIDs: taskIDs, ExecutionIDs: executionIDs, AttachmentPaths: attachmentPaths,
@@ -271,20 +465,102 @@ func (s *Store) ContainerProfileDeleteImpact(id string) (ContainerProfileDeleteI
 }
 
 func (s *Store) DeleteContainerProfile(id string, cascadeIssues bool) (ContainerProfileDeleteResult, error) {
-	if profile, err := s.GetContainerProfile(id); err == nil && profile.RuntimeStatus == "running" {
-		return ContainerProfileDeleteResult{}, errors.New("请先停止容器再删除环境")
-	}
 	plan, err := s.containerProfileDeletePlan(id)
 	if err != nil {
 		return ContainerProfileDeleteResult{}, err
 	}
-	if (plan.Impact.IssueCount > 0 || plan.Impact.TaskCount > 0) && !cascadeIssues {
+	if plan.Impact.ContainerCount > 0 || plan.Impact.IssueCount > 0 || plan.Impact.TaskCount > 0 {
 		return ContainerProfileDeleteResult{}, fmt.Errorf(
-			"%w：关联 %d 个 Issues 和 %d 个任务定义；确认级联删除后重试",
-			ErrContainerProfileReferenced, plan.Impact.IssueCount, plan.Impact.TaskCount,
+			"%w：关联 %d 个容器、%d 个 Issues 和 %d 个任务；请先删除关联容器和任务",
+			ErrContainerProfileReferenced, plan.Impact.ContainerCount, plan.Impact.IssueCount, plan.Impact.TaskCount,
 		)
 	}
 	result := ContainerProfileDeleteResult{ContainerProfileID: id}
+	deleted := s.db.Delete(&ContainerProfile{}, "id = ?", id)
+	err = deleted.Error
+	if err == nil && deleted.RowsAffected == 0 {
+		err = errors.New("container profile not found")
+	}
+	if err != nil {
+		return ContainerProfileDeleteResult{}, err
+	}
+	s.notify()
+	return result, nil
+}
+
+type containerDeletePlan struct {
+	Container       ContainerInstance
+	Impact          ContainerDeleteImpact
+	IssueIDs        []string
+	ExecutionIDs    []string
+	AttachmentPaths []string
+}
+
+func (s *Store) containerDeletePlan(id string) (containerDeletePlan, error) {
+	container, err := s.GetContainer(id)
+	if err != nil {
+		return containerDeletePlan{}, err
+	}
+	issueIDs, err := s.issueIDsForTask(container.TaskID)
+	if err != nil {
+		return containerDeletePlan{}, err
+	}
+	var executions []Execution
+	if len(issueIDs) > 0 {
+		if err = s.db.Select("id", "status").Where("issue_id IN ?", issueIDs).Find(&executions).Error; err != nil {
+			return containerDeletePlan{}, err
+		}
+	}
+	executionIDs := make([]string, 0, len(executions))
+	activeExecutions := 0
+	for _, execution := range executions {
+		executionIDs = append(executionIDs, execution.ID)
+		if slices.Contains(activeExecutionStatuses, execution.Status) {
+			activeExecutions++
+		}
+	}
+	var attachments []IssueAttachment
+	if len(issueIDs) > 0 {
+		if err = s.db.Select("storage_path").Where("issue_id IN ?", issueIDs).Find(&attachments).Error; err != nil {
+			return containerDeletePlan{}, err
+		}
+	}
+	attachmentPaths := make([]string, 0, len(attachments))
+	for _, attachment := range attachments {
+		if strings.TrimSpace(attachment.StoragePath) != "" {
+			attachmentPaths = append(attachmentPaths, attachment.StoragePath)
+		}
+	}
+	return containerDeletePlan{
+		Container: container,
+		Impact: ContainerDeleteImpact{
+			ContainerID: container.ID, TaskID: container.TaskID, IssueCount: len(issueIDs),
+			ExecutionCount: len(executionIDs), ActiveExecutionCount: activeExecutions,
+		},
+		IssueIDs: issueIDs, ExecutionIDs: executionIDs, AttachmentPaths: attachmentPaths,
+	}, nil
+}
+
+func (s *Store) ContainerDeleteImpact(id string) (ContainerDeleteImpact, error) {
+	plan, err := s.containerDeletePlan(id)
+	return plan.Impact, err
+}
+
+func (s *Store) DeleteContainer(id string, cascadeIssues bool) (ContainerDeleteResult, error) {
+	plan, err := s.containerDeletePlan(id)
+	if err != nil {
+		return ContainerDeleteResult{}, err
+	}
+	if (plan.Impact.IssueCount > 0 || plan.Impact.ExecutionCount > 0) && !cascadeIssues {
+		return ContainerDeleteResult{}, fmt.Errorf(
+			"%w：关联 1 个任务、%d 个 Issues 和 %d 条执行记录；确认级联删除后重试",
+			ErrContainerProfileReferenced, plan.Impact.IssueCount, plan.Impact.ExecutionCount,
+		)
+	}
+	if err = removeContainerRuntime(plan.Container); err != nil {
+		return ContainerDeleteResult{}, err
+	}
+	result := ContainerDeleteResult{ContainerID: id}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if len(plan.IssueIDs) > 0 {
 			if err := tx.Where("issue_id IN ? OR related_issue_id IN ?", plan.IssueIDs, plan.IssueIDs).Delete(&IssueRelation{}).Error; err != nil {
@@ -295,7 +571,7 @@ func (s *Store) DeleteContainerProfile(id string, cascadeIssues bool) (Container
 					return err
 				}
 			}
-			if err := tx.Where("source_issue_id IN ? OR task_id IN ?", plan.IssueIDs, plan.IssueIDs).Delete(&TaskBroadcast{}).Error; err != nil {
+			if err := tx.Where("source_issue_id IN ? OR task_id = ?", plan.IssueIDs, plan.Container.TaskID).Delete(&TaskBroadcast{}).Error; err != nil {
 				return err
 			}
 			if err := tx.Where("parent_issue_id IN ?", plan.IssueIDs).Delete(&IssueDecomposition{}).Error; err != nil {
@@ -336,24 +612,22 @@ func (s *Store) DeleteContainerProfile(id string, cascadeIssues bool) (Container
 			}
 			result.DeletedIssues = issues.RowsAffected
 		}
-		if len(plan.TaskIDs) > 0 {
-			tasks := tx.Delete(&Task{}, "id IN ?", plan.TaskIDs)
-			if tasks.Error != nil {
-				return tasks.Error
-			}
-			result.DeletedTasks = tasks.RowsAffected
+		tasks := tx.Delete(&Task{}, "id = ?", plan.Container.TaskID)
+		if tasks.Error != nil {
+			return tasks.Error
 		}
-		deleted := tx.Delete(&ContainerProfile{}, "id = ?", id)
+		result.DeletedTasks = tasks.RowsAffected
+		deleted := tx.Delete(&ContainerInstance{}, "id = ?", id)
 		if deleted.Error != nil {
 			return deleted.Error
 		}
 		if deleted.RowsAffected == 0 {
-			return errors.New("container profile not found")
+			return errors.New("container not found")
 		}
 		return nil
 	})
 	if err != nil {
-		return ContainerProfileDeleteResult{}, err
+		return ContainerDeleteResult{}, err
 	}
 	for _, storagePath := range plan.AttachmentPaths {
 		absolute := filepath.Join(s.dataDir, filepath.Clean(storagePath))

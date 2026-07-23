@@ -65,7 +65,7 @@ func (s *Store) cancelTaskTree(taskID, reason string) (TaskCancellationResult, [
 
 		now := time.Now()
 		issueUpdate := tx.Model(&Issue{}).
-			Where("id IN ? AND status NOT IN ?", issueIDs, []string{"done", "cancelled"}).
+			Where("id IN ? AND status NOT IN ?", issueIDs, terminalIssueStatuses).
 			Updates(map[string]any{
 				"status":                "cancelled",
 				"execution_phase":       "completed",

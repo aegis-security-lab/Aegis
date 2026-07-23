@@ -14,6 +14,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Empty,
   EmptyDescription,
@@ -28,11 +29,13 @@ import { useAppState } from "@/lib/state"
 const approvalLabels = {
   tool_call: "工具调用",
   issue_rework: "Issue 返工",
+  validation_review: "人工验收",
 } as const
 
 export function ApprovalsPage() {
   const { state, refresh } = useAppState()
   const [busy, setBusy] = React.useState<string | null>(null)
+  const [reviewText, setReviewText] = React.useState<Record<string, string>>({})
   const approvals = state?.approvals ?? []
   const pending = approvals.filter((approval) => approval.status === "pending")
   const history = approvals.filter(
@@ -41,9 +44,15 @@ export function ApprovalsPage() {
   )
 
   const decide = async (id: string, approved: boolean) => {
+    const approval = pending.find((item) => item.id === id)
+    const content = reviewText[id] ?? ""
+    if (approval?.type === "validation_review" && !content.trim()) {
+      toast.error("请填写人工审阅内容")
+      return
+    }
     setBusy(id)
     try {
-      await resolveApproval(id, approved)
+      await resolveApproval(id, approved, content)
       await refresh()
       toast.success(approved ? "已批准" : "已拒绝")
     } catch (error) {
@@ -110,6 +119,20 @@ export function ApprovalsPage() {
                   <pre className="max-h-64 overflow-auto rounded-xl border bg-muted/35 p-4 text-xs whitespace-pre-wrap">
                     {approval.detail}
                   </pre>
+                  {approval.type === "validation_review" ? (
+                    <Textarea
+                      className="mt-4"
+                      value={reviewText[approval.id] ?? ""}
+                      onChange={(event) =>
+                        setReviewText((current) => ({
+                          ...current,
+                          [approval.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="填写人工审阅意见、验收依据或需要返工的具体内容…"
+                      rows={5}
+                    />
+                  ) : null}
                   <div className="mt-4 flex justify-between">
                     <Button
                       variant="ghost"

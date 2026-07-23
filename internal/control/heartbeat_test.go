@@ -96,6 +96,12 @@ func TestQueueHeartbeatForIssueWaitingOnDependency(t *testing.T) {
 	if wakeup.IssueID != blocked.ID {
 		t.Fatalf("heartbeat issue = %s, want %s", wakeup.IssueID, blocked.ID)
 	}
+	if err := store.db.Model(&Issue{}).Where("id = ?", blocker.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "completed_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eligible, reason := manager.issueHeartbeatEligibility(blocked); eligible || reason != "" {
+		t.Fatalf("failed dependency still produced a waiting heartbeat: eligible=%t reason=%q", eligible, reason)
+	}
 }
 
 func TestHeartbeatPromptContainsBudgetAndCoordinationContext(t *testing.T) {

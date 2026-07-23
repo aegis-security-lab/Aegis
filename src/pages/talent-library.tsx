@@ -300,9 +300,9 @@ export function TalentLibraryPage() {
                     <Users className="size-5" />
                   </span>
                   <div className="min-w-0">
-                    <CardTitle>{item.metadata.chineseName}</CardTitle>
+                    <CardTitle>{item.metadata.chineseName || item.model || "未命名人才"}</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {item.metadata.englishName}
+                      {item.metadata.englishName || item.id}
                     </p>
                   </div>
                 </div>

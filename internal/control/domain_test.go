@@ -120,6 +120,9 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	if !slices.Contains(custom.Tools, "aegis_publish_attachment") {
 		t.Fatalf("custom agent tools=%v, missing attachment capability", custom.Tools)
 	}
+	if !slices.Contains(custom.Tools, "aegis_submit_final_result") {
+		t.Fatalf("custom agent tools=%v, missing final-result capability", custom.Tools)
+	}
 	if !slices.Contains(custom.Tools, "aegis_report_progress") {
 		t.Fatalf("custom agent tools=%v, missing progress capability", custom.Tools)
 	}
@@ -140,6 +143,9 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	}
 	if !slices.Contains(updated.Tools, "aegis_publish_attachment") {
 		t.Fatalf("updated agent tools=%v, attachment capability was removed", updated.Tools)
+	}
+	if !slices.Contains(updated.Tools, "aegis_submit_final_result") {
+		t.Fatalf("updated agent tools=%v, final-result capability was removed", updated.Tools)
 	}
 	if !slices.Contains(updated.Tools, "aegis_report_progress") {
 		t.Fatalf("updated agent tools=%v, progress capability was removed", updated.Tools)

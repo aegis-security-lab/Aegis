@@ -1,6 +1,6 @@
 import * as React from "react"
-import { ArrowLeft, Bot, Route, Send, ShieldCheck } from "lucide-react"
-import { Link, useNavigate } from "react-router-dom"
+import { ArrowLeft, Bot, Copy, Route, Send, ShieldCheck } from "lucide-react"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
@@ -17,11 +17,13 @@ import {
 } from "@/components/ui/card"
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
   SelectContent,
@@ -67,17 +69,26 @@ const categoryLabels: Record<string, string> = {
 export function TaskNewPage() {
   const { state } = useAppState()
   const navigate = useNavigate()
+  const location = useLocation()
+  const clone = (location.state as { clone?: Partial<CreateIssueInput> } | null)
+    ?.clone
   const [busy, setBusy] = React.useState(false)
   const [form, setForm] = React.useState<CreateIssueInput>({
-    projectId: state?.projects[0]?.id,
-    title: "",
-    description: "",
-    objective: "",
-    priority: "high",
-    workMode: "guided",
+    projectId: clone?.projectId ?? state?.projects[0]?.id,
+    title: clone?.title ?? "",
+    description: clone?.description ?? "",
+    objective: clone?.objective ?? "",
+    priority: clone?.priority ?? "high",
+    assigneeAgentId: clone?.assigneeAgentId,
+    containerProfileId: clone?.containerProfileId,
+    workMode: clone?.workMode ?? "guided",
     workspace: state?.config.workspace ?? "",
-    context: "",
-    constraints: "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。",
+    context: clone?.context ?? "",
+    constraints:
+      clone?.constraints ??
+      "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。",
+    timeBudgetMinutes: clone?.timeBudgetMinutes,
+    humanValidationFallback: clone?.humanValidationFallback,
   })
 
   const enabledAgents = (state?.agents ?? []).filter(
@@ -145,6 +156,16 @@ export function TaskNewPage() {
         }
       />
 
+      {clone ? (
+        <Alert>
+          <Copy />
+          <AlertTitle>已复制旧任务配置</AlertTitle>
+          <AlertDescription>
+            标题、目标、Agent、执行方式和容器配置已带入；修改后发布会创建一个全新的任务，不会影响原任务。
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <form
         onSubmit={submit}
         className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]"
@@ -190,6 +211,18 @@ export function TaskNewPage() {
                 />
               </Field>
               <Field>
+                <FieldLabel htmlFor="description">任务说明（可选）</FieldLabel>
+                <Textarea
+                  id="description"
+                  rows={4}
+                  value={form.description}
+                  onChange={(event) =>
+                    update("description", event.target.value)
+                  }
+                  placeholder="补充交付范围、业务规则或其他执行说明…"
+                />
+              </Field>
+              <Field>
                 <FieldLabel htmlFor="objective">目标（可选）</FieldLabel>
                 <Textarea
                   id="objective"
@@ -204,16 +237,7 @@ export function TaskNewPage() {
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="workspace">工作目录</FieldLabel>
-                <Input
-                  id="workspace"
-                  required
-                  value={form.workspace}
-                  onChange={(event) => update("workspace", event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="task-runtime">执行环境</FieldLabel>
+                <FieldLabel htmlFor="task-runtime">容器环境配置</FieldLabel>
                 <Select
                   value={form.containerProfileId || "host"}
                   onValueChange={(value) => {
@@ -221,32 +245,26 @@ export function TaskNewPage() {
                       "containerProfileId",
                       !value || value === "host" ? undefined : value
                     )
-                    const profile = state?.containerProfiles.find(
-                      (item) => item.id === value
-                    )
-                    if (profile) update("workspace", profile.hostWorkspace)
                   }}
                 >
                   <SelectTrigger id="task-runtime" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false}>
-                    <SelectItem value="host">宿主机（默认）</SelectItem>
-                    {(state?.containerProfiles ?? [])
-                      .filter(
-                        (profile) =>
-                          profile.enabled && profile.runtimeStatus === "running"
-                      )
-                      .map((profile) => (
-                        <SelectItem key={profile.id} value={profile.id}>
-                          {profile.name} · {profile.image}
-                        </SelectItem>
-                      ))}
+                    <SelectGroup>
+                      <SelectItem value="host">宿主机（默认）</SelectItem>
+                      {(state?.containerProfiles ?? [])
+                        .filter((profile) => profile.enabled)
+                        .map((profile) => (
+                          <SelectItem key={profile.id} value={profile.id}>
+                            {profile.name} · {profile.image}
+                          </SelectItem>
+                        ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
                 <FieldDescription>
-                  选择容器后，每次 Execution
-                  都会启动一个临时容器，并将上方工作目录挂载到容器工作区。
+                  这里选择的是创建模板，不会立即创建容器。任务真正开始前系统会按配置创建独立容器并与任务绑定；再次执行会复用该容器。
                 </FieldDescription>
               </Field>
               <Field>
@@ -266,12 +284,7 @@ export function TaskNewPage() {
             <Button
               type="submit"
               size="lg"
-              disabled={
-                busy ||
-                !selectedAgentId ||
-                !form.title.trim() ||
-                !form.workspace.trim()
-              }
+              disabled={busy || !selectedAgentId || !form.title.trim()}
             >
               {busy ? (
                 <Spinner data-icon="inline-start" />
@@ -326,6 +339,23 @@ export function TaskNewPage() {
                       : selectedAgent?.description ||
                         "该 Agent 会直接执行任务，并可按复杂度拆分子 Issues。"}
                   </FieldDescription>
+                </Field>
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="task-human-validation"
+                    checked={form.humanValidationFallback ?? false}
+                    onCheckedChange={(checked) =>
+                      update("humanValidationFallback", checked === true)
+                    }
+                  />
+                  <FieldContent>
+                    <FieldLabel htmlFor="task-human-validation">
+                      启用人工兜底验收
+                    </FieldLabel>
+                    <FieldDescription>
+                      关闭时，固定验收次数耗尽会直接失败并释放依赖；默认关闭。
+                    </FieldDescription>
+                  </FieldContent>
                 </Field>
                 {selectedAgent ? (
                   <Field orientation="horizontal" className="flex-wrap gap-2">
@@ -399,7 +429,9 @@ export function TaskNewPage() {
                   </Select>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="task-time-budget">时间预算（分钟）</FieldLabel>
+                  <FieldLabel htmlFor="task-time-budget">
+                    时间预算（分钟）
+                  </FieldLabel>
                   <Input
                     id="task-time-budget"
                     type="number"
@@ -410,13 +442,16 @@ export function TaskNewPage() {
                       const value = event.target.value
                       update(
                         "timeBudgetMinutes",
-                        value ? Math.max(1, Number.parseInt(value, 10)) : undefined
+                        value
+                          ? Math.max(1, Number.parseInt(value, 10))
+                          : undefined
                       )
                     }}
                     placeholder="使用全局配置"
                   />
                   <FieldDescription>
-                    留空使用设置中的全局预算；填写后仅本任务根 Issue 使用该预算，优先级高于全局时间预算，子 Issue 不重复计时。
+                    留空使用设置中的全局预算；填写后仅本任务根 Issue
+                    使用该预算，优先级高于全局时间预算，子 Issue 不重复计时。
                   </FieldDescription>
                 </Field>
               </FieldGroup>

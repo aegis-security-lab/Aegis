@@ -21,7 +21,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var requiredAgentTools = []string{"aegis_create_subissues", "aegis_list_child_issues", "aegis_wait_for_child_issues", "aegis_cancel_issue", "aegis_comment_issue", "aegis_publish_attachment", "aegis_report_progress", "aegis_get_issue_progress", "aegis_broadcast", "aegis_list_broadcasts", "aegis_get_memo", "aegis_update_memo", "aegis_request_rework"}
+var requiredAgentTools = []string{"aegis_create_subissues", "aegis_list_child_issues", "aegis_wait_for_child_issues", "aegis_cancel_issue", "aegis_comment_issue", "aegis_publish_attachment", "aegis_submit_final_result", "aegis_report_progress", "aegis_get_issue_progress", "aegis_broadcast", "aegis_list_broadcasts", "aegis_get_memo", "aegis_update_memo", "aegis_request_rework"}
 var defaultAgentTools = ensureRequiredAgentTools([]string{"read", "grep", "find", "ls", "bash", "edit", "write"})
 
 const (
@@ -948,6 +948,21 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 	}
 	internal := exists && s.agents[index].Internal
 	concierge := id == conciergeAgentID || strings.TrimSpace(input.Category) == "concierge"
+	// Keep the data invariant for programmatic callers and old imports: every
+	// external employee is assigned to a safe default department when no
+	// department was supplied. The hiring UI still requires an explicit choice.
+	if !internal && strings.TrimSpace(input.DepartmentID) == "" {
+		input.DepartmentID = "department-engineering"
+	}
+	if !internal && strings.TrimSpace(input.DepartmentID) != "" {
+		var department Department
+		if err := s.db.First(&department, "id = ?", strings.TrimSpace(input.DepartmentID)).Error; err != nil {
+			return AgentDefinition{}, errors.New("所属部门不存在")
+		}
+		if !department.Enabled {
+			return AgentDefinition{}, errors.New("所属部门已停用")
+		}
+	}
 	if !internal && !concierge {
 		input.Tools = ensureRequiredAgentTools(input.Tools)
 	}
@@ -973,7 +988,7 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 		ID: id, TemplateID: template.ID, Name: name, Description: strings.TrimSpace(input.Description), Avatar: strings.TrimSpace(input.Avatar),
 		Category: fallback(strings.TrimSpace(input.Category), "general"), Enabled: input.Enabled, Builtin: builtin, Internal: internal,
 		Model: input.Model, SystemPrompt: strings.TrimSpace(input.SystemPrompt), Memo: strings.TrimSpace(input.Memo),
-		Tools: tools, SkillIDs: uniqueStrings(input.SkillIDs), KnowledgeBaseIDs: uniqueStrings(input.KnowledgeBaseIDs), Permissions: input.Permissions,
+		Tools: tools, SkillIDs: uniqueStrings(input.SkillIDs), KnowledgeBaseIDs: uniqueStrings(input.KnowledgeBaseIDs), Permissions: input.Permissions, DepartmentID: strings.TrimSpace(input.DepartmentID),
 		CreatedAt: createdAt, UpdatedAt: now,
 	}
 	if internal {

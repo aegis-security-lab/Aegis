@@ -91,6 +91,40 @@ func TestStartupRepairsFailedPlanningParseAfterToolCreatedChildren(t *testing.T)
 	}
 }
 
+func TestStartupMigratesBlockedExecutionFailureToTerminalIssue(t *testing.T) {
+	store := configuredStore(t)
+	dataDir := store.DataDir()
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Legacy blocked failure", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "failed", "error": "runtime failed", "finished_at": now}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "blocked", "execution_phase": "blocked", "current_execution_id": execution.ID,
+		"checkout_execution_id": execution.ID, "error": "runtime failed", "updated_at": now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := reopened.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.Status != "failed" || migrated.ExecutionPhase != "completed" || migrated.CompletedAt == nil || migrated.CheckoutExecutionID != "" {
+		t.Fatalf("legacy blocked execution failure was not migrated: %+v", migrated)
+	}
+}
+
 func createPlanningToolResult(t *testing.T, store *Store) (Issue, Execution, IssueDecomposition) {
 	t.Helper()
 	parent, err := store.CreateIssue(CreateIssueInput{

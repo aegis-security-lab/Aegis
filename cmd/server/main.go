@@ -56,6 +56,7 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "time": time.Now()}) })
 	api.GET("/container-profiles", func(c *gin.Context) { c.JSON(http.StatusOK, store.ContainerProfiles()) })
+	api.GET("/containers", func(c *gin.Context) { c.JSON(http.StatusOK, store.Containers()) })
 	api.POST("/container-profiles/image/build", func(c *gin.Context) {
 		output, err := control.BuildWorkerContainerImage(c.Request.Context())
 		if err != nil {
@@ -64,21 +65,21 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, gin.H{"image": control.WorkerContainerImage, "output": output})
 	})
-	api.POST("/container-profiles/:id/start", func(c *gin.Context) {
-		profile, err := store.StartContainerProfile(c.Param("id"))
+	api.POST("/containers/:id/start", func(c *gin.Context) {
+		container, err := store.StartContainer(c.Param("id"))
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return
 		}
-		c.JSON(http.StatusOK, profile)
+		c.JSON(http.StatusOK, container)
 	})
-	api.POST("/container-profiles/:id/stop", func(c *gin.Context) {
-		profile, err := store.StopContainerProfile(c.Param("id"))
+	api.POST("/containers/:id/stop", func(c *gin.Context) {
+		container, err := store.StopContainer(c.Param("id"))
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return
 		}
-		c.JSON(http.StatusOK, profile)
+		c.JSON(http.StatusOK, container)
 	})
 	api.POST("/container-profiles", func(c *gin.Context) {
 		var in control.SaveContainerProfileInput
@@ -115,6 +116,26 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	api.DELETE("/container-profiles/:id", func(c *gin.Context) {
 		cascadeIssues := c.Query("cascadeIssues") == "true"
 		result, err := manager.DeleteContainerProfile(c.Param("id"), cascadeIssues)
+		if err != nil {
+			status := http.StatusUnprocessableEntity
+			if errors.Is(err, control.ErrContainerProfileReferenced) {
+				status = http.StatusConflict
+			}
+			writeError(c, status, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.GET("/containers/:id/delete-impact", func(c *gin.Context) {
+		impact, err := store.ContainerDeleteImpact(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, impact)
+	})
+	api.DELETE("/containers/:id", func(c *gin.Context) {
+		result, err := manager.DeleteContainer(c.Param("id"), c.Query("cascadeIssues") == "true")
 		if err != nil {
 			status := http.StatusUnprocessableEntity
 			if errors.Is(err, control.ErrContainerProfileReferenced) {
@@ -295,6 +316,20 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusCreated, v)
 	})
+	api.PATCH("/tasks/:id/budget", func(c *gin.Context) {
+		var in struct {
+			TimeBudgetMinutes *int `json:"timeBudgetMinutes"`
+		}
+		if !bindJSON(c, &in) {
+			return
+		}
+		task, _, err := store.UpdateTaskBudget(c.Param("id"), in.TimeBudgetMinutes)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, task)
+	})
 	api.POST("/tasks", func(c *gin.Context) {
 		var in control.CreateIssueInput
 		if !bindJSON(c, &in) {
@@ -367,7 +402,41 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		c.JSON(http.StatusCreated, issue)
 	})
 	api.POST("/internal/executions/:id/attachments", func(c *gin.Context) {
-		var in control.PublishAttachmentInput
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, control.MaxAttachmentSize+(1<<20))
+		header, err := c.FormFile("file")
+		if err != nil {
+			writeError(c, http.StatusBadRequest, errors.New("附件文件不能为空或请求超过大小限制"))
+			return
+		}
+		file, err := header.Open()
+		if err != nil {
+			writeError(c, http.StatusBadRequest, err)
+			return
+		}
+		defer file.Close()
+		name := strings.TrimSpace(c.PostForm("name"))
+		if name == "" {
+			name = header.Filename
+		}
+		in := control.PublishAttachmentInput{
+			Path:        c.PostForm("path"),
+			Name:        name,
+			Description: c.PostForm("description"),
+		}
+		result, err := manager.UploadExecutionAttachment(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in, file, header.Size)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, result)
+	})
+	api.POST("/internal/executions/:id/final-result", func(c *gin.Context) {
+		var in control.SubmitFinalResultInput
 		if !bindJSON(c, &in) {
 			return
 		}
@@ -376,12 +445,12 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
 			return
 		}
-		result, err := manager.PublishExecutionAttachment(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		result, err := manager.SubmitFinalResult(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return
 		}
-		c.JSON(http.StatusCreated, result)
+		c.JSON(http.StatusOK, result)
 	})
 	api.POST("/internal/executions/:id/uncover", func(c *gin.Context) {
 		var in control.UncoverSearchInput
@@ -498,6 +567,23 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		result, err := manager.CancelIssueFromExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/resume-issue-tree", func(c *gin.Context) {
+		var in control.ResumeIssueTreeInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.ResumeIssueTreeFromExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return
@@ -817,13 +903,11 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		c.JSON(http.StatusAccepted, result)
 	})
 	api.POST("/approvals/:id", func(c *gin.Context) {
-		var in struct {
-			Approved bool `json:"approved"`
-		}
+		var in control.ApprovalDecisionInput
 		if !bindJSON(c, &in) {
 			return
 		}
-		v, err := manager.ResolveApproval(c.Param("id"), in.Approved)
+		v, err := manager.ResolveApproval(c.Param("id"), in.Approved, in.ReviewContent)
 		if err != nil {
 			writeError(c, 409, err)
 			return
@@ -928,6 +1012,39 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	})
 
 	api.GET("/agents", func(c *gin.Context) { c.JSON(200, store.Agents()) })
+	api.GET("/departments", func(c *gin.Context) { c.JSON(http.StatusOK, store.Departments()) })
+	api.POST("/departments", func(c *gin.Context) {
+		var in control.SaveDepartmentInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		v, err := store.SaveDepartment(in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.PUT("/departments/:id", func(c *gin.Context) {
+		var in control.SaveDepartmentInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		in.ID = c.Param("id")
+		v, err := store.SaveDepartment(in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.DELETE("/departments/:id", func(c *gin.Context) {
+		if err := store.DeleteDepartment(c.Param("id")); err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 	api.GET("/agent-templates", func(c *gin.Context) { c.JSON(200, store.AgentTemplates()) })
 	api.POST("/agent-templates", func(c *gin.Context) {
 		var in control.SaveAgentTemplateInput

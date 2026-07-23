@@ -3,7 +3,6 @@ package control
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -43,7 +42,7 @@ func (m *Manager) abandonIssueWithSummary(id, reason, instruction, eventTitle, e
 	if issue.ParentID == "" && !allowTopLevel {
 		return Issue{}, errors.New("顶层任务请使用“取消任务”；只有子 Issue 可以放弃目标")
 	}
-	if slices.Contains([]string{"done", "cancelled"}, issue.Status) {
+	if issueStatusTerminal(issue.Status) {
 		return Issue{}, errors.New("已经结束的 Issue 不能放弃目标")
 	}
 	if issue.AbandonRequestedAt != nil {
@@ -65,7 +64,7 @@ func (m *Manager) abandonIssueWithSummary(id, reason, instruction, eventTitle, e
 	err = m.store.db.Transaction(func(tx *gorm.DB) error {
 		if len(descendantIDs) > 0 {
 			if err := tx.Model(&Issue{}).
-				Where("id IN ? AND status NOT IN ?", descendantIDs, []string{"done", "cancelled"}).
+				Where("id IN ? AND status NOT IN ?", descendantIDs, terminalIssueStatuses).
 				Updates(map[string]any{
 					"status": "cancelled", "execution_phase": "completed", "checkout_execution_id": "",
 					"cancelled_at": now, "error": eventTitle, "updated_at": now,
@@ -161,7 +160,7 @@ func (m *Manager) SetIssueValidationDisabled(id string, disabled bool) (Issue, e
 	if err != nil {
 		return Issue{}, err
 	}
-	if slices.Contains([]string{"done", "cancelled"}, issue.Status) {
+	if issueStatusTerminal(issue.Status) {
 		return Issue{}, errors.New("已经结束的 Issue 不能修改验收设置")
 	}
 	if issue.ValidationDisabled == disabled {
@@ -224,7 +223,7 @@ func (m *Manager) completeIssueWithoutValidation(issue Issue, sourceExecutionID,
 	if status == "done" {
 		updates["completed_at"] = now
 	}
-	_ = m.store.db.Model(&Issue{}).Where("id = ? AND status NOT IN ?", issue.ID, []string{"done", "cancelled"}).Updates(updates).Error
+	_ = m.store.db.Model(&Issue{}).Where("id = ? AND status NOT IN ?", issue.ID, terminalIssueStatuses).Updates(updates).Error
 	title := "已跳过目标验收"
 	detail := "此 Issue 已配置为跳过验收，Worker 产出直接进入完成状态。"
 	if strings.TrimSpace(issue.Objective) == "" {
@@ -246,7 +245,6 @@ func (m *Manager) finalizeManualAbandon(issue Issue, executionID, agentID, resul
 	result = strings.TrimSpace(result)
 	if executionID != "" {
 		_ = m.store.updateExecution(executionID, map[string]any{"status": "completed", "result": result, "current_tool": "", "finished_at": now, "pid": 0})
-		m.collectExecutionAttachments(issue, executionID)
 		m.addAgentComment(issue.ID, agentID, fallback(result, "已按操作员要求停止工作并完成最终总结。"), executionID)
 	}
 	if result == "" {

@@ -1,7 +1,6 @@
 package control
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,20 +13,51 @@ import (
 	"gorm.io/gorm"
 )
 
-const maxAttachmentSize = 100 << 20
+const MaxAttachmentSize = 100 << 20
 const maxValidationAttachmentChunk = 32 << 10
 
-func (m *Manager) PublishExecutionAttachment(executionID, token string, input PublishAttachmentInput) (IssueAttachment, error) {
+func (m *Manager) SubmitFinalResult(executionID, token string, input SubmitFinalResultInput) (Execution, error) {
+	session := m.getSession(executionID)
+	if session == nil || token == "" || !secureEqual(token, session.controlToken) {
+		return Execution{}, errors.New("invalid execution control token")
+	}
+	input.Body = strings.TrimSpace(input.Body)
+	if input.Body == "" {
+		return Execution{}, errors.New("最终结果正文不能为空")
+	}
+	if len([]rune(input.Body)) > 50000 {
+		return Execution{}, errors.New("最终结果正文不能超过 50000 个字符")
+	}
+	issue, err := m.store.GetIssue(session.issueID)
+	if err != nil {
+		return Execution{}, err
+	}
+	if strings.TrimSpace(input.Path) != "" {
+		return Execution{}, errors.New("附件必须先通过附件工具直传服务端，再提交最终结果")
+	}
+	if err := m.store.db.Model(&Execution{}).Where("id = ?", executionID).Updates(map[string]any{"final_result": input.Body, "final_result_submitted": true, "result": input.Body}).Error; err != nil {
+		return Execution{}, err
+	}
+	m.store.addEvent(executionID, issue.ID, "delivery", "Agent 已提交最终结果", "最终结果将作为独立交付内容进入验收，不再使用验收回复作为交付正文。")
+	m.store.notify()
+	var execution Execution
+	err = m.store.db.First(&execution, "id = ?", executionID).Error
+	return execution, err
+}
+
+func (m *Manager) UploadExecutionAttachment(executionID, token string, input PublishAttachmentInput, source io.Reader, size int64) (IssueAttachment, error) {
 	session := m.getSession(executionID)
 	if session == nil || token == "" || len(token) != len(session.controlToken) || !secureEqual(token, session.controlToken) {
 		return IssueAttachment{}, errors.New("invalid execution control token")
+	}
+	if source == nil {
+		return IssueAttachment{}, errors.New("附件内容不能为空")
 	}
 	issue, err := m.store.GetIssue(session.issueID)
 	if err != nil {
 		return IssueAttachment{}, err
 	}
-	input.Path = m.hostWorkspacePath(issue, input.Path)
-	attachment, err := m.store.captureAttachment(issue, executionID, input)
+	attachment, err := m.store.captureUploadedAttachment(issue, executionID, input, source, size)
 	if err != nil {
 		return IssueAttachment{}, err
 	}
@@ -142,78 +172,30 @@ func secureEqual(left, right string) bool {
 	return mismatch == 0
 }
 
-func (m *Manager) collectExecutionAttachments(issue Issue, executionID string) {
-	var events []ExecutionEvent
-	if err := m.store.db.Where(
-		"execution_id = ? AND type = ? AND tool_name = ? AND status = ? AND is_error = ?",
-		executionID, "tool", "write", "completed", false,
-	).Order("created_at asc").Find(&events).Error; err != nil {
-		return
+func (s *Store) captureUploadedAttachment(issue Issue, executionID string, input PublishAttachmentInput, source io.Reader, size int64) (IssueAttachment, error) {
+	executionID = strings.TrimSpace(executionID)
+	sourcePath := strings.TrimSpace(filepath.ToSlash(input.Path))
+	if executionID == "" || sourcePath == "" {
+		return IssueAttachment{}, errors.New("execution id and attachment source path are required")
 	}
-	for _, event := range events {
-		var input map[string]any
-		if json.Unmarshal([]byte(event.InputJSON), &input) != nil {
-			continue
-		}
-		path, _ := input["path"].(string)
-		path = strings.TrimSpace(path)
-		if path == "" || !autoPublishableAttachment(path) {
-			continue
-		}
-		path = m.hostWorkspacePath(issue, path)
-		_, _ = m.store.captureAttachment(issue, executionID, PublishAttachmentInput{Path: path})
+	if len(sourcePath) > 4096 {
+		return IssueAttachment{}, errors.New("附件来源路径过长")
 	}
-}
-
-func (m *Manager) hostWorkspacePath(issue Issue, path string) string {
-	if issue.ContainerProfileID == "" || !filepath.IsAbs(path) {
-		return path
-	}
-	profile, err := m.store.GetContainerProfile(issue.ContainerProfileID)
-	if err != nil {
-		return path
-	}
-	relative, err := filepath.Rel(profile.WorkspacePath, filepath.Clean(path))
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return path
-	}
-	return filepath.Join(issue.Workspace, relative)
-}
-
-func autoPublishableAttachment(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".tsv", ".ppt", ".pptx", ".zip", ".tar", ".gz", ".png", ".jpg", ".jpeg", ".webp", ".gif":
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *Store) captureAttachment(issue Issue, executionID string, input PublishAttachmentInput) (IssueAttachment, error) {
-	if strings.TrimSpace(executionID) == "" {
-		return IssueAttachment{}, errors.New("execution id is required")
-	}
-	source, relative, info, err := resolveWorkspaceAttachment(issue.Workspace, input.Path)
-	if err != nil {
-		return IssueAttachment{}, err
-	}
-	if info.Size() > maxAttachmentSize {
-		return IssueAttachment{}, fmt.Errorf("附件不能超过 %d MB", maxAttachmentSize>>20)
+	if size < 0 || size > MaxAttachmentSize {
+		return IssueAttachment{}, fmt.Errorf("附件不能超过 %d MB", MaxAttachmentSize>>20)
 	}
 	var existing IssueAttachment
-	if err := s.db.Where("execution_id = ? AND source_path = ?", executionID, relative).First(&existing).Error; err == nil {
+	if err := s.db.Where("execution_id = ? AND source_path = ?", executionID, sourcePath).First(&existing).Error; err == nil {
 		return existing, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return IssueAttachment{}, err
 	}
 
-	name := strings.TrimSpace(input.Name)
-	if name == "" {
-		name = filepath.Base(source)
-	} else {
-		name = filepath.Base(name)
+	name := filepath.Base(strings.TrimSpace(input.Name))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = filepath.Base(sourcePath)
 	}
-	if name == "." || name == string(filepath.Separator) || name == "" {
+	if name == "" || name == "." || name == string(filepath.Separator) {
 		return IssueAttachment{}, errors.New("附件名称无效")
 	}
 	id := nextID("attachment")
@@ -222,16 +204,32 @@ func (s *Store) captureAttachment(issue Issue, executionID string, input Publish
 	if err := os.MkdirAll(filepath.Dir(storageAbsolute), 0o700); err != nil {
 		return IssueAttachment{}, err
 	}
-	if err := copyAttachmentFile(source, storageAbsolute); err != nil {
+	out, err := os.OpenFile(storageAbsolute, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
 		_ = os.RemoveAll(filepath.Dir(storageAbsolute))
 		return IssueAttachment{}, err
 	}
+	written, copyErr := io.Copy(out, io.LimitReader(source, MaxAttachmentSize+1))
+	closeErr := out.Close()
+	if copyErr != nil || closeErr != nil || written > MaxAttachmentSize || written != size {
+		_ = os.RemoveAll(filepath.Dir(storageAbsolute))
+		switch {
+		case copyErr != nil:
+			return IssueAttachment{}, copyErr
+		case closeErr != nil:
+			return IssueAttachment{}, closeErr
+		case written > MaxAttachmentSize:
+			return IssueAttachment{}, fmt.Errorf("附件不能超过 %d MB", MaxAttachmentSize>>20)
+		default:
+			return IssueAttachment{}, errors.New("附件上传内容不完整")
+		}
+	}
 	attachment := IssueAttachment{
 		ID: id, IssueID: issue.ID, ExecutionID: executionID, Name: name,
-		Description: strings.TrimSpace(input.Description), SourcePath: relative,
-		StoragePath: storageRelative, MimeType: attachmentMimeType(name), Size: info.Size(), CreatedAt: time.Now(),
+		Description: strings.TrimSpace(input.Description), SourcePath: sourcePath,
+		StoragePath: storageRelative, MimeType: attachmentMimeType(name), Size: written, CreatedAt: time.Now(),
 	}
-	if err := s.db.Create(&attachment).Error; err != nil {
+	if err = s.db.Create(&attachment).Error; err != nil {
 		_ = os.RemoveAll(filepath.Dir(storageAbsolute))
 		return IssueAttachment{}, err
 	}
@@ -251,8 +249,8 @@ func (s *Store) captureGeneratedAttachment(issue Issue, executionID, sourcePath,
 	if name == "" || name == "." || name == string(filepath.Separator) {
 		return IssueAttachment{}, errors.New("附件名称无效")
 	}
-	if len(data) > maxAttachmentSize {
-		return IssueAttachment{}, fmt.Errorf("附件不能超过 %d MB", maxAttachmentSize>>20)
+	if len(data) > MaxAttachmentSize {
+		return IssueAttachment{}, fmt.Errorf("附件不能超过 %d MB", MaxAttachmentSize>>20)
 	}
 	var existing IssueAttachment
 	if err := s.db.Where("execution_id = ? AND source_path = ?", executionID, sourcePath).First(&existing).Error; err == nil {
@@ -282,76 +280,9 @@ func (s *Store) captureGeneratedAttachment(issue Issue, executionID, sourcePath,
 	return attachment, nil
 }
 
-func resolveWorkspaceAttachment(workspace, candidate string) (string, string, os.FileInfo, error) {
-	workspace = strings.TrimSpace(workspace)
-	candidate = strings.TrimSpace(candidate)
-	if workspace == "" || candidate == "" {
-		return "", "", nil, errors.New("附件路径不能为空")
-	}
-	workspaceAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", "", nil, err
-	}
-	source := candidate
-	if !filepath.IsAbs(source) {
-		source = filepath.Join(workspaceAbs, source)
-	}
-	source, err = filepath.Abs(source)
-	if err != nil {
-		return "", "", nil, err
-	}
-	if !pathWithin(workspaceAbs, source) {
-		return "", "", nil, errors.New("附件必须位于 Issue 工作目录中")
-	}
-	resolvedWorkspace, err := filepath.EvalSymlinks(workspaceAbs)
-	if err != nil {
-		return "", "", nil, err
-	}
-	resolvedSource, err := filepath.EvalSymlinks(source)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("附件文件不存在: %w", err)
-	}
-	if !pathWithin(resolvedWorkspace, resolvedSource) {
-		return "", "", nil, errors.New("附件符号链接不能指向工作目录之外")
-	}
-	info, err := os.Stat(resolvedSource)
-	if err != nil {
-		return "", "", nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return "", "", nil, errors.New("附件必须是普通文件")
-	}
-	relative, err := filepath.Rel(workspaceAbs, source)
-	if err != nil {
-		return "", "", nil, err
-	}
-	return resolvedSource, filepath.ToSlash(relative), info, nil
-}
-
 func pathWithin(root, candidate string) bool {
 	relative, err := filepath.Rel(root, candidate)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
-}
-
-func copyAttachmentFile(source, destination string) error {
-	in, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	written, copyErr := io.Copy(out, io.LimitReader(in, maxAttachmentSize+1))
-	closeErr := out.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	if written > maxAttachmentSize {
-		return fmt.Errorf("附件不能超过 %d MB", maxAttachmentSize>>20)
-	}
-	return closeErr
 }
 
 func attachmentMimeType(name string) string {
