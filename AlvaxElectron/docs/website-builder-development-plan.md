@@ -530,3 +530,4 @@ MVP 预计 12–17 人日；如果直接复用 Aegis 的 Pi RPC parser、session
 - Pi Extensions：<https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md>
 - shadcn/ui：<https://ui.shadcn.com/docs>
 - Electron Security：<https://www.electronjs.org/docs/latest/tutorial/security>
+- Taste Skill：<https://github.com/leonxlnx/taste-skill>（内置 `design-taste-frontend`）

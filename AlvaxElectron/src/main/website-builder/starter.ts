@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DeliveryArtifact, WebsiteBrief } from '../../shared/contracts/website-builder';
+import tasteSkill from './bundled-skills/taste-skill/SKILL.md?raw';
 
 const purposeLabels = {
   brand: '建立清晰品牌认知',
@@ -64,6 +65,7 @@ nav button,.actions button{padding:12px 18px;border-radius:999px;color:white;bac
 @media(max-width:760px){nav a{display:none}.hero h1{font-size:52px}.goals{grid-template-columns:1fr}.goals article{border-right:0;border-bottom:1px solid #cbc9c1}.goals article:last-child{border:0}}
 `,
     '.gitignore': 'node_modules\ndist\n.DS_Store\n',
+    '.pi/skills/design-taste-frontend/SKILL.md': tasteSkill,
   };
 
   for (const [relativePath, content] of Object.entries(files)) {
@@ -74,6 +76,12 @@ nav button,.actions button{padding:12px 18px;border-radius:999px;color:white;bac
 
   return Object.keys(files).map((filePath) => ({
     path: filePath,
-    kind: filePath.includes('App') ? 'page' : filePath.includes('styles') ? 'asset' : 'config',
+    kind: filePath.includes('App') ? 'page' : filePath.includes('styles') ? 'asset' : filePath.includes('.pi/skills') ? 'component' : 'config',
   }));
+}
+
+export async function installTasteSkill(workspace: string): Promise<void> {
+  const target = path.join(workspace, '.pi/skills/design-taste-frontend/SKILL.md');
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, tasteSkill, 'utf8');
 }

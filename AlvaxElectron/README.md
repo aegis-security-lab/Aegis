@@ -9,6 +9,7 @@
 - Zod 校验的类型化 IPC，以及统一的 `ApiResult<T>` 错误模型
 - 网站项目、对话、文件交付和验收结果的本地 JSON 原子持久化
 - Pi Coding Agent 严格 LF JSONL RPC，支持流式输出、取消和独立项目会话
+- 内置 `design-taste-frontend` Taste Skill，创建项目和每次启动 Agent 时自动注入
 - 行业、服务、目标用户与网站用途引导，生成 Vite + React + TypeScript + Tailwind 网站
 - 自动执行依赖安装、TypeScript 检查、生产构建、预览启动与 HTTP 健康检查
 - 现代化聊天工作台，以及预览、文件、验收三栏交付面板
@@ -73,6 +74,8 @@ src/
 ## 配置 Pi Agent
 
 点击右上角设置，填写 Node.js 可执行文件和 Pi 的 `packages/coding-agent/dist/cli.js` 路径。Provider、Model 可留空以使用 Pi 默认配置。供应商密钥沿用 Pi 支持的环境变量或本地认证；renderer 不接触密钥与子进程。
+
+网站 Agent 会在开始工作前加载 `.pi/skills/design-taste-frontend/SKILL.md`，先输出 Design Read 和三个设计参数，再执行开发与 pre-flight 检查。内置技能来自 [leonxlnx/taste-skill](https://github.com/leonxlnx/taste-skill)，按其 MIT License 随项目分发。
 
 ## 安全参考
 

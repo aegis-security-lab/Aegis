@@ -13,7 +13,7 @@ import type {
   WebsiteProject,
 } from '../../shared/contracts/website-builder';
 import { createEmptySnapshot, type WebsiteBuilderStore } from './store';
-import { writeWebsiteStarter } from './starter';
+import { installTasteSkill, writeWebsiteStarter } from './starter';
 import type { PiRpcRuntime } from './pi-rpc-runtime';
 import type { PreviewManager } from './preview-manager';
 import { runCommand } from './process-utils';
@@ -82,6 +82,7 @@ export class WebsiteBuilderService {
 
     const prompt = buildAgentPrompt(current, input.message);
     try {
+      await installTasteSkill(this.store.workspacePath(input.projectId));
       await this.pi.prompt(input.projectId, this.store.workspacePath(input.projectId), runtime, prompt, (event) => {
         void this.handlePiEvent(input.projectId, event);
       });
@@ -267,7 +268,7 @@ export class WebsiteBuilderService {
 }
 
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {
-  return `你是 Alvax AI 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n产品信息：\n- 名称：${snapshot.project.brief.name}\n- 行业：${snapshot.project.brief.industry}\n- 产品或服务：${snapshot.project.brief.offering}\n- 目标用户：${snapshot.project.brief.audience}\n\n用户本轮要求：${message}\n\n请直接检查并修改源码完成要求。保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束时用简洁中文总结改动。`;
+  return `你是 Alvax AI 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须读取并遵循项目内置技能：.pi/skills/design-taste-frontend/SKILL.md。先根据技能完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY，再进行设计与开发。最终回复中简要说明 Design Read 和三个参数。\n\n产品信息：\n- 名称：${snapshot.project.brief.name}\n- 行业：${snapshot.project.brief.industry}\n- 产品或服务：${snapshot.project.brief.offering}\n- 目标用户：${snapshot.project.brief.audience}\n\n用户本轮要求：${message}\n\n请直接检查并修改源码完成要求。保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check，并用简洁中文总结改动。`;
 }
 
 function createChecks(projectId: string): AcceptanceCheck[] {
