@@ -1,5 +1,5 @@
-import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
-import { app, ipcMain } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { z } from 'zod';
 import { AppError } from '../core/errors';
 import type { Orchestrator, WorkspaceRepository } from '../core/ports';
@@ -85,6 +85,40 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   handle(IPC_CHANNELS.websiteAcceptanceRun, IdSchema, (id) => websiteBuilder.runAcceptance(id));
   handle(IPC_CHANNELS.websitePreviewStart, IdSchema, (id) => websiteBuilder.startPreview(id));
   handle(IPC_CHANNELS.websitePreviewStop, IdSchema, (id) => websiteBuilder.stopPreview(id));
+  handle(IPC_CHANNELS.websitePreviewOpenWindow, IdSchema, async (id) => {
+    const snapshot = await websiteBuilder.getProject(id);
+    const url = snapshot.preview.url;
+    if (!url || snapshot.preview.status !== 'running') {
+      throw new AppError('CONFLICT', '预览服务尚未启动。');
+    }
+    const parsed = new URL(url);
+    if (!['127.0.0.1', 'localhost'].includes(parsed.hostname)) {
+      throw new AppError('UNAUTHORIZED', '只能在新窗口中打开本地预览。');
+    }
+    const parent = dependencies.getMainWindow();
+    const previewWindow = new BrowserWindow({
+      width: 1280,
+      height: 820,
+      minWidth: 720,
+      minHeight: 520,
+      ...(parent ? { parent } : {}),
+      title: `${snapshot.project.brief.name} · 预览`,
+      backgroundColor: '#ffffff',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        devTools: !process.env.CI,
+      },
+    });
+    previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    previewWindow.webContents.on('will-navigate', (event, target) => {
+      if (new URL(target).origin !== parsed.origin) event.preventDefault();
+    });
+    await previewWindow.loadURL(url);
+    return { opened: true as const };
+  });
   handle(IPC_CHANNELS.websiteRuntimeGet, z.undefined(), () => websiteBuilder.getRuntime());
   handle(IPC_CHANNELS.websiteRuntimeUpdate, RuntimeSettingsSchema, (input) =>
     websiteBuilder.updateRuntime(input),

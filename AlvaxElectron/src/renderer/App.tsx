@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ArrowUp, Bot, Check, ChevronLeft, ChevronRight, CircleAlert, ExternalLink, FileCode2,
-  Globe2, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2,
+  ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert,
+  Globe2, LoaderCircle, MoreHorizontal, PanelsTopLeft, Play, Plus, Settings2,
   Sparkles, Square, TerminalSquare, X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -15,13 +16,12 @@ import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '@/components/ui/message';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Spinner } from '@/components/ui/spinner';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import type { ApiResult } from '../shared/contracts/api';
 import type {
-  CreateWebsiteProjectInput, RuntimeSettings, RuntimeStatus, WebsiteBuilderSnapshot,
+  ChatMessage, CreateWebsiteProjectInput, RuntimeSettings, RuntimeStatus, WebsiteBuilderSnapshot,
   WebsitePurpose,
 } from '../shared/contracts/website-builder';
 import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
@@ -44,7 +44,6 @@ export default function App() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
-  const [deliveryTab, setDeliveryTab] = useState('preview');
   const previewSeen = useRef(new Map<string, boolean>());
 
   const loadProject = useCallback(async (id: string) => {
@@ -54,7 +53,6 @@ export default function App() {
       previewSeen.current.set(id, Boolean(result.data.preview.url));
       setSnapshot(result.data);
       if (hadPreview === false && result.data.preview.url) {
-        setDeliveryTab('preview');
         setDeliveryOpen(true);
       }
     } else setError(result.error.message);
@@ -126,18 +124,7 @@ export default function App() {
                   <MessageScrollerViewport>
                     <MessageScrollerContent className="mx-auto w-full max-w-3xl px-8 py-8">
                     <Marker variant="separator"><MarkerIcon><Sparkles/></MarkerIcon><MarkerContent>{snapshot.project.brief.industry} · {snapshot.project.brief.audience}</MarkerContent></Marker>
-                    {snapshot.messages.map((message) => <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={message.state === 'streaming'}>
-                      <Message align={message.role === 'user' ? 'end' : 'start'}>
-                        <MessageContent>
-                          {message.role === 'system' ? <Marker variant="border"><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap">{message.content}</MarkerContent></Marker> : <>
-                            {message.role !== 'user' && <MessageHeader>{message.role === 'tool' ? <TerminalSquare className="mr-1 size-3.5"/> : <Bot className="mr-1 size-3.5"/>}{message.role === 'tool' ? 'Agent 工具' : 'Alvax Agent'}</MessageHeader>}
-                            <Bubble variant={message.role === 'user' ? 'default' : message.state === 'error' ? 'destructive' : message.role === 'tool' ? 'outline' : 'secondary'} align={message.role === 'user' ? 'end' : 'start'}>
-                              <BubbleContent className="whitespace-pre-wrap">{message.content || <span className="flex items-center gap-2"><Spinner/>正在思考…</span>}{message.state === 'streaming' && message.content && <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-current align-middle"/>}</BubbleContent>
-                            </Bubble>
-                          </>}
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>)}
+                    <ChatTimeline messages={snapshot.messages} active={snapshot.project.status === 'generating'} />
                     </MessageScrollerContent>
                   </MessageScrollerViewport>
                   <MessageScrollerButton />
@@ -146,8 +133,8 @@ export default function App() {
 
               <div className="shrink-0 bg-gradient-to-t from-background via-background to-transparent px-7 pb-6 pt-3">
                 <div className="mx-auto max-w-3xl">
-                <AcceptanceDock snapshot={snapshot} busy={busy} onRun={() => void perform(() => window.alvax.websiteBuilder.runAcceptance(snapshot.project.id), setSnapshot)} />
-                <InputGroup className="rounded-b-2xl rounded-t-none border-t-0 bg-card shadow-lg shadow-foreground/5">
+                {snapshot.project.status === 'checking' && <AcceptanceDock snapshot={snapshot} />}
+                <InputGroup className={cn('bg-card shadow-lg shadow-foreground/5', snapshot.project.status === 'checking' ? 'rounded-b-2xl rounded-t-none border-t-0' : 'rounded-2xl')}>
                   <InputGroupTextarea value={composer} onChange={(event) => setComposer(event.target.value)} placeholder="描述你想生成或修改的网站内容…" className="min-h-24 resize-none px-4 pt-4 text-sm" onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} />
                   <InputGroupAddon align="block-end" className="justify-between px-3 pb-3">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant={runtime?.ready ? 'secondary' : 'outline'}>{runtime?.ready ? 'Pi 已连接' : 'Pi 未配置'}</Badge><span>Enter 发送 · Shift+Enter 换行</span></div>
@@ -160,37 +147,92 @@ export default function App() {
           </section>
         </ResizablePanel>
         {deliveryOpen && <><ResizableHandle withHandle /><ResizablePanel defaultSize={38} minSize={28}>
-          <DeliveryPanel snapshot={snapshot} busy={busy} tab={deliveryTab} onTabChange={setDeliveryTab} onRun={() => snapshot && void perform(() => window.alvax.websiteBuilder.runAcceptance(snapshot.project.id), setSnapshot)} onPreview={() => snapshot && void perform(() => window.alvax.websiteBuilder.startPreview(snapshot.project.id), setSnapshot)} />
+          <DeliveryPanel snapshot={snapshot} busy={busy} onRun={() => snapshot && void perform(() => window.alvax.websiteBuilder.runAcceptance(snapshot.project.id), setSnapshot)} onPreview={() => snapshot && void perform(() => window.alvax.websiteBuilder.startPreview(snapshot.project.id), setSnapshot)} onOpenWindow={() => snapshot && void perform(() => window.alvax.websiteBuilder.openPreviewWindow(snapshot.project.id))} />
         </ResizablePanel></>}
       </ResizablePanelGroup>
     </main>
 
-    <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={(brief) => void perform(() => window.alvax.websiteBuilder.createProject(brief), (value) => { setDeliveryOpen(false); setDeliveryTab('preview'); setSnapshot(value); setNewProjectOpen(false); void load(); })} busy={busy}/>
+    <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={(brief) => void perform(() => window.alvax.websiteBuilder.createProject(brief), (value) => { setDeliveryOpen(false); setSnapshot(value); setNewProjectOpen(false); void load(); })} busy={busy}/>
     {runtime && <RuntimeDialog open={settingsOpen} onOpenChange={setSettingsOpen} runtime={runtime.settings} onSave={(settings) => void perform(() => window.alvax.websiteBuilder.updateRuntime(settings), (value) => { setRuntime(value); setSettingsOpen(false); })} busy={busy}/>}
   </TooltipProvider>;
 }
 
-function AcceptanceDock({ snapshot, busy, onRun }: { snapshot: WebsiteBuilderSnapshot; busy: boolean; onRun(): void }) {
-  const checks = snapshot.checks;
-  return <div className="flex min-h-12 items-center gap-2 overflow-x-auto rounded-t-2xl border bg-muted/40 px-3 py-2 shadow-lg shadow-foreground/5">
-    <div className="flex shrink-0 items-center gap-2 text-xs font-medium"><TerminalSquare className="size-4 text-muted-foreground"/><span>自动验收</span></div>
-    {checks.length ? checks.map((check) => <div key={check.id} className="flex shrink-0 items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs">
-      {check.status === 'passed' ? <Check className="size-3.5 text-success"/> : check.status === 'failed' ? <CircleAlert className="size-3.5 text-destructive"/> : check.status === 'running' ? <LoaderCircle className="size-3.5 animate-spin text-primary"/> : <span className="size-1.5 rounded-full bg-muted-foreground/40"/>}
-      <span>{check.label}</span>
-    </div>) : <span className="shrink-0 text-xs text-muted-foreground">生成完成后自动检查</span>}
-    <Button variant="ghost" size="xs" className="ml-auto shrink-0" disabled={busy || snapshot.project.status === 'checking' || snapshot.project.status === 'generating'} onClick={onRun}><RefreshCw/>重验</Button>
+function ChatTimeline({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
+  const turns = groupMessagesByTurn(messages);
+  return turns.map((turn, index) => {
+    const isActive = active && index === turns.length - 1;
+    const user = turn[0]?.role === 'user' ? turn[0] : undefined;
+    const responses = user ? turn.slice(1) : turn;
+    const final = isActive ? undefined : [...responses].reverse().find((message) => message.role === 'assistant' && message.content.trim());
+    const history = final ? responses.filter((message) => message.id !== final.id) : responses;
+    return <MessageScrollerItem key={turn[0]?.id ?? index} messageId={turn.at(-1)!.id} scrollAnchor={isActive}>
+      <div className="flex flex-col gap-3">
+        {user && <ChatEntry message={user} />}
+        {history.length > 0 && <AgentProcess messages={history} active={isActive} />}
+        {final && <ChatEntry message={final} />}
+      </div>
+    </MessageScrollerItem>;
+  });
+}
+
+function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const open = active || historyOpen;
+  return <Collapsible open={open} onOpenChange={(value) => { if (!active) setHistoryOpen(value); }} className="ml-3 max-w-[80%]">
+    <CollapsibleTrigger render={<Button variant="ghost" size="xs" />} className="text-muted-foreground">
+      {active ? <LoaderCircle className="animate-spin"/> : <ChevronDown className={cn('transition-transform', open && 'rotate-180')}/>} {active ? 'Agent 正在执行' : `查看执行过程 · ${messages.length} 条`}
+    </CollapsibleTrigger>
+    <CollapsibleContent className="mt-2 overflow-hidden data-[ending-style]:animate-out data-[starting-style]:animate-in">
+      <div className="flex max-h-56 flex-col gap-2 overflow-y-auto rounded-xl border bg-muted/30 p-2">
+        {messages.map((message) => <ChatEntry key={message.id} message={message} compact />)}
+      </div>
+    </CollapsibleContent>
+  </Collapsible>;
+}
+
+function ChatEntry({ message, compact = false }: { message: ChatMessage; compact?: boolean }) {
+  if (message.role === 'system') return <Marker variant="border"><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap text-xs">{message.content}</MarkerContent></Marker>;
+  const isUser = message.role === 'user';
+  const isTool = message.role === 'tool';
+  return <Message align={isUser ? 'end' : 'start'}>
+    <MessageContent>
+      {!isUser && !compact && <MessageHeader>{isTool ? <TerminalSquare className="mr-1 size-3.5"/> : <Bot className="mr-1 size-3.5"/>}{isTool ? 'Agent 工具' : 'Alvax Agent'}</MessageHeader>}
+      <Bubble variant={isUser ? 'default' : message.state === 'error' ? 'destructive' : isTool ? 'outline' : 'secondary'} align={isUser ? 'end' : 'start'} className={cn(compact && 'max-w-full')}>
+        <BubbleContent className={cn('whitespace-pre-wrap', isTool && 'truncate font-mono text-xs', compact && 'max-w-full py-1.5 text-xs')}>{message.content || <span className="flex items-center gap-2"><Spinner/>正在思考…</span>}{message.state === 'streaming' && message.content && !isTool && <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-current align-middle"/>}</BubbleContent>
+      </Bubble>
+    </MessageContent>
+  </Message>;
+}
+
+function groupMessagesByTurn(messages: ChatMessage[]): ChatMessage[][] {
+  const turns: ChatMessage[][] = [];
+  for (const message of messages) {
+    if (message.role === 'user' || turns.length === 0) turns.push([message]);
+    else turns.at(-1)!.push(message);
+  }
+  return turns;
+}
+
+function AcceptanceDock({ snapshot }: { snapshot: WebsiteBuilderSnapshot }) {
+  const current = snapshot.checks.find((check) => check.status === 'running')
+    ?? [...snapshot.checks].reverse().find((check) => check.status === 'passed' || check.status === 'failed');
+  if (!current) return null;
+  return <div className="flex min-h-12 items-center gap-3 overflow-hidden rounded-t-2xl border bg-muted/40 px-4 py-2 shadow-lg shadow-foreground/5">
+    <span className="text-xs font-medium text-muted-foreground">自动验收</span>
+    <div key={`${current.id}-${current.status}`} className="flex min-w-0 animate-in items-center gap-2 duration-300 slide-in-from-bottom-2">
+      {current.status === 'passed' ? <Check className="size-4 text-success"/> : current.status === 'failed' ? <CircleAlert className="size-4 text-destructive"/> : <LoaderCircle className="size-4 animate-spin text-primary"/>}
+      <span className="truncate text-sm">{current.label}</span>
+      <span className="text-xs text-muted-foreground">{current.status === 'passed' ? '已通过' : current.status === 'failed' ? '未通过' : '检查中…'}</span>
+    </div>
   </div>;
 }
 
-function DeliveryPanel({ snapshot, busy, tab, onTabChange, onRun, onPreview }: { snapshot: WebsiteBuilderSnapshot | undefined; busy: boolean; tab: string; onTabChange(value: string): void; onRun(): void; onPreview(): void }) {
+function DeliveryPanel({ snapshot, busy, onRun, onPreview, onOpenWindow }: { snapshot: WebsiteBuilderSnapshot | undefined; busy: boolean; onRun(): void; onPreview(): void; onOpenWindow(): void }) {
   return <aside className="flex h-full min-w-0 flex-col bg-card">
-    <Tabs value={tab} onValueChange={onTabChange} className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center border-b pr-3"><TabsList variant="line" className="w-full shrink-0 justify-start rounded-none px-3"><TabsTrigger value="preview">预览</TabsTrigger><TabsTrigger value="files">文件 <Badge variant="secondary">{snapshot?.artifacts.length ?? 0}</Badge></TabsTrigger></TabsList>{snapshot?.preview.url && <Button variant="ghost" size="icon-sm" onClick={() => window.open(snapshot.preview.url)}><ExternalLink/></Button>}</div>
-      <TabsContent value="preview" className="relative min-h-0 flex-1 p-0">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b px-4"><span className="text-sm font-medium">预览</span>{snapshot?.preview.url && <Button variant="ghost" size="icon-sm" onClick={onOpenWindow}><PanelsTopLeft/><span className="sr-only">在新窗口中打开预览</span></Button>}</div>
+      <div className="relative min-h-0 flex-1">
         {snapshot?.preview.url ? <iframe title="网站预览" src={snapshot.preview.url} sandbox="allow-scripts allow-forms allow-same-origin" className="size-full border-0 bg-background" /> : <div className="grid h-full place-items-center p-8 text-center"><div><div className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground"><Globe2/></div><h3 className="mt-4 text-sm font-medium">网站尚未启动</h3><p className="mt-2 max-w-64 text-xs leading-5 text-muted-foreground">运行验收后会自动构建并在本地启动可访问的预览服务。</p><Button className="mt-5" size="sm" disabled={!snapshot || busy} onClick={snapshot?.checks.length ? onPreview : onRun}>{busy ? <Spinner/> : <Play/>}{snapshot?.checks.length ? '启动预览' : '验收并启动'}</Button></div></div>}
-      </TabsContent>
-      <TabsContent value="files" className="min-h-0 flex-1 p-0"><ScrollArea className="h-full"><div className="grid gap-1 p-3">{snapshot?.artifacts.map((artifact) => <div key={artifact.path} className="flex items-center gap-2 rounded-md px-2 py-2 text-xs hover:bg-muted"><FileCode2 className="size-4 text-muted-foreground"/><code className="truncate">{artifact.path}</code><Badge variant="outline" className="ml-auto">{artifact.kind}</Badge></div>)}</div></ScrollArea></TabsContent>
-    </Tabs>
+      </div>
   </aside>;
 }
 

@@ -37,6 +37,7 @@ export const IPC_CHANNELS = {
   websiteAcceptanceRun: 'alvax:website-acceptance:run',
   websitePreviewStart: 'alvax:website-preview:start',
   websitePreviewStop: 'alvax:website-preview:stop',
+  websitePreviewOpenWindow: 'alvax:website-preview:open-window',
   websiteRuntimeGet: 'alvax:website-runtime:get',
   websiteRuntimeUpdate: 'alvax:website-runtime:update',
   websiteEvent: 'alvax:website:event',
@@ -87,6 +88,7 @@ export interface AlvaxDesktopApi {
     runAcceptance(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     startPreview(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     stopPreview(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    openPreviewWindow(projectId: string): Promise<ApiResult<{ opened: true }>>;
     getRuntime(): Promise<ApiResult<RuntimeStatus>>;
     updateRuntime(input: RuntimeSettings): Promise<ApiResult<RuntimeStatus>>;
     onEvent(listener: (event: WebsiteBuilderEvent) => void): () => void;

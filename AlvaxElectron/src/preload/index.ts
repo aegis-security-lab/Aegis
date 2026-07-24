@@ -41,6 +41,7 @@ const api: AlvaxDesktopApi = {
     runAcceptance: (projectId) => invoke(IPC_CHANNELS.websiteAcceptanceRun, projectId),
     startPreview: (projectId) => invoke(IPC_CHANNELS.websitePreviewStart, projectId),
     stopPreview: (projectId) => invoke(IPC_CHANNELS.websitePreviewStop, projectId),
+    openPreviewWindow: (projectId) => invoke(IPC_CHANNELS.websitePreviewOpenWindow, projectId),
     getRuntime: () => invoke(IPC_CHANNELS.websiteRuntimeGet),
     updateRuntime: (input) => invoke(IPC_CHANNELS.websiteRuntimeUpdate, input),
     onEvent: (listener) => {

@@ -120,6 +120,7 @@ export class WebsiteBuilderService {
         durationMs: result.durationMs,
         summary: result.code === 0 ? '执行成功' : result.output.slice(-2_000) || '命令执行失败',
       });
+      if (result.code === 0) await delay(420);
       if (result.code !== 0) { passed = false; break; }
     }
 
@@ -128,6 +129,7 @@ export class WebsiteBuilderService {
       try {
         const url = await this.previews.start(projectId, workspace, npmPath);
         await this.updateCheck(projectId, 'health', { status: 'passed', summary: `HTTP 200 · ${url}` });
+        await delay(420);
         await this.store.patch(projectId, (draft) => {
           draft.project.status = 'previewing';
           draft.preview = { status: 'running', url };
@@ -236,7 +238,7 @@ export class WebsiteBuilderService {
         const message = draft.messages.find((entry) => entry.id === messageId);
         if (message) {
           message.state = event.isError === true ? 'error' : 'complete';
-          message.content += event.isError === true ? '\n执行失败' : '\n执行完成';
+          message.content += event.isError === true ? ' · 失败' : ' · 完成';
         }
       });
       this.activeTools.get(projectId)?.delete(toolCallId);
@@ -375,11 +377,21 @@ function createMessage(
 }
 
 function formatToolStart(name: string, args: unknown): string {
-  const labels: Record<string, string> = { bash: '执行命令', read: '读取文件', write: '写入文件', edit: '修改文件' };
+  const labels: Record<string, string> = {
+    bash: '工具 · 终端 · 执行命令',
+    read: '工具 · Read · 读取文件',
+    write: '工具 · Write · 写入文件',
+    edit: '工具 · Edit · 修改文件',
+  };
   let detail = '';
   if (args && typeof args === 'object') {
     const value = args as Record<string, unknown>;
     detail = String(value.path ?? value.file_path ?? value.command ?? value.cmd ?? '');
   }
-  return `${labels[name] ?? `调用 ${name}`}${detail ? `\n${detail.slice(0, 240)}` : ''}`;
+  const compact = detail.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return `${labels[name] ?? `工具 · ${name}`}${compact ? ` · ${compact}` : ''}`;
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
