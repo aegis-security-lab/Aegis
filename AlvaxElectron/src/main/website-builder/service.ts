@@ -23,6 +23,8 @@ type EventSink = (event: WebsiteBuilderEvent) => void;
 export class WebsiteBuilderService {
   private sequence = 0;
   private readonly activeMessages = new Map<string, string>();
+  private readonly activeTools = new Map<string, Map<string, string>>();
+  private readonly repairAttempts = new Map<string, number>();
 
   constructor(
     private readonly store: WebsiteBuilderStore,
@@ -69,26 +71,13 @@ export class WebsiteBuilderService {
       id: crypto.randomUUID(), projectId: input.projectId, role: 'user',
       content: input.message, state: 'complete', createdAt: new Date().toISOString(),
     };
-    const assistant: ChatMessage = {
-      id: crypto.randomUUID(), projectId: input.projectId, role: 'assistant',
-      content: '', state: 'streaming', createdAt: new Date().toISOString(),
-    };
-    this.activeMessages.set(input.projectId, assistant.id);
     const snapshot = await this.store.patch(input.projectId, (draft) => {
       draft.project.status = 'generating';
-      draft.messages.push(userMessage, assistant);
+      draft.messages.push(userMessage);
     });
     this.notify(input.projectId, 'agent');
-
-    const prompt = buildAgentPrompt(current, input.message);
-    try {
-      await installTasteSkill(this.store.workspacePath(input.projectId));
-      await this.pi.prompt(input.projectId, this.store.workspacePath(input.projectId), runtime, prompt, (event) => {
-        void this.handlePiEvent(input.projectId, event);
-      });
-    } catch (error) {
-      await this.failGeneration(input.projectId, error);
-    }
+    this.repairAttempts.set(input.projectId, 0);
+    await this.startAgent(input.projectId, runtime, buildAgentPrompt(current, input.message));
     return snapshot!;
   }
 
@@ -152,6 +141,7 @@ export class WebsiteBuilderService {
       await this.store.patch(projectId, (draft) => { draft.project.status = 'failed'; });
     }
     this.notify(projectId, passed ? 'preview' : 'error');
+    if (!passed) void this.requestAutomaticRepair(projectId);
     return this.getProject(projectId);
   }
 
@@ -202,25 +192,63 @@ export class WebsiteBuilderService {
   private async handlePiEvent(projectId: string, event: Record<string, unknown>): Promise<void> {
     if (event.type === 'message_update') {
       const detail = event.assistantMessageEvent as Record<string, unknown> | undefined;
-      if (detail?.type === 'text_delta' && typeof detail.delta === 'string') {
+      if (detail?.type === 'text_start') {
+        const id = crypto.randomUUID();
+        this.activeMessages.set(projectId, id);
         await this.store.patch(projectId, (draft) => {
-          const message = draft.messages.find((entry) => entry.id === this.activeMessages.get(projectId));
-          if (message) message.content += detail.delta as string;
+          draft.messages.push(createMessage(projectId, 'assistant', '', 'streaming', id));
         });
         this.notify(projectId, 'agent');
+      } else if (detail?.type === 'text_delta' && typeof detail.delta === 'string') {
+        await this.store.patch(projectId, (draft) => {
+          const message = draft.messages.find((entry) => entry.id === this.activeMessages.get(projectId));
+          if (!message) return;
+          const parts = `${message.content}${detail.delta as string}`.split(/\n\s*\n/);
+          if (parts.length === 1) {
+            message.content = parts[0]!;
+            return;
+          }
+          message.content = parts.shift()!;
+          message.state = 'complete';
+          for (const [index, content] of parts.entries()) {
+            const next = createMessage(projectId, 'assistant', content, index === parts.length - 1 ? 'streaming' : 'complete');
+            draft.messages.push(next);
+            if (index === parts.length - 1) this.activeMessages.set(projectId, next.id);
+          }
+        });
+        this.notify(projectId, 'agent');
+      } else if (detail?.type === 'text_end') {
+        await this.completeActiveMessage(projectId);
       }
     } else if (event.type === 'tool_execution_start') {
+      await this.completeActiveMessage(projectId);
+      const toolCallId = String(event.toolCallId ?? crypto.randomUUID());
+      const message = createMessage(projectId, 'tool', formatToolStart(String(event.toolName ?? 'tool'), event.args), 'streaming');
+      const tools = this.activeTools.get(projectId) ?? new Map<string, string>();
+      tools.set(toolCallId, message.id);
+      this.activeTools.set(projectId, tools);
+      await this.store.patch(projectId, (draft) => { draft.messages.push(message); });
       this.notify(projectId, 'agent');
-    } else if (event.type === 'agent_settled') {
+    } else if (event.type === 'tool_execution_end') {
+      const toolCallId = String(event.toolCallId ?? '');
+      const messageId = this.activeTools.get(projectId)?.get(toolCallId);
       await this.store.patch(projectId, (draft) => {
-        draft.project.status = 'ready';
-        const message = draft.messages.find((entry) => entry.id === this.activeMessages.get(projectId));
+        const message = draft.messages.find((entry) => entry.id === messageId);
         if (message) {
-          message.state = 'complete';
-          if (!message.content) message.content = '网站修改已完成，正在执行类型检查、构建和可访问性验收。';
+          message.state = event.isError === true ? 'error' : 'complete';
+          message.content += event.isError === true ? '\n执行失败' : '\n执行完成';
         }
       });
+      this.activeTools.get(projectId)?.delete(toolCallId);
+      this.notify(projectId, 'agent');
+    } else if (event.type === 'agent_settled') {
+      await this.completeActiveMessage(projectId);
+      await this.store.patch(projectId, (draft) => {
+        draft.project.status = 'ready';
+        draft.messages.push(createMessage(projectId, 'system', '开发完成，开始自动验收。', 'complete'));
+      });
       this.activeMessages.delete(projectId);
+      this.activeTools.delete(projectId);
       this.notify(projectId, 'agent');
       await this.refreshArtifacts(projectId);
       await this.runAcceptance(projectId);
@@ -248,6 +276,45 @@ export class WebsiteBuilderService {
     });
     this.activeMessages.delete(projectId);
     this.notify(projectId, 'error');
+  }
+
+  private async startAgent(projectId: string, runtime: RuntimeSettings, prompt: string): Promise<void> {
+    try {
+      await installTasteSkill(this.store.workspacePath(projectId));
+      await this.pi.prompt(projectId, this.store.workspacePath(projectId), runtime, prompt, (event) => {
+        void this.handlePiEvent(projectId, event);
+      });
+    } catch (error) {
+      await this.failGeneration(projectId, error);
+    }
+  }
+
+  private async completeActiveMessage(projectId: string): Promise<void> {
+    const id = this.activeMessages.get(projectId);
+    if (!id) return;
+    await this.store.patch(projectId, (draft) => {
+      const message = draft.messages.find((entry) => entry.id === id);
+      if (message) message.state = 'complete';
+    });
+    this.activeMessages.delete(projectId);
+    this.notify(projectId, 'agent');
+  }
+
+  private async requestAutomaticRepair(projectId: string): Promise<void> {
+    const attempt = (this.repairAttempts.get(projectId) ?? 0) + 1;
+    if (attempt > 2) return;
+    this.repairAttempts.set(projectId, attempt);
+    const snapshot = await this.getProject(projectId);
+    const failed = snapshot.checks.find((check) => check.status === 'failed');
+    if (!failed) return;
+    const instruction = `自动验收发现「${failed.label}」未通过：\n${failed.summary}\n\n请定位问题、修复源码，然后重新交付。`;
+    await this.store.patch(projectId, (draft) => {
+      draft.project.status = 'generating';
+      draft.messages.push(createMessage(projectId, 'system', instruction, 'complete'));
+    });
+    this.notify(projectId, 'agent');
+    const runtime = await this.store.getRuntime();
+    await this.startAgent(projectId, runtime, buildAgentPrompt(snapshot, instruction));
   }
 
   private async updateCheck(
@@ -295,4 +362,24 @@ async function walk(root: string, directory: string): Promise<string[]> {
 
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function createMessage(
+  projectId: string,
+  role: ChatMessage['role'],
+  content: string,
+  state: ChatMessage['state'],
+  id = crypto.randomUUID(),
+): ChatMessage {
+  return { id, projectId, role, content, state, createdAt: new Date().toISOString() };
+}
+
+function formatToolStart(name: string, args: unknown): string {
+  const labels: Record<string, string> = { bash: '执行命令', read: '读取文件', write: '写入文件', edit: '修改文件' };
+  let detail = '';
+  if (args && typeof args === 'object') {
+    const value = args as Record<string, unknown>;
+    detail = String(value.path ?? value.file_path ?? value.command ?? value.cmd ?? '');
+  }
+  return `${labels[name] ?? `调用 ${name}`}${detail ? `\n${detail.slice(0, 240)}` : ''}`;
 }
