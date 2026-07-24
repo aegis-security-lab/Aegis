@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SaveAgentInputSchema, StartRunInputSchema } from './domain';
+import { CreateWebsiteProjectInputSchema, SendWebsiteMessageInputSchema } from './website-builder';
 
 describe('shared contracts', () => {
   it('accepts a credential reference without accepting a raw secret field', () => {
@@ -33,5 +34,25 @@ describe('shared contracts', () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it('validates the required website discovery brief', () => {
+    expect(CreateWebsiteProjectInputSchema.safeParse({
+      name: 'Nova',
+      industry: '企业服务',
+      offering: 'AI 客户支持平台',
+      audience: '中小企业客户成功团队',
+      purposes: ['brand', 'conversion'],
+      notes: '',
+    }).success).toBe(true);
+    expect(CreateWebsiteProjectInputSchema.safeParse({
+      name: '', industry: '', offering: '', audience: '', purposes: [], notes: '',
+    }).success).toBe(false);
+  });
+
+  it('rejects blank website chat messages', () => {
+    expect(SendWebsiteMessageInputSchema.safeParse({
+      projectId: crypto.randomUUID(), message: '   ',
+    }).success).toBe(false);
   });
 });

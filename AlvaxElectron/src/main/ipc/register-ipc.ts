@@ -3,6 +3,7 @@ import { app, ipcMain } from 'electron';
 import { z } from 'zod';
 import { AppError } from '../core/errors';
 import type { Orchestrator, WorkspaceRepository } from '../core/ports';
+import type { WebsiteBuilderService } from '../website-builder/service';
 import { IPC_CHANNELS, type ApiError, type ApiResult } from '../../shared/contracts/api';
 import {
   IdSchema,
@@ -10,15 +11,21 @@ import {
   StartRunInputSchema,
   UpdateSettingsInputSchema,
 } from '../../shared/contracts/domain';
+import {
+  CreateWebsiteProjectInputSchema,
+  RuntimeSettingsSchema,
+  SendWebsiteMessageInputSchema,
+} from '../../shared/contracts/website-builder';
 
 interface IpcDependencies {
   repository: WorkspaceRepository;
   orchestrator: Orchestrator;
+  websiteBuilder: WebsiteBuilderService;
   getMainWindow(): BrowserWindow | null;
 }
 
 export function registerIpcHandlers(dependencies: IpcDependencies): void {
-  const { repository, orchestrator } = dependencies;
+  const { repository, orchestrator, websiteBuilder } = dependencies;
   const trusted = (event: IpcMainInvokeEvent): boolean => {
     const window = dependencies.getMainWindow();
     return Boolean(
@@ -65,6 +72,22 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   handle(IPC_CHANNELS.settingsGet, z.undefined(), () => repository.getSettings());
   handle(IPC_CHANNELS.settingsUpdate, UpdateSettingsInputSchema, (input) =>
     repository.updateSettings(input),
+  );
+  handle(IPC_CHANNELS.websiteProjectList, z.undefined(), () => websiteBuilder.listProjects());
+  handle(IPC_CHANNELS.websiteProjectCreate, CreateWebsiteProjectInputSchema, (input) =>
+    websiteBuilder.createProject(input),
+  );
+  handle(IPC_CHANNELS.websiteProjectGet, IdSchema, (id) => websiteBuilder.getProject(id));
+  handle(IPC_CHANNELS.websiteMessageSend, SendWebsiteMessageInputSchema, (input) =>
+    websiteBuilder.sendMessage(input),
+  );
+  handle(IPC_CHANNELS.websiteMessageCancel, IdSchema, (id) => websiteBuilder.cancel(id));
+  handle(IPC_CHANNELS.websiteAcceptanceRun, IdSchema, (id) => websiteBuilder.runAcceptance(id));
+  handle(IPC_CHANNELS.websitePreviewStart, IdSchema, (id) => websiteBuilder.startPreview(id));
+  handle(IPC_CHANNELS.websitePreviewStop, IdSchema, (id) => websiteBuilder.stopPreview(id));
+  handle(IPC_CHANNELS.websiteRuntimeGet, z.undefined(), () => websiteBuilder.getRuntime());
+  handle(IPC_CHANNELS.websiteRuntimeUpdate, RuntimeSettingsSchema, (input) =>
+    websiteBuilder.updateRuntime(input),
   );
 }
 

@@ -22,6 +22,17 @@ type ApiResult<T> =
 | `runs` | `onEvent(listener)` | callback | unsubscribe function |
 | `settings` | `get()` | 无 | `AppSettings` |
 | `settings` | `update(input)` | partial settings | `AppSettings` |
+| `websiteBuilder` | `listProjects()` | 无 | `WebsiteProject[]` |
+| `websiteBuilder` | `createProject(input)` | `CreateWebsiteProjectInput` | `WebsiteBuilderSnapshot` |
+| `websiteBuilder` | `getProject(id)` | Project ID | `WebsiteBuilderSnapshot` |
+| `websiteBuilder` | `sendMessage(input)` | `{ projectId, message }` | `WebsiteBuilderSnapshot` |
+| `websiteBuilder` | `cancel(id)` | Project ID | `WebsiteBuilderSnapshot` |
+| `websiteBuilder` | `runAcceptance(id)` | Project ID | `WebsiteBuilderSnapshot` |
+| `websiteBuilder` | `startPreview(id)` / `stopPreview(id)` | Project ID | `WebsiteBuilderSnapshot` |
+| `websiteBuilder` | `getRuntime()` / `updateRuntime(input)` | Runtime settings | `RuntimeStatus` |
+| `websiteBuilder` | `onEvent(listener)` | callback | unsubscribe function |
+
+网站生成器事件只发送 `{ projectId, type, sequence }`，renderer 收到后重新读取 snapshot，避免广播运行时对象和绝对路径。具体 DTO 与 Zod schema 见 `src/shared/contracts/website-builder.ts`。
 
 ## 错误码
 

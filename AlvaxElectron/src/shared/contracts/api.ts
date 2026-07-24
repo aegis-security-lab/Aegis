@@ -8,6 +8,15 @@ import type {
   SystemInfo,
   UpdateSettingsInput,
 } from './domain';
+import type {
+  CreateWebsiteProjectInput,
+  RuntimeSettings,
+  RuntimeStatus,
+  SendWebsiteMessageInput,
+  WebsiteBuilderEvent,
+  WebsiteBuilderSnapshot,
+  WebsiteProject,
+} from './website-builder';
 
 export const IPC_CHANNELS = {
   systemInfo: 'alvax:system:info',
@@ -20,6 +29,17 @@ export const IPC_CHANNELS = {
   runEvent: 'alvax:run:event',
   settingsGet: 'alvax:settings:get',
   settingsUpdate: 'alvax:settings:update',
+  websiteProjectList: 'alvax:website-project:list',
+  websiteProjectCreate: 'alvax:website-project:create',
+  websiteProjectGet: 'alvax:website-project:get',
+  websiteMessageSend: 'alvax:website-message:send',
+  websiteMessageCancel: 'alvax:website-message:cancel',
+  websiteAcceptanceRun: 'alvax:website-acceptance:run',
+  websitePreviewStart: 'alvax:website-preview:start',
+  websitePreviewStop: 'alvax:website-preview:stop',
+  websiteRuntimeGet: 'alvax:website-runtime:get',
+  websiteRuntimeUpdate: 'alvax:website-runtime:update',
+  websiteEvent: 'alvax:website:event',
 } as const;
 
 export type ApiErrorCode =
@@ -57,5 +77,18 @@ export interface AlvaxDesktopApi {
   settings: {
     get(): Promise<ApiResult<AppSettings>>;
     update(input: UpdateSettingsInput): Promise<ApiResult<AppSettings>>;
+  };
+  websiteBuilder: {
+    listProjects(): Promise<ApiResult<WebsiteProject[]>>;
+    createProject(input: CreateWebsiteProjectInput): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    getProject(id: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    sendMessage(input: SendWebsiteMessageInput): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    cancel(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    runAcceptance(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    startPreview(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    stopPreview(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    getRuntime(): Promise<ApiResult<RuntimeStatus>>;
+    updateRuntime(input: RuntimeSettings): Promise<ApiResult<RuntimeStatus>>;
+    onEvent(listener: (event: WebsiteBuilderEvent) => void): () => void;
   };
 }
