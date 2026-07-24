@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '@/components/ui/message';
-import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerViewport } from '@/components/ui/message-scroller';
+import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Spinner } from '@/components/ui/spinner';
@@ -108,11 +108,12 @@ export default function App() {
         <ResizablePanel defaultSize={62} minSize={42}>
           <section className="flex h-full min-w-0 flex-col">
             {snapshot ? <>
-              <MessageScroller className="flex-1">
-                <MessageScrollerViewport>
-                  <MessageScrollerContent className="mx-auto w-full max-w-3xl px-8 py-8">
+              <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+                <MessageScroller className="flex-1">
+                  <MessageScrollerViewport>
+                    <MessageScrollerContent className="mx-auto w-full max-w-3xl px-8 py-8">
                     <Marker variant="separator"><MarkerIcon><Sparkles/></MarkerIcon><MarkerContent>{snapshot.project.brief.industry} · {snapshot.project.brief.audience}</MarkerContent></Marker>
-                    {snapshot.messages.map((message) => <MessageScrollerItem key={message.id} scrollAnchor={message.state === 'streaming'}>
+                    {snapshot.messages.map((message) => <MessageScrollerItem key={message.id} messageId={message.id} scrollAnchor={message.state === 'streaming'}>
                       <Message align={message.role === 'user' ? 'end' : 'start'}>
                         <MessageContent>
                           {message.role !== 'user' && <MessageHeader><Bot className="mr-1 size-3.5"/>Alvax Agent</MessageHeader>}
@@ -122,10 +123,11 @@ export default function App() {
                         </MessageContent>
                       </Message>
                     </MessageScrollerItem>)}
-                  </MessageScrollerContent>
-                </MessageScrollerViewport>
-                <MessageScrollerButton />
-              </MessageScroller>
+                    </MessageScrollerContent>
+                  </MessageScrollerViewport>
+                  <MessageScrollerButton />
+                </MessageScroller>
+              </MessageScrollerProvider>
 
               <div className="shrink-0 bg-gradient-to-t from-background via-background to-transparent px-7 pb-6 pt-3">
                 <InputGroup className="mx-auto max-w-3xl rounded-2xl bg-card shadow-lg shadow-foreground/5">
