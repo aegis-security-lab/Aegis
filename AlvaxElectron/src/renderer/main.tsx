@@ -5,6 +5,10 @@ import App from './App';
 import { Button } from './components/ui/button';
 import './styles.css';
 
+document.documentElement.dataset.platform = navigator.userAgent.includes('Mac OS X')
+  ? 'darwin'
+  : 'other';
+
 interface ErrorBoundaryState {
   error?: Error;
 }

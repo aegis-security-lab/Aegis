@@ -89,7 +89,7 @@ export default function App() {
 
   return <TooltipProvider>
     <main className="flex h-full flex-col bg-background">
-      <header className="window-drag-region flex h-16 shrink-0 items-center justify-between border-b bg-card/80 px-5 backdrop-blur-xl">
+      <header className="app-titlebar window-drag-region flex h-16 shrink-0 items-center justify-between border-b bg-card/80 pr-5 backdrop-blur-xl">
         <div className="flex items-center gap-3">
           <div className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground"><Sparkles className="size-4" /></div>
           <div><h1 className="text-sm font-semibold tracking-tight">{snapshot?.project.brief.name ?? 'Alvax AI Website Builder'}</h1><p className="text-xs text-muted-foreground">Pi Agent 驱动的网站工作室</p></div>

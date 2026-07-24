@@ -88,3 +88,11 @@
 .window-no-drag * {
   -webkit-app-region: no-drag;
 }
+
+.app-titlebar {
+  padding-left: 1.25rem;
+}
+
+html[data-platform='darwin'] .app-titlebar {
+  padding-left: 5.5rem;
+}
