@@ -94,6 +94,14 @@ export default function App() {
     await perform(() => window.alvax.websiteBuilder.sendMessage({ projectId: snapshot.project.id, message }), setSnapshot);
   };
 
+  const toggleDelivery = () => {
+    const nextOpen = !deliveryOpen;
+    setDeliveryOpen(nextOpen);
+    if (nextOpen && snapshot?.preview.url) {
+      void perform(() => window.alvax.websiteBuilder.startPreview(snapshot.project.id), setSnapshot);
+    }
+  };
+
   const status = snapshot?.project.status;
   const isGenerating = status === 'generating';
 
@@ -117,7 +125,7 @@ export default function App() {
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={deliveryOpen ? 62 : 100} minSize={42}>
           <section className="relative flex h-full min-w-0 flex-col">
-            {snapshot && <Button variant="outline" size="icon-sm" className="absolute right-4 top-4 z-10 rounded-full bg-background/90 shadow-sm backdrop-blur" onClick={() => setDeliveryOpen((value) => !value)}>{deliveryOpen ? <ChevronRight/> : <ChevronLeft/>}<span className="sr-only">{deliveryOpen ? '折叠侧栏' : '展开侧栏'}</span></Button>}
+            {snapshot && <Button variant="outline" size="icon-sm" className="absolute right-4 top-4 z-10 rounded-full bg-background/90 shadow-sm backdrop-blur" onClick={toggleDelivery}>{deliveryOpen ? <ChevronRight/> : <ChevronLeft/>}<span className="sr-only">{deliveryOpen ? '折叠侧栏' : '展开侧栏'}</span></Button>}
             {snapshot ? <>
               <MessageScrollerProvider autoScroll defaultScrollPosition="end">
                 <MessageScroller className="flex-1">
@@ -177,13 +185,19 @@ function ChatTimeline({ messages, active }: { messages: ChatMessage[]; active: b
 
 function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const processViewport = useRef<HTMLDivElement>(null);
   const open = active || historyOpen;
+  useEffect(() => {
+    if (active && processViewport.current) {
+      processViewport.current.scrollTop = processViewport.current.scrollHeight;
+    }
+  }, [active, messages]);
   return <Collapsible open={open} onOpenChange={(value) => { if (!active) setHistoryOpen(value); }} className="ml-3 max-w-[88%]">
     <CollapsibleTrigger render={<Button variant="ghost" size="xs" />} className="text-muted-foreground">
       {active ? <LoaderCircle className="animate-spin"/> : <ChevronDown className={cn('transition-transform', open && 'rotate-180')}/>} {active ? 'Agent 正在执行' : `查看执行过程 · ${messages.length} 条`}
     </CollapsibleTrigger>
     <CollapsibleContent className="mt-1 overflow-hidden data-[ending-style]:animate-out data-[starting-style]:animate-in">
-      <div className="flex max-h-56 flex-col gap-2 overflow-y-auto py-1 pl-1 pr-3">
+      <div ref={processViewport} className="flex max-h-56 flex-col gap-2 overflow-y-auto py-1 pl-1 pr-3">
         {messages.map((message) => <ChatEntry key={message.id} message={message} compact />)}
       </div>
     </CollapsibleContent>
@@ -198,7 +212,11 @@ function ChatEntry({ message, compact = false }: { message: ChatMessage; compact
     <MessageContent>
       <div className={cn('flex min-w-0 items-start gap-2 text-xs leading-5 text-muted-foreground', message.state === 'error' && 'text-destructive')}>
         {isTool ? <TerminalSquare className="mt-0.5 size-3.5 shrink-0"/> : <Bot className="mt-0.5 size-3.5 shrink-0"/>}
-        <span className={cn('min-w-0 whitespace-pre-wrap', isTool && 'truncate font-mono')}>{message.content || '正在思考…'}</span>
+        {isTool ? <span
+          className="min-w-0 flex-1 cursor-ew-resize overflow-x-auto whitespace-nowrap font-mono [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          title={message.content}
+          onWheel={(event) => { event.currentTarget.scrollLeft += event.deltaY || event.deltaX; }}
+        ><span className="inline-block w-max whitespace-nowrap">{message.content || '正在执行…'}</span></span> : <span className="min-w-0 whitespace-pre-wrap">{message.content || '正在思考…'}</span>}
         {message.state === 'streaming' && !isTool && <span className="mt-1 inline-block h-3 w-px shrink-0 animate-pulse bg-current"/>}
       </div>
     </MessageContent>
@@ -240,7 +258,7 @@ function DeliveryPanel({ snapshot, busy, onRun, onPreview, onOpenWindow }: { sna
   return <aside className="flex h-full min-w-0 flex-col bg-card">
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-4"><span className="text-sm font-medium">预览</span>{snapshot?.preview.url && <Button variant="ghost" size="icon-sm" onClick={onOpenWindow}><PanelsTopLeft/><span className="sr-only">在新窗口中打开预览</span></Button>}</div>
       <div className="relative min-h-0 flex-1">
-        {snapshot?.preview.url ? <iframe title="网站预览" src={snapshot.preview.url} sandbox="allow-scripts allow-forms allow-same-origin" className="size-full border-0 bg-background" /> : <div className="grid h-full place-items-center p-8 text-center"><div><div className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground"><Globe2/></div><h3 className="mt-4 text-sm font-medium">网站尚未启动</h3><p className="mt-2 max-w-64 text-xs leading-5 text-muted-foreground">运行验收后会自动构建并在本地启动可访问的预览服务。</p><Button className="mt-5" size="sm" disabled={!snapshot || busy} onClick={snapshot?.checks.length ? onPreview : onRun}>{busy ? <Spinner/> : <Play/>}{snapshot?.checks.length ? '启动预览' : '验收并启动'}</Button></div></div>}
+        {snapshot?.preview.url ? <><iframe key={`${snapshot.preview.url}-${snapshot.project.updatedAt}`} title="网站预览" src={snapshot.preview.url} sandbox="allow-scripts allow-forms allow-same-origin" className="size-full border-0 bg-background" />{busy && <div className="pointer-events-none absolute inset-0 grid place-items-center bg-background/60 backdrop-blur-sm"><Spinner/></div>}</> : <div className="grid h-full place-items-center p-8 text-center"><div><div className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground"><Globe2/></div><h3 className="mt-4 text-sm font-medium">网站尚未启动</h3><p className="mt-2 max-w-64 text-xs leading-5 text-muted-foreground">运行验收后会自动构建并在本地启动可访问的预览服务。</p><Button className="mt-5" size="sm" disabled={!snapshot || busy} onClick={snapshot?.checks.length ? onPreview : onRun}>{busy ? <Spinner/> : <Play/>}{snapshot?.checks.length ? '启动预览' : '验收并启动'}</Button></div></div>}
       </div>
   </aside>;
 }
