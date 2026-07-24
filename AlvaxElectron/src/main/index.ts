@@ -13,6 +13,7 @@ import { WebsiteBuilderStore } from './website-builder/store';
 import { PiRpcRuntime } from './website-builder/pi-rpc-runtime';
 import { PreviewManager } from './website-builder/preview-manager';
 import { WebsiteBuilderService } from './website-builder/service';
+import { AppLogger } from './logging/app-logger';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -41,6 +42,11 @@ function broadcastWebsiteEvent(event: WebsiteBuilderEvent): void {
 }
 
 void app.whenReady().then(() => {
+  app.setAppLogsPath(path.join(app.getPath('userData'), 'logs'));
+  const logger = new AppLogger(app.getPath('logs'));
+  logger.info('Application', `Started ${app.getVersion()} (${process.platform}/${process.arch})`);
+  process.on('uncaughtException', (error) => { logger.error('uncaughtException', error); });
+  process.on('unhandledRejection', (reason) => { logger.error('unhandledRejection', reason); });
   registerAppProtocol();
   const repository = new JsonWorkspaceRepository(
     path.join(app.getPath('userData'), 'workspace-v1.json'),
@@ -66,12 +72,15 @@ void app.whenReady().then(() => {
     new PiRpcRuntime(),
     new PreviewManager(),
     broadcastWebsiteEvent,
+    (scope, error, context) => logger.error(scope, error, context),
   );
   registerIpcHandlers({
     repository,
     orchestrator,
     websiteBuilder,
     getMainWindow: () => mainWindow,
+    logPath: logger.filePath,
+    logError: (scope, error, context) => logger.error(scope, error, context),
   });
   mainWindow = createMainWindow();
 

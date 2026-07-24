@@ -22,6 +22,8 @@ interface IpcDependencies {
   orchestrator: Orchestrator;
   websiteBuilder: WebsiteBuilderService;
   getMainWindow(): BrowserWindow | null;
+  logPath: string;
+  logError(scope: string, error: unknown, context?: unknown): string;
 }
 
 export function registerIpcHandlers(dependencies: IpcDependencies): void {
@@ -47,7 +49,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
         const input = schema.parse(rawInput);
         return { ok: true, data: await operation(input) };
       } catch (error) {
-        return { ok: false, error: serializeError(error) };
+        return { ok: false, error: serializeError(error, dependencies, channel) };
       }
     });
   };
@@ -57,7 +59,13 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     platform: process.platform,
     arch: process.arch,
     isPackaged: app.isPackaged,
+    logPath: dependencies.logPath,
   }));
+  handle(IPC_CHANNELS.systemLogError, z.object({
+    scope: z.string().max(80),
+    message: z.string().max(10_000),
+    stack: z.string().max(30_000).optional(),
+  }), (input) => ({ errorId: dependencies.logError(input.scope, new Error(input.message), input.stack) }));
   handle(IPC_CHANNELS.agentList, z.undefined(), () => repository.listAgents());
   handle(IPC_CHANNELS.agentSave, SaveAgentInputSchema, (input) =>
     repository.saveAgent(input),
@@ -86,10 +94,13 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   handle(IPC_CHANNELS.websitePreviewStart, IdSchema, (id) => websiteBuilder.startPreview(id));
   handle(IPC_CHANNELS.websitePreviewStop, IdSchema, (id) => websiteBuilder.stopPreview(id));
   handle(IPC_CHANNELS.websitePreviewOpenWindow, IdSchema, async (id) => {
-    const snapshot = await websiteBuilder.getProject(id);
+    // A persisted preview URL may point to a server from a previous app process.
+    // Starting here makes the action self-healing after an app restart.
+    const snapshot = await websiteBuilder.startPreview(id);
     const url = snapshot.preview.url;
     if (!url || snapshot.preview.status !== 'running') {
-      throw new AppError('CONFLICT', '预览服务尚未启动。');
+      const errorId = dependencies.logError('Preview window', snapshot.preview.error ?? '预览服务启动失败', { projectId: id });
+      throw new AppError('CONFLICT', `预览服务启动失败（错误编号 ${errorId}）。日志：${dependencies.logPath}`);
     }
     const parsed = new URL(url);
     if (!['127.0.0.1', 'localhost'].includes(parsed.hostname)) {
@@ -125,7 +136,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
   );
 }
 
-function serializeError(error: unknown): ApiError {
+function serializeError(error: unknown, dependencies: IpcDependencies, channel: string): ApiError {
   if (error instanceof AppError) {
     return {
       code: error.code,
@@ -141,6 +152,9 @@ function serializeError(error: unknown): ApiError {
     }
     return { code: 'VALIDATION_ERROR', message: '提交的数据格式不正确。', details };
   }
-  console.error('[IPC]', error);
-  return { code: 'INTERNAL_ERROR', message: '应用遇到了内部错误。' };
+  const errorId = dependencies.logError('IPC', error, { channel });
+  return {
+    code: 'INTERNAL_ERROR',
+    message: `应用遇到了内部错误（错误编号 ${errorId}）。日志：${dependencies.logPath}`,
+  };
 }

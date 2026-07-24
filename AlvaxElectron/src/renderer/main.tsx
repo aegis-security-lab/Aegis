@@ -22,6 +22,11 @@ class RendererErrorBoundary extends Component<{ children: ReactNode }, ErrorBoun
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('[Renderer]', error, info.componentStack);
+    void window.alvax.system.logError({
+      scope: 'Renderer error boundary',
+      message: error.message,
+      ...(error.stack ? { stack: `${error.stack}\n${info.componentStack ?? ''}` } : {}),
+    });
   }
 
   render(): ReactNode {
@@ -45,6 +50,23 @@ class RendererErrorBoundary extends Component<{ children: ReactNode }, ErrorBoun
     );
   }
 }
+
+window.addEventListener('error', (event) => {
+  void window.alvax.system.logError({
+    scope: 'Renderer window.error',
+    message: event.message,
+    ...(event.error instanceof Error && event.error.stack ? { stack: event.error.stack } : {}),
+  });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
+  void window.alvax.system.logError({
+    scope: 'Renderer unhandledrejection',
+    message: error.message,
+    ...(error.stack ? { stack: error.stack } : {}),
+  });
+});
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

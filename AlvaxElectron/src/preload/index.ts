@@ -9,6 +9,7 @@ const invoke = <T>(channel: string, input?: unknown): Promise<ApiResult<T>> =>
 const api: AlvaxDesktopApi = {
   system: {
     getInfo: () => invoke(IPC_CHANNELS.systemInfo),
+    logError: (input) => invoke(IPC_CHANNELS.systemLogError, input),
   },
   agents: {
     list: () => invoke(IPC_CHANNELS.agentList),

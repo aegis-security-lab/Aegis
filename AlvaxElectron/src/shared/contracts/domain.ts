@@ -94,6 +94,7 @@ export const SystemInfoSchema = z.object({
   platform: z.enum(['aix', 'android', 'darwin', 'freebsd', 'haiku', 'linux', 'openbsd', 'sunos', 'win32', 'cygwin', 'netbsd']),
   arch: z.string(),
   isPackaged: z.boolean(),
+  logPath: z.string(),
 });
 
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;

@@ -31,6 +31,7 @@ export class WebsiteBuilderService {
     private readonly pi: PiRpcRuntime,
     private readonly previews: PreviewManager,
     private readonly emit: EventSink,
+    private readonly logError: (scope: string, error: unknown, context?: unknown) => string = () => '',
   ) {}
 
   listProjects(): Promise<WebsiteProject[]> {
@@ -256,6 +257,8 @@ export class WebsiteBuilderService {
       await this.runAcceptance(projectId);
     } else if (event.type === 'runtime_error') {
       await this.failGeneration(projectId, event.message);
+    } else if (event.type === 'runtime_stderr') {
+      this.logError('Pi stderr', event.message, { projectId });
     }
   }
 
@@ -271,6 +274,7 @@ export class WebsiteBuilderService {
   }
 
   private async failGeneration(projectId: string, error: unknown): Promise<void> {
+    this.logError('Website generation', error, { projectId });
     await this.store.patch(projectId, (draft) => {
       draft.project.status = 'failed';
       const message = draft.messages.find((entry) => entry.id === this.activeMessages.get(projectId));

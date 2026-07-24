@@ -20,6 +20,7 @@ import type {
 
 export const IPC_CHANNELS = {
   systemInfo: 'alvax:system:info',
+  systemLogError: 'alvax:system:log-error',
   agentList: 'alvax:agent:list',
   agentSave: 'alvax:agent:save',
   agentRemove: 'alvax:agent:remove',
@@ -63,6 +64,7 @@ export type ApiResult<T> =
 export interface AlvaxDesktopApi {
   system: {
     getInfo(): Promise<ApiResult<SystemInfo>>;
+    logError(input: { scope: string; message: string; stack?: string }): Promise<ApiResult<{ errorId: string }>>;
   };
   agents: {
     list(): Promise<ApiResult<AgentDefinition[]>>;
