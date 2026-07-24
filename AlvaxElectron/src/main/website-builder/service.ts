@@ -17,6 +17,7 @@ import { installTasteSkill, writeWebsiteStarter } from './starter';
 import type { PiRpcRuntime } from './pi-rpc-runtime';
 import type { PreviewManager } from './preview-manager';
 import { runCommand } from './process-utils';
+import type { AiRuntimeConfigManager } from './ai-runtime-config';
 
 type EventSink = (event: WebsiteBuilderEvent) => void;
 
@@ -31,6 +32,7 @@ export class WebsiteBuilderService {
     private readonly pi: PiRpcRuntime,
     private readonly previews: PreviewManager,
     private readonly emit: EventSink,
+    private readonly aiConfig: AiRuntimeConfigManager,
     private readonly logError: (scope: string, error: unknown, context?: unknown) => string = () => '',
   ) {}
 
@@ -65,7 +67,9 @@ export class WebsiteBuilderService {
       throw new AppError('CONFLICT', 'Pi Agent 正在生成，请等待完成或先取消。');
     }
     const runtime = await this.store.getRuntime();
-    const probe = await this.pi.probe(runtime);
+    const config = await this.aiConfig.load();
+    const effectiveRuntime = { ...runtime, provider: config.provider, model: config.model };
+    const probe = await this.pi.probe(effectiveRuntime);
     if (!probe.ready) throw new AppError('CONFLICT', probe.message);
 
     const userMessage: ChatMessage = {
@@ -104,6 +108,8 @@ export class WebsiteBuilderService {
     this.notify(projectId, 'acceptance');
 
     const runtime = await this.store.getRuntime();
+    const config = await this.aiConfig.load();
+    const env = this.aiConfig.environment(config);
     const npmPath = resolveNpm(runtime.nodePath);
     const workspace = this.store.workspacePath(projectId);
     const commands = [
@@ -114,7 +120,7 @@ export class WebsiteBuilderService {
     let passed = true;
     for (const command of commands) {
       await this.updateCheck(projectId, command.kind, { status: 'running' });
-      const result = await runCommand(npmPath, command.args, workspace, command.timeout);
+      const result = await runCommand(npmPath, command.args, workspace, command.timeout, env);
       const status = result.code === 0 ? 'passed' : 'failed';
       await this.updateCheck(projectId, command.kind, {
         status,
@@ -128,7 +134,7 @@ export class WebsiteBuilderService {
     if (passed) {
       await this.updateCheck(projectId, 'health', { status: 'running' });
       try {
-        const url = await this.previews.start(projectId, workspace, npmPath);
+        const url = await this.previews.start(projectId, workspace, npmPath, env);
         await this.updateCheck(projectId, 'health', { status: 'passed', summary: `HTTP 200 · ${url}` });
         await delay(420);
         await this.store.patch(projectId, (draft) => {
@@ -151,7 +157,8 @@ export class WebsiteBuilderService {
   async startPreview(projectId: string): Promise<WebsiteBuilderSnapshot> {
     const runtime = await this.store.getRuntime();
     try {
-      const url = await this.previews.start(projectId, this.store.workspacePath(projectId), resolveNpm(runtime.nodePath));
+      const config = await this.aiConfig.load();
+      const url = await this.previews.start(projectId, this.store.workspacePath(projectId), resolveNpm(runtime.nodePath), this.aiConfig.environment(config));
       await this.store.patch(projectId, (draft) => {
         draft.project.status = 'previewing';
         draft.preview = { status: 'running', url };
@@ -179,12 +186,16 @@ export class WebsiteBuilderService {
 
   async getRuntime(): Promise<RuntimeStatus> {
     const settings = await this.store.getRuntime();
-    return { settings, ...(await this.pi.probe(settings)) };
+    const config = await this.aiConfig.load();
+    const effective = { ...settings, provider: config.provider, model: config.model };
+    return { settings: effective, ...(await this.pi.probe(effective)) };
   }
 
   async updateRuntime(settings: RuntimeSettings): Promise<RuntimeStatus> {
     await this.store.saveRuntime(settings);
-    return { settings, ...(await this.pi.probe(settings)) };
+    const config = await this.aiConfig.load();
+    const effective = { ...settings, provider: config.provider, model: config.model };
+    return { settings: effective, ...(await this.pi.probe(effective)) };
   }
 
   shutdown(): void {
@@ -287,9 +298,12 @@ export class WebsiteBuilderService {
   private async startAgent(projectId: string, runtime: RuntimeSettings, prompt: string): Promise<void> {
     try {
       await installTasteSkill(this.store.workspacePath(projectId));
-      await this.pi.prompt(projectId, this.store.workspacePath(projectId), runtime, prompt, (event) => {
+      const config = await this.aiConfig.load();
+      const effectiveRuntime = { ...runtime, provider: config.provider, model: config.model };
+      const agentPrompt = `${prompt}\n\n${this.aiConfig.agentContext(config)}`;
+      await this.pi.prompt(projectId, this.store.workspacePath(projectId), effectiveRuntime, agentPrompt, (event) => {
         void this.handlePiEvent(projectId, event);
-      });
+      }, this.aiConfig.environment(config));
     } catch (error) {
       await this.failGeneration(projectId, error);
     }

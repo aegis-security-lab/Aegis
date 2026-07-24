@@ -11,10 +11,11 @@ export function runCommand(
   args: string[],
   cwd: string,
   timeoutMs = 180_000,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawn(command, args, { cwd, env: process.env, shell: false });
+    const child = spawn(command, args, { cwd, env, shell: false });
     let output = '';
     const append = (chunk: Buffer): void => {
       output = (output + chunk.toString()).slice(-60_000);

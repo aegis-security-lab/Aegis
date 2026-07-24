@@ -14,6 +14,7 @@ import { PiRpcRuntime } from './website-builder/pi-rpc-runtime';
 import { PreviewManager } from './website-builder/preview-manager';
 import { WebsiteBuilderService } from './website-builder/service';
 import { AppLogger } from './logging/app-logger';
+import { AiRuntimeConfigManager, readExistingPiApiKey } from './website-builder/ai-runtime-config';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -41,7 +42,7 @@ function broadcastWebsiteEvent(event: WebsiteBuilderEvent): void {
   }
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   app.setAppLogsPath(path.join(app.getPath('userData'), 'logs'));
   const logger = new AppLogger(app.getPath('logs'));
   logger.info('Application', `Started ${app.getVersion()} (${process.platform}/${process.arch})`);
@@ -67,11 +68,25 @@ void app.whenReady().then(() => {
     path.join(app.getPath('userData'), 'website-projects'),
     defaultRuntime,
   );
+  const aiRuntimeConfig = new AiRuntimeConfigManager(
+    path.join(app.getPath('userData'), 'config', 'ai-runtime.json'),
+  );
+  const provider = 'opencode-go';
+  await aiRuntimeConfig.ensure({
+    version: 1,
+    provider,
+    model: 'deepseek-v4-flash',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    apiKey: process.env.OPENCODE_API_KEY ?? await readExistingPiApiKey(app.getPath('home'), provider),
+    providerApiKeyEnv: 'OPENCODE_API_KEY',
+  });
+  logger.info('AI configuration', `Loaded from ${aiRuntimeConfig.filePath}`);
   websiteBuilder = new WebsiteBuilderService(
     websiteStore,
     new PiRpcRuntime(),
     new PreviewManager(),
     broadcastWebsiteEvent,
+    aiRuntimeConfig,
     (scope, error, context) => logger.error(scope, error, context),
   );
   registerIpcHandlers({

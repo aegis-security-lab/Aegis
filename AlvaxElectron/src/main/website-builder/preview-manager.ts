@@ -9,13 +9,13 @@ interface PreviewProcess {
 export class PreviewManager {
   private readonly processes = new Map<string, PreviewProcess>();
 
-  async start(projectId: string, workspace: string, npmPath: string): Promise<string> {
+  async start(projectId: string, workspace: string, npmPath: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
     this.stop(projectId);
     const port = await getFreePort();
     const url = `http://127.0.0.1:${port}`;
     const child = spawn(npmPath, ['run', 'preview', '--', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
       cwd: workspace,
-      env: process.env,
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.processes.set(projectId, { child, url });

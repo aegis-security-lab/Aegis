@@ -1,5 +1,6 @@
 import { access } from 'node:fs/promises';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import type { RuntimeSettings } from '../../shared/contracts/website-builder';
 
 type EventSink = (event: Record<string, unknown>) => void;
@@ -9,6 +10,7 @@ interface Session {
   buffer: string;
   requests: Map<string, { resolve: () => void; reject: (error: Error) => void }>;
   sink: EventSink;
+  fingerprint: string;
 }
 
 export class PiRpcRuntime {
@@ -29,10 +31,17 @@ export class PiRpcRuntime {
     settings: RuntimeSettings,
     message: string,
     sink: EventSink,
+    env: NodeJS.ProcessEnv = process.env,
   ): Promise<void> {
     let session = this.sessions.get(projectId);
+    const fingerprint = runtimeFingerprint(settings, env);
+    if (session && session.fingerprint !== fingerprint) {
+      session.child.kill('SIGTERM');
+      this.sessions.delete(projectId);
+      session = undefined;
+    }
     if (!session) {
-      session = this.start(projectId, workspace, settings, sink);
+      session = this.start(projectId, workspace, settings, sink, env, fingerprint);
       await new Promise((resolve) => setTimeout(resolve, 180));
       if (session.child.exitCode !== null) throw new Error('Pi Agent 启动失败。');
     } else {
@@ -56,16 +65,18 @@ export class PiRpcRuntime {
     workspace: string,
     settings: RuntimeSettings,
     sink: EventSink,
+    env: NodeJS.ProcessEnv,
+    fingerprint: string,
   ): Session {
     const args = [settings.piPath, '--mode', 'rpc', '--no-session'];
     if (settings.provider) args.push('--provider', settings.provider);
     if (settings.model) args.push('--model', settings.model);
     const child = spawn(settings.nodePath, args, {
       cwd: workspace,
-      env: process.env,
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const session: Session = { child, buffer: '', requests: new Map(), sink };
+    const session: Session = { child, buffer: '', requests: new Map(), sink, fingerprint };
     child.stdout.on('data', (chunk: Buffer) => this.read(session!, chunk.toString()));
     child.stderr.on('data', (chunk: Buffer) => sink({ type: 'runtime_stderr', message: chunk.toString() }));
     child.on('exit', () => {
@@ -114,4 +125,15 @@ export class PiRpcRuntime {
       });
     });
   }
+}
+
+function runtimeFingerprint(settings: RuntimeSettings, env: NodeJS.ProcessEnv): string {
+  return createHash('sha256').update(JSON.stringify({
+    nodePath: settings.nodePath,
+    piPath: settings.piPath,
+    provider: settings.provider,
+    model: settings.model,
+    baseUrl: env.ALVAX_AI_BASE_URL,
+    apiKey: env.ALVAX_AI_API_KEY,
+  })).digest('hex');
 }
