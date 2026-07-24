@@ -145,7 +145,7 @@ export default function App() {
                 <InputGroup className={cn('bg-card shadow-lg shadow-foreground/5', snapshot.project.status === 'checking' ? 'rounded-b-2xl rounded-t-none border-t-0' : 'rounded-2xl')}>
                   <InputGroupTextarea value={composer} onChange={(event) => setComposer(event.target.value)} placeholder="描述你想生成或修改的网站内容…" className="min-h-24 resize-none px-4 pt-4 text-sm" onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} />
                   <InputGroupAddon align="block-end" className="justify-between px-3 pb-3">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant={runtime?.ready ? 'secondary' : 'outline'}>{runtime?.ready ? 'Pi 已连接' : 'Pi 未配置'}</Badge><span>Enter 发送 · Shift+Enter 换行</span></div>
+                    <span className="text-xs text-muted-foreground">Enter 发送 · Shift+Enter 换行</span>
                     {isGenerating ? <InputGroupButton variant="outline" size="icon-sm" onClick={() => void perform(() => window.alvax.websiteBuilder.cancel(snapshot.project.id), setSnapshot)}><Square/></InputGroupButton> : <InputGroupButton variant="default" size="icon-sm" disabled={busy || !composer.trim()} onClick={() => void send()}><ArrowUp/></InputGroupButton>}
                   </InputGroupAddon>
                 </InputGroup>
