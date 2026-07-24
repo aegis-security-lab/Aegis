@@ -1,4 +1,4 @@
-# Alvax AI
+# Alvax Studio
 
 缘分公司的 AI 产品开发桌面端。当前版本提供由 Pi Agent 驱动的对话式网站生成、自动验收和本地预览闭环。
 

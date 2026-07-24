@@ -12,7 +12,7 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 700,
     show: false,
     backgroundColor: '#0a0b0d',
-    title: 'Alvax AI',
+    title: 'Alvax Studio',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

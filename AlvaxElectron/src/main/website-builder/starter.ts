@@ -48,7 +48,7 @@ export default function App() {
     </section>
     <section id="services" className="goals">{goals.map((goal, index) => <article key={goal}><span>0{index + 1}</span><Check size={18}/><h2>{goal}</h2><p>从用户需求出发，以简洁的信息结构和可验证的结果持续迭代。</p></article>)}</section>
     <section id="about" className="statement"><p>${escapeText(brief.industry)} / ${escapeText(brief.offering)}</p><h2>不是堆砌信息，<br/>而是构建一次清晰的价值沟通。</h2></section>
-    <footer><strong>${escapeText(brief.name)}</strong><span>Built with Alvax AI</span></footer>
+    <footer><strong>${escapeText(brief.name)}</strong><span>Built with Alvax Studio</span></footer>
   </main>;
 }
 `,

@@ -11,11 +11,13 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    executableName: 'alvax-ai',
+    icon: 'assets/icons/alvax-studio',
+    appBundleId: 'com.yuanfen.alvax-studio',
+    appCategoryType: 'public.app-category.developer-tools',
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({ setupIcon: 'assets/icons/alvax-studio.ico' }),
     new MakerDMG({}, ['darwin']),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}, ['linux']),

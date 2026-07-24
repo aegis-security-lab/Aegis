@@ -1,4 +1,4 @@
-# Alvax AI 架构设计
+# Alvax Studio 架构设计
 
 ## 1. 设计背景
 

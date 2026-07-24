@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ArrowUp, Bot, Check, CircleAlert, Code2, ExternalLink, FileCode2,
+  ArrowUp, Bot, Check, CircleAlert, ExternalLink, FileCode2,
   Globe2, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2,
   Sparkles, Square, TerminalSquare, X,
 } from 'lucide-react';
@@ -24,6 +24,7 @@ import type {
   CreateWebsiteProjectInput, RuntimeSettings, RuntimeStatus, WebsiteBuilderSnapshot,
   WebsitePurpose,
 } from '../shared/contracts/website-builder';
+import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
 
 const purposeOptions: { value: WebsitePurpose; label: string }[] = [
   { value: 'brand', label: '品牌展示' }, { value: 'product', label: '产品介绍' },
@@ -91,8 +92,8 @@ export default function App() {
     <main className="flex h-full flex-col bg-background">
       <header className="app-titlebar window-drag-region flex h-16 shrink-0 items-center justify-between border-b bg-card/80 pr-5 backdrop-blur-xl">
         <div className="flex items-center gap-3">
-          <div className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground"><Sparkles className="size-4" /></div>
-          <div><h1 className="text-sm font-semibold tracking-tight">{snapshot?.project.brief.name ?? 'Alvax AI Website Builder'}</h1><p className="text-xs text-muted-foreground">Pi Agent 驱动的网站工作室</p></div>
+          <img src={alvaxStudioIcon} alt="" className="size-9 rounded-xl" />
+          <div><h1 className="text-sm font-semibold tracking-tight">Alvax Studio</h1><p className="text-xs text-muted-foreground">{snapshot ? `${snapshot.project.brief.name} · Pi Agent 官网工作室` : 'Pi Agent 驱动的官网工作室'}</p></div>
           {snapshot && <Badge variant="secondary" className="ml-2 font-normal">{statusLabel(status)}</Badge>}
         </div>
         <div className="window-no-drag flex items-center gap-2">
@@ -168,7 +169,7 @@ function DeliveryPanel({ snapshot, busy, onRun, onPreview }: { snapshot: Website
   </aside>;
 }
 
-function EmptyWorkspace({ onCreate }: { onCreate(): void }) { return <div className="grid h-full place-items-center"><div className="max-w-md text-center"><div className="mx-auto grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary"><Code2/></div><h2 className="mt-5 text-xl font-semibold tracking-tight">从一个产品想法开始</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">输入行业、服务和目标用户，Alvax AI 会创建网站结构、文案与视觉，并自动验证可运行性。</p><Button className="mt-6" onClick={onCreate}><Plus/>创建网站项目</Button></div></div>; }
+function EmptyWorkspace({ onCreate }: { onCreate(): void }) { return <div className="grid h-full place-items-center"><div className="max-w-md text-center"><img src={alvaxStudioIcon} alt="" className="mx-auto size-16 rounded-2xl"/><h2 className="mt-5 text-xl font-semibold tracking-tight">从一个产品想法开始</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">输入行业、服务和目标用户，Alvax Studio 会创建网站结构、文案与视觉，并自动验证可运行性。</p><Button className="mt-6" onClick={onCreate}><Plus/>创建网站项目</Button></div></div>; }
 
 function NewProjectDialog({ open, onOpenChange, onCreate, busy }: { open: boolean; onOpenChange(value: boolean): void; onCreate(brief: CreateWebsiteProjectInput): void; busy: boolean }) {
   const [brief, setBrief] = useState(initialBrief);

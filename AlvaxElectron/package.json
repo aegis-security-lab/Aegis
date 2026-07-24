@@ -1,8 +1,8 @@
 {
-  "name": "alvax-ai",
-  "productName": "Alvax AI",
+  "name": "alvax-studio",
+  "productName": "Alvax Studio",
   "version": "0.1.0",
-  "description": "A secure Electron foundation for multi-agent collaboration products.",
+  "description": "A Pi Agent-powered studio for designing, building, and validating websites.",
   "main": ".vite/build/main.js",
   "private": true,
   "engines": {

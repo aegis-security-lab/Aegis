@@ -21,8 +21,8 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-app.setName('Alvax AI');
-if (process.platform === 'win32') app.setAppUserModelId('com.yuanfen.alvax-ai');
+app.setName('Alvax Studio');
+if (process.platform === 'win32') app.setAppUserModelId('com.yuanfen.alvax-studio');
 
 let mainWindow: BrowserWindow | null = null;
 let orchestrator: ResearchOrchestrator | null = null;
