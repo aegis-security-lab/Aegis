@@ -106,13 +106,11 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     if (!['127.0.0.1', 'localhost'].includes(parsed.hostname)) {
       throw new AppError('UNAUTHORIZED', '只能在新窗口中打开本地预览。');
     }
-    const parent = dependencies.getMainWindow();
     const previewWindow = new BrowserWindow({
       width: 1280,
       height: 820,
       minWidth: 720,
       minHeight: 520,
-      ...(parent ? { parent } : {}),
       title: `${snapshot.project.brief.name} · 预览`,
       backgroundColor: '#ffffff',
       webPreferences: {
