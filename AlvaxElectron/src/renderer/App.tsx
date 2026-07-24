@@ -178,12 +178,12 @@ function ChatTimeline({ messages, active }: { messages: ChatMessage[]; active: b
 function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const open = active || historyOpen;
-  return <Collapsible open={open} onOpenChange={(value) => { if (!active) setHistoryOpen(value); }} className="ml-3 max-w-[80%]">
+  return <Collapsible open={open} onOpenChange={(value) => { if (!active) setHistoryOpen(value); }} className="ml-3 max-w-[88%]">
     <CollapsibleTrigger render={<Button variant="ghost" size="xs" />} className="text-muted-foreground">
       {active ? <LoaderCircle className="animate-spin"/> : <ChevronDown className={cn('transition-transform', open && 'rotate-180')}/>} {active ? 'Agent 正在执行' : `查看执行过程 · ${messages.length} 条`}
     </CollapsibleTrigger>
-    <CollapsibleContent className="mt-2 overflow-hidden data-[ending-style]:animate-out data-[starting-style]:animate-in">
-      <div className="flex max-h-56 flex-col gap-2 overflow-y-auto rounded-xl border bg-muted/30 p-2">
+    <CollapsibleContent className="mt-1 overflow-hidden data-[ending-style]:animate-out data-[starting-style]:animate-in">
+      <div className="flex max-h-56 flex-col gap-2 overflow-y-auto py-1 pl-1 pr-3">
         {messages.map((message) => <ChatEntry key={message.id} message={message} compact />)}
       </div>
     </CollapsibleContent>
@@ -191,14 +191,23 @@ function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: b
 }
 
 function ChatEntry({ message, compact = false }: { message: ChatMessage; compact?: boolean }) {
-  if (message.role === 'system') return <Marker variant="border"><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap text-xs">{message.content}</MarkerContent></Marker>;
+  if (message.role === 'system') return <Marker variant={compact ? 'default' : 'border'}><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap text-xs">{message.content}</MarkerContent></Marker>;
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
+  if (compact) return <Message>
+    <MessageContent>
+      <div className={cn('flex min-w-0 items-start gap-2 text-xs leading-5 text-muted-foreground', message.state === 'error' && 'text-destructive')}>
+        {isTool ? <TerminalSquare className="mt-0.5 size-3.5 shrink-0"/> : <Bot className="mt-0.5 size-3.5 shrink-0"/>}
+        <span className={cn('min-w-0 whitespace-pre-wrap', isTool && 'truncate font-mono')}>{message.content || '正在思考…'}</span>
+        {message.state === 'streaming' && !isTool && <span className="mt-1 inline-block h-3 w-px shrink-0 animate-pulse bg-current"/>}
+      </div>
+    </MessageContent>
+  </Message>;
   return <Message align={isUser ? 'end' : 'start'}>
     <MessageContent>
       {!isUser && !compact && <MessageHeader>{isTool ? <TerminalSquare className="mr-1 size-3.5"/> : <Bot className="mr-1 size-3.5"/>}{isTool ? 'Agent 工具' : 'Alvax Agent'}</MessageHeader>}
-      <Bubble variant={isUser ? 'default' : message.state === 'error' ? 'destructive' : isTool ? 'outline' : 'secondary'} align={isUser ? 'end' : 'start'} className={cn(compact && 'max-w-full')}>
-        <BubbleContent className={cn('whitespace-pre-wrap', isTool && 'truncate font-mono text-xs', compact && 'max-w-full py-1.5 text-xs')}>{message.content || <span className="flex items-center gap-2"><Spinner/>正在思考…</span>}{message.state === 'streaming' && message.content && !isTool && <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-current align-middle"/>}</BubbleContent>
+      <Bubble variant={isUser ? 'default' : message.state === 'error' ? 'destructive' : 'ghost'} align={isUser ? 'end' : 'start'}>
+        <BubbleContent className={cn('whitespace-pre-wrap', isTool && 'truncate font-mono text-xs')}>{message.content || <span className="flex items-center gap-2"><Spinner/>正在思考…</span>}{message.state === 'streaming' && message.content && !isTool && <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-current align-middle"/>}</BubbleContent>
       </Bubble>
     </MessageContent>
   </Message>;
