@@ -325,11 +325,32 @@ function ChatTimeline({ messages, active, busy, onConfirmation }: { messages: Ch
     return <MessageScrollerItem key={turn[0]?.id ?? index} messageId={turn.at(-1)!.id} scrollAnchor={isActive}>
       <div className="flex flex-col gap-3">
         {user && <ChatEntry message={user} active={isActive} />}
-        {history.length > 0 && <AgentProcess messages={history} active={isActive} busy={busy} onConfirmation={onConfirmation} />}
+        {history.length > 0 && <TimelineHistory messages={history} active={isActive} busy={busy} onConfirmation={onConfirmation} />}
         {final && <ChatEntry message={final} busy={busy} onConfirmation={onConfirmation} />}
       </div>
     </MessageScrollerItem>;
   });
+}
+
+function TimelineHistory({ messages, active, busy, onConfirmation }: { messages: ChatMessage[]; active: boolean; busy: boolean; onConfirmation(toolCallId: string, approved: boolean, suggestion: string): void }) {
+  const groups: Array<{ kind: 'pinned'; message: ChatMessage } | { kind: 'process'; messages: ChatMessage[] }> = [];
+  for (const message of messages) {
+    if (isPinnedAgentMessage(message)) {
+      groups.push({ kind: 'pinned', message });
+      continue;
+    }
+    const previous = groups.at(-1);
+    if (previous?.kind === 'process') previous.messages.push(message);
+    else groups.push({ kind: 'process', messages: [message] });
+  }
+  return groups.map((group, index) => group.kind === 'pinned'
+    ? <ChatEntry key={group.message.id} message={group.message} busy={busy} onConfirmation={onConfirmation} />
+    : <AgentProcess key={group.messages[0]!.id} messages={group.messages} active={active && index === groups.length - 1} busy={busy} onConfirmation={onConfirmation} />);
+}
+
+function isPinnedAgentMessage(message: ChatMessage): boolean {
+  return message.role === 'tool'
+    && (message.content.startsWith(ALVAX_KEY_INFO_PREFIX) || message.content.startsWith(ALVAX_CONFIRMATION_PREFIX));
 }
 
 function isFinalDeliveryMessage(message: ChatMessage): boolean {
