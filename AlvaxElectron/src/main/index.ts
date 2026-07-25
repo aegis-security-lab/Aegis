@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { existsSync } from 'node:fs';
 import { app, BrowserWindow, protocol } from 'electron';
 import { ResearchOrchestrator } from './core/research-orchestrator';
 import { JsonWorkspaceRepository } from './infrastructure/json-workspace-repository';
@@ -59,15 +58,14 @@ void app.whenReady().then(async () => {
     new MockAgentRuntime(),
   );
   const bundledRuntimeRoot = path.join(process.resourcesPath, '.runtime', `${process.platform}-${process.arch}`);
-  const systemNodePath = resolveSystemNodePath();
   const bundledRuntime: RuntimeSettings = {
-    nodePath: systemNodePath,
+    nodePath: path.join(bundledRuntimeRoot, 'node', process.platform === 'win32' ? 'node.exe' : 'bin/node'),
     piPath: path.join(bundledRuntimeRoot, 'pi', 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js'),
     provider: '',
     model: '',
   };
   const defaultRuntime: RuntimeSettings = app.isPackaged ? bundledRuntime : {
-    nodePath: systemNodePath,
+    nodePath: process.env.PI_NODE_PATH ?? path.join(process.env.NVM_BIN ?? '/usr/local/bin', 'node'),
     piPath: process.env.PI_PATH ?? path.join(app.getPath('home'), 'Code/pi/packages/coding-agent/dist/cli.js'),
     provider: '', model: '',
   };
@@ -92,7 +90,7 @@ void app.whenReady().then(async () => {
     provider: bundledAiConfig?.provider ?? provider,
     model: bundledAiConfig?.model ?? 'openai/gpt-5.6-luna',
     baseUrl: bundledAiConfig?.baseUrl ?? 'https://ai-gateway.vercel.sh/v1',
-    apiKey: process.env.AI_GATEWAY_API_KEY ?? bundledAiConfig?.apiKey ?? await readExistingPiApiKey(app.getPath('home'), provider),
+    apiKey: process.env.OPENCODE_API_KEY ?? bundledAiConfig?.apiKey ?? await readExistingPiApiKey(app.getPath('home'), provider),
     providerApiKeyEnv: bundledAiConfig?.providerApiKeyEnv ?? 'AI_GATEWAY_API_KEY',
   });
   logger.info('AI configuration', `Loaded from ${aiRuntimeConfig.filePath}`);
@@ -126,18 +124,3 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-
-function resolveSystemNodePath(): string {
-  const executable = process.platform === 'win32' ? 'node.exe' : 'node';
-  const candidates = [
-    process.env.PI_NODE_PATH,
-    process.env.NVM_BIN ? path.join(process.env.NVM_BIN, executable) : undefined,
-    process.platform === 'darwin' ? `/opt/homebrew/opt/node@24/bin/${executable}` : undefined,
-    process.platform === 'darwin' ? `/usr/local/opt/node@24/bin/${executable}` : undefined,
-    process.platform === 'darwin' ? `/opt/homebrew/bin/${executable}` : undefined,
-    process.platform === 'win32' ? path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs', executable) : undefined,
-    `/usr/local/bin/${executable}`,
-    `/usr/bin/${executable}`,
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
-}
