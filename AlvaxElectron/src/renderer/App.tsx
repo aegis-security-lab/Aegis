@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert,
-  Globe2, LoaderCircle, PanelsTopLeft, Play, Plus,
+  Globe2, LoaderCircle, MessagesSquare, PanelsTopLeft, Play, Plus,
   Sparkles, Square, TerminalSquare, X,
 } from 'lucide-react';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
@@ -15,12 +15,14 @@ import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
 import { Message, MessageContent, MessageHeader } from '@/components/ui/message';
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { ApiResult } from '../shared/contracts/api';
 import type {
-  ChatMessage, CreateWebsiteProjectInput, WebsiteBuilderSnapshot,
+  ChatMessage, CreateWebsiteProjectInput, WebsiteBuilderSnapshot, WebsiteProject,
   WebsitePurpose,
 } from '../shared/contracts/website-builder';
 import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
@@ -36,30 +38,37 @@ const initialBrief: CreateWebsiteProjectInput = {
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<WebsiteBuilderSnapshot>();
+  const [projects, setProjects] = useState<WebsiteProject[]>([]);
   const [composer, setComposer] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const previewRunningSeen = useRef(new Map<string, boolean>());
   const composerIsComposing = useRef(false);
+  const sessionCloseTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const loadProject = useCallback(async (id: string) => {
+  const loadProject = useCallback(async (id: string): Promise<WebsiteBuilderSnapshot | undefined> => {
     const result = await window.alvax.websiteBuilder.getProject(id);
     if (result.ok) {
       const wasPreviewing = previewRunningSeen.current.get(id);
       const isPreviewing = result.data.project.status === 'previewing' && result.data.preview.status === 'running';
       previewRunningSeen.current.set(id, isPreviewing);
       setSnapshot(result.data);
+      setProjects((current) => current.map((project) => project.id === id ? result.data.project : project));
       if (wasPreviewing === false && isPreviewing) {
         setDeliveryOpen(true);
       }
+      return result.data;
     } else setError(result.error.message);
+    return undefined;
   }, []);
 
   const load = useCallback(async () => {
     const projectResult = await window.alvax.websiteBuilder.listProjects();
     if (projectResult.ok) {
+      setProjects(projectResult.data);
       const selectedId = snapshot?.project.id ?? projectResult.data[0]?.id;
       if (selectedId) await loadProject(selectedId);
       else setNewProjectOpen(true);
@@ -75,6 +84,9 @@ export default function App() {
   useEffect(() => window.alvax.websiteBuilder.onEvent((event) => {
     if (event.projectId === snapshot?.project.id) void loadProject(event.projectId);
   }), [loadProject, snapshot?.project.id]);
+  useEffect(() => () => {
+    if (sessionCloseTimer.current) clearTimeout(sessionCloseTimer.current);
+  }, []);
 
   const perform = async <T,>(operation: () => Promise<ApiResult<T>>, onSuccess?: (value: T) => void) => {
     setBusy(true); setError('');
@@ -98,11 +110,30 @@ export default function App() {
     }
   };
 
+  const openSessions = () => {
+    if (sessionCloseTimer.current) clearTimeout(sessionCloseTimer.current);
+    setSessionsOpen(true);
+  };
+
+  const scheduleSessionsClose = () => {
+    sessionCloseTimer.current = setTimeout(() => setSessionsOpen(false), 180);
+  };
+
+  const selectProject = async (id: string) => {
+    setSessionsOpen(false);
+    setComposer('');
+    const selected = await loadProject(id);
+    if (deliveryOpen && selected?.preview.url) {
+      await perform(() => window.alvax.websiteBuilder.startPreview(id), setSnapshot);
+    }
+  };
+
   const status = snapshot?.project.status;
   const isGenerating = status === 'generating';
 
   return <TooltipProvider>
     <main className="flex h-full flex-col bg-background">
+      <div className="fixed bottom-0 left-0 top-12 z-40 w-2" onMouseEnter={openSessions} aria-hidden="true" />
       <header className="app-titlebar window-drag-region flex h-12 shrink-0 items-center justify-between border-b bg-card/80 pr-4 backdrop-blur-xl">
         <h1 className="text-sm font-semibold tracking-tight">Alvax Studio</h1>
         <div className="window-no-drag flex items-center gap-2">
@@ -166,8 +197,44 @@ export default function App() {
       </ResizablePanelGroup>
     </main>
 
+    <SessionDrawer open={sessionsOpen} projects={projects} selectedId={snapshot?.project.id} onOpenChange={setSessionsOpen} onMouseEnter={openSessions} onMouseLeave={scheduleSessionsClose} onSelect={(id) => void selectProject(id)} />
     <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={(brief) => void perform(() => window.alvax.websiteBuilder.createProject(brief), (value) => { setDeliveryOpen(false); setSnapshot(value); setNewProjectOpen(false); void load(); })} busy={busy}/>
   </TooltipProvider>;
+}
+
+function SessionDrawer({ open, projects, selectedId, onOpenChange, onMouseEnter, onMouseLeave, onSelect }: {
+  open: boolean;
+  projects: WebsiteProject[];
+  selectedId: string | undefined;
+  onOpenChange(value: boolean): void;
+  onMouseEnter(): void;
+  onMouseLeave(): void;
+  onSelect(id: string): void;
+}) {
+  return <Sheet open={open} onOpenChange={onOpenChange} modal={false}>
+    <SheetContent side="left" showCloseButton={false} showOverlay={false} className="w-80 gap-0 p-0 sm:max-w-80" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <SheetHeader className="border-b px-4 py-3">
+        <div className="flex items-center gap-2"><MessagesSquare className="size-4 text-muted-foreground"/><SheetTitle>会话</SheetTitle></div>
+        <SheetDescription className="text-xs">切换网站会话和对应预览</SheetDescription>
+      </SheetHeader>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-1 p-2">
+          {projects.map((project) => <Button
+            key={project.id}
+            variant={project.id === selectedId ? 'secondary' : 'ghost'}
+            className="h-auto w-full justify-start px-3 py-2.5 text-left"
+            onClick={() => onSelect(project.id)}
+          >
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="truncate text-sm font-medium">{project.brief.name}</span>
+              <span className="truncate text-xs font-normal text-muted-foreground">{project.brief.industry} · {formatSessionTime(project.updatedAt)}</span>
+            </span>
+            {project.status === 'previewing' && <span className="size-1.5 shrink-0 rounded-full bg-success"/>}
+          </Button>)}
+        </div>
+      </ScrollArea>
+    </SheetContent>
+  </Sheet>;
 }
 
 function ChatTimeline({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
@@ -186,6 +253,10 @@ function ChatTimeline({ messages, active }: { messages: ChatMessage[]; active: b
       </div>
     </MessageScrollerItem>;
   });
+}
+
+function formatSessionTime(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
 function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
