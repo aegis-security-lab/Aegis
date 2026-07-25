@@ -93,6 +93,14 @@ export default function App() {
     try {
       const result = await operation();
       if (result.ok) onSuccess?.(result.data); else setError(result.error.message);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : '操作失败，请查看本地日志。';
+      setError(message);
+      void window.alvax.system.logError({
+        scope: 'Renderer operation',
+        message,
+        ...(cause instanceof Error && cause.stack ? { stack: cause.stack } : {}),
+      });
     } finally { setBusy(false); }
   };
 
@@ -198,7 +206,12 @@ export default function App() {
     </main>
 
     <SessionDrawer open={sessionsOpen} projects={projects} selectedId={snapshot?.project.id} onOpenChange={setSessionsOpen} onMouseEnter={openSessions} onMouseLeave={scheduleSessionsClose} onSelect={(id) => void selectProject(id)} />
-    <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={(brief) => void perform(() => window.alvax.websiteBuilder.createProject(brief), (value) => { setDeliveryOpen(false); setSnapshot(value); setNewProjectOpen(false); void load(); })} busy={busy}/>
+    <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={(brief) => void perform(() => window.alvax.websiteBuilder.createProject(brief), (value) => {
+      setDeliveryOpen(false);
+      setSnapshot(value);
+      setProjects((current) => [value.project, ...current.filter((project) => project.id !== value.project.id)]);
+      setNewProjectOpen(false);
+    })} busy={busy}/>
   </TooltipProvider>;
 }
 
