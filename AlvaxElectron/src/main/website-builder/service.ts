@@ -300,10 +300,10 @@ export class WebsiteBuilderService {
       await installTasteSkill(this.store.workspacePath(projectId));
       const config = await this.aiConfig.load();
       const effectiveRuntime = { ...runtime, provider: config.provider, model: config.model };
-      const agentPrompt = `${prompt}\n\n${this.aiConfig.agentContext(config)}`;
-      await this.pi.prompt(projectId, this.store.workspacePath(projectId), effectiveRuntime, agentPrompt, (event) => {
+      const systemPrompt = this.aiConfig.agentContext(config);
+      await this.pi.prompt(projectId, this.store.workspacePath(projectId), effectiveRuntime, prompt, (event) => {
         void this.handlePiEvent(projectId, event);
-      }, this.aiConfig.environment(config));
+      }, this.aiConfig.environment(config), systemPrompt);
     } catch (error) {
       await this.failGeneration(projectId, error);
     }

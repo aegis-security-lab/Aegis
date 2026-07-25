@@ -32,16 +32,17 @@ export class PiRpcRuntime {
     message: string,
     sink: EventSink,
     env: NodeJS.ProcessEnv = process.env,
+    systemPrompt = '',
   ): Promise<void> {
     let session = this.sessions.get(projectId);
-    const fingerprint = runtimeFingerprint(settings, env);
+    const fingerprint = runtimeFingerprint(settings, env, systemPrompt);
     if (session && session.fingerprint !== fingerprint) {
       session.child.kill('SIGTERM');
       this.sessions.delete(projectId);
       session = undefined;
     }
     if (!session) {
-      session = this.start(projectId, workspace, settings, sink, env, fingerprint);
+      session = this.start(projectId, workspace, settings, sink, env, fingerprint, systemPrompt);
       await new Promise((resolve) => setTimeout(resolve, 180));
       if (session.child.exitCode !== null) throw new Error('Pi Agent 启动失败。');
     } else {
@@ -67,10 +68,12 @@ export class PiRpcRuntime {
     sink: EventSink,
     env: NodeJS.ProcessEnv,
     fingerprint: string,
+    systemPrompt: string,
   ): Session {
     const args = [settings.piPath, '--mode', 'rpc', '--no-session'];
     if (settings.provider) args.push('--provider', settings.provider);
     if (settings.model) args.push('--model', settings.model);
+    if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
     const child = spawn(settings.nodePath, args, {
       cwd: workspace,
       env,
@@ -127,7 +130,7 @@ export class PiRpcRuntime {
   }
 }
 
-function runtimeFingerprint(settings: RuntimeSettings, env: NodeJS.ProcessEnv): string {
+function runtimeFingerprint(settings: RuntimeSettings, env: NodeJS.ProcessEnv, systemPrompt: string): string {
   return createHash('sha256').update(JSON.stringify({
     nodePath: settings.nodePath,
     piPath: settings.piPath,
@@ -135,5 +138,6 @@ function runtimeFingerprint(settings: RuntimeSettings, env: NodeJS.ProcessEnv): 
     model: settings.model,
     baseUrl: env.ALVAX_AI_BASE_URL,
     apiKey: env.ALVAX_AI_API_KEY,
+    systemPrompt,
   })).digest('hex');
 }
