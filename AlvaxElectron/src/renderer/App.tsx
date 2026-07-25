@@ -324,7 +324,7 @@ function ChatTimeline({ messages, active, busy, onConfirmation }: { messages: Ch
     const history = final ? responses.filter((message) => message.id !== final.id) : responses;
     return <MessageScrollerItem key={turn[0]?.id ?? index} messageId={turn.at(-1)!.id} scrollAnchor={isActive}>
       <div className="flex flex-col gap-3">
-        {user && <ChatEntry message={user} active={isActive} />}
+        {user && <ChatEntry message={user} />}
         {history.length > 0 && <TimelineHistory messages={history} active={isActive} busy={busy} onConfirmation={onConfirmation} />}
         {final && <ChatEntry message={final} busy={busy} onConfirmation={onConfirmation} />}
       </div>
@@ -384,18 +384,18 @@ function AgentProcess({ messages, active, busy, onConfirmation }: { messages: Ch
   </Collapsible>;
 }
 
-function ChatEntry({ message, compact = false, active = false, busy = false, onConfirmation = () => undefined }: { message: ChatMessage; compact?: boolean; active?: boolean; busy?: boolean; onConfirmation?(toolCallId: string, approved: boolean, suggestion: string): void }) {
+function ChatEntry({ message, compact = false, busy = false, onConfirmation = () => undefined }: { message: ChatMessage; compact?: boolean; busy?: boolean; onConfirmation?(toolCallId: string, approved: boolean, suggestion: string): void }) {
   if (message.role === 'system') return <Marker variant={compact ? 'default' : 'border'} className={cn(compact && 'shrink-0')}><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap text-xs">{message.content}</MarkerContent></Marker>;
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
   if (isTool && message.content.startsWith(ALVAX_KEY_INFO_PREFIX)) {
-    return <KeyInfoCard content={message.content.slice(ALVAX_KEY_INFO_PREFIX.length)} state={message.state} />;
+    return <KeyInfoCard content={message.content.slice(ALVAX_KEY_INFO_PREFIX.length)} />;
   }
   if (isTool && message.content.startsWith(ALVAX_CONFIRMATION_PREFIX)) {
     return <ConfirmationCard content={message.content.slice(ALVAX_CONFIRMATION_PREFIX.length)} pending={message.state === 'streaming'} busy={busy} onRespond={onConfirmation} />;
   }
   if (isUser && message.content.startsWith(WEBSITE_BRIEF_MESSAGE_PREFIX)) {
-    return <RequirementCard content={message.content} active={active} />;
+    return <RequirementCard content={message.content} />;
   }
   const displayContent = isTool ? normalizeToolMessage(message.content) : message.content;
   if (compact) return <Message className="shrink-0">
@@ -421,7 +421,7 @@ function ChatEntry({ message, compact = false, active = false, busy = false, onC
   </Message>;
 }
 
-function RequirementCard({ content, active }: { content: string; active: boolean }) {
+function RequirementCard({ content }: { content: string }) {
   const fields = content.split('\n').slice(1).map((line) => {
     const separator = line.indexOf('：');
     return separator < 0 ? ['', line] : [line.slice(0, separator), line.slice(separator + 1)];
@@ -430,7 +430,6 @@ function RequirementCard({ content, active }: { content: string; active: boolean
     <CardHeader>
       <CardTitle className="flex items-center gap-2"><Sparkles/>网站需求已提交</CardTitle>
       <CardDescription>Alvax Agent 将根据以下信息设计并生成网站。</CardDescription>
-      <CardAction><Badge variant="secondary">{active ? <><Spinner/>AI 正在工作</> : '已交付'}</Badge></CardAction>
     </CardHeader>
     <CardContent>
       <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-[5rem_1fr]">
@@ -443,7 +442,7 @@ function RequirementCard({ content, active }: { content: string; active: boolean
   </Card>;
 }
 
-function KeyInfoCard({ content, state }: { content: string; state: ChatMessage['state'] }) {
+function KeyInfoCard({ content }: { content: string }) {
   const data = parseCardPayload<{ type?: string; title?: string; content?: string }>(content);
   const labels: Record<string, string> = {
     analysis: 'AI 分析', suggestion: '优化建议', final_delivery: '最终交付报告',
@@ -452,7 +451,6 @@ function KeyInfoCard({ content, state }: { content: string; state: ChatMessage['
   return <Card size="sm" className="shrink-0 bg-muted/30">
     <CardHeader>
       <CardTitle className="flex items-center gap-2"><Sparkles/>{data.title || label}</CardTitle>
-      <CardAction><Badge variant={data.type === 'final_delivery' ? 'default' : 'secondary'}>{state === 'streaming' && <Spinner/>}{label}</Badge></CardAction>
     </CardHeader>
     <CardContent><MarkdownContent className="text-muted-foreground">{data.content || 'AI 正在整理关键信息…'}</MarkdownContent></CardContent>
   </Card>;
