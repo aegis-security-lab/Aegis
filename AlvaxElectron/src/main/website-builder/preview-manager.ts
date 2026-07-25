@@ -9,6 +9,10 @@ interface PreviewProcess {
 export class PreviewManager {
   private readonly processes = new Map<string, PreviewProcess>();
 
+  has(projectId: string): boolean {
+    return this.processes.has(projectId);
+  }
+
   async start(projectId: string, workspace: string, npmPath: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
     this.stop(projectId);
     const port = await getFreePort();
@@ -18,11 +22,14 @@ export class PreviewManager {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    let failure = '';
+    child.stderr?.on('data', (chunk: Buffer) => { failure = (failure + chunk.toString()).slice(-4_000); });
+    child.on('error', (error) => { failure = error.message; });
     this.processes.set(projectId, { child, url });
     child.on('exit', () => {
       if (this.processes.get(projectId)?.child === child) this.processes.delete(projectId);
     });
-    await waitForHealth(url, child);
+    await waitForHealth(url, child, () => failure);
     return url;
   }
 
@@ -48,9 +55,10 @@ function getFreePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(url: string, child: ChildProcess): Promise<void> {
+async function waitForHealth(url: string, child: ChildProcess, failure: () => string): Promise<void> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (child.exitCode !== null) throw new Error('预览服务启动失败。');
+    if (failure()) throw new Error(`预览服务启动失败：${failure().trim()}`);
+    if (child.exitCode !== null) throw new Error(`预览服务启动失败（退出码 ${child.exitCode}）。`);
     try {
       const response = await fetch(url);
       if (response.ok) return;
@@ -58,5 +66,5 @@ async function waitForHealth(url: string, child: ChildProcess): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   child.kill('SIGTERM');
-  throw new Error('预览服务健康检查超时。');
+  throw new Error(`预览服务健康检查超时。${failure() ? `\n${failure().trim()}` : ''}`);
 }

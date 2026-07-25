@@ -49,6 +49,13 @@ export class WebsiteBuilderService {
   async listProjects(): Promise<WebsiteProject[]> {
     const projects = await this.store.listProjects();
     for (const project of projects) {
+      if (project.status === 'previewing' && !this.previews.has(project.id)) {
+        await this.store.patch(project.id, (draft) => {
+          draft.project.status = 'ready';
+          draft.preview = { status: 'stopped' };
+        });
+        project.status = 'ready';
+      }
       if ((project.status === 'generating' || project.status === 'checking')
         && !this.pi.hasSession(project.id)
         && !this.recoveringProjects.has(project.id)) {
@@ -163,7 +170,7 @@ export class WebsiteBuilderService {
 
     const runtime = await this.store.getRuntime();
     const config = await this.aiConfig.load();
-    const env = this.aiConfig.environment(config);
+    const env = runtimeEnvironment(this.aiConfig.environment(config), runtime.nodePath);
     const npmPath = resolveNpm(runtime.nodePath);
     const workspace = this.store.workspacePath(projectId);
     const commands = [
@@ -212,12 +219,13 @@ export class WebsiteBuilderService {
     const runtime = await this.store.getRuntime();
     try {
       const config = await this.aiConfig.load();
-      const url = await this.previews.start(projectId, this.store.workspacePath(projectId), resolveNpm(runtime.nodePath), this.aiConfig.environment(config));
+      const url = await this.previews.start(projectId, this.store.workspacePath(projectId), resolveNpm(runtime.nodePath), runtimeEnvironment(this.aiConfig.environment(config), runtime.nodePath));
       await this.store.patch(projectId, (draft) => {
         draft.project.status = 'previewing';
         draft.preview = { status: 'running', url };
       });
     } catch (error) {
+      this.logError('Preview start', error, { projectId });
       await this.store.patch(projectId, (draft) => {
         draft.project.status = 'failed';
         draft.preview = { status: 'failed', error: toMessage(error) };
@@ -415,10 +423,10 @@ export class WebsiteBuilderService {
       const workspace = this.store.workspacePath(projectId);
       await this.pi.prompt(projectId, workspace, effectiveRuntime, prompt, (event) => {
         void this.handlePiEvent(projectId, event);
-      }, {
+      }, runtimeEnvironment({
         ...this.aiConfig.environment(config),
         ALVAX_CONFIRMATION_DIR: path.join(workspace, '.alvax', 'confirmations'),
-      }, systemPrompt);
+      }, runtime.nodePath), systemPrompt);
     } catch (error) {
       await this.failGeneration(projectId, error);
     }
@@ -527,6 +535,15 @@ function createChecks(projectId: string): AcceptanceCheck[] {
 
 function resolveNpm(nodePath: string): string {
   return path.join(path.dirname(nodePath), process.platform === 'win32' ? 'npm.cmd' : 'npm');
+}
+
+function runtimeEnvironment(env: NodeJS.ProcessEnv, nodePath: string): NodeJS.ProcessEnv {
+  const nodeDirectory = path.dirname(nodePath);
+  const existingPath = env.PATH ?? env.Path ?? '';
+  return {
+    ...env,
+    PATH: [nodeDirectory, existingPath].filter(Boolean).join(path.delimiter),
+  };
 }
 
 async function walk(root: string, directory: string): Promise<string[]> {
