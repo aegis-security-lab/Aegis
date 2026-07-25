@@ -9,9 +9,14 @@ const projectRoot = path.resolve(import.meta.dirname, '..');
 const targetRoot = path.join(projectRoot, '.runtime', `${process.platform}-${process.arch}`);
 const nodeRoot = path.join(targetRoot, 'node');
 const piRoot = path.join(targetRoot, 'pi');
+const bundledAiConfigSource = process.env.ALVAX_BUNDLED_AI_CONFIG_FILE;
 
 await rm(path.join(projectRoot, '.runtime'), { recursive: true, force: true });
 await mkdir(nodeRoot, { recursive: true });
+if (bundledAiConfigSource) {
+  await access(bundledAiConfigSource);
+  await cp(bundledAiConfigSource, path.join(targetRoot, 'ai-runtime.json'));
+}
 
 if (process.platform === 'win32') {
   const prefix = path.dirname(process.execPath);

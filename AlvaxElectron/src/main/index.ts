@@ -82,13 +82,16 @@ void app.whenReady().then(async () => {
     path.join(app.getPath('userData'), 'config', 'ai-runtime.json'),
   );
   const provider = 'opencode-go';
+  const bundledAiConfig = app.isPackaged
+    ? await new AiRuntimeConfigManager(path.join(bundledRuntimeRoot, 'ai-runtime.json')).load().catch(() => undefined)
+    : undefined;
   await aiRuntimeConfig.ensure({
     version: 1,
-    provider,
-    model: 'deepseek-v4-flash',
-    baseUrl: 'https://opencode.ai/zen/go/v1',
-    apiKey: process.env.OPENCODE_API_KEY ?? await readExistingPiApiKey(app.getPath('home'), provider),
-    providerApiKeyEnv: 'OPENCODE_API_KEY',
+    provider: bundledAiConfig?.provider ?? provider,
+    model: bundledAiConfig?.model ?? 'deepseek-v4-flash',
+    baseUrl: bundledAiConfig?.baseUrl ?? 'https://opencode.ai/zen/go/v1',
+    apiKey: process.env.OPENCODE_API_KEY ?? bundledAiConfig?.apiKey ?? await readExistingPiApiKey(app.getPath('home'), provider),
+    providerApiKeyEnv: bundledAiConfig?.providerApiKeyEnv ?? 'OPENCODE_API_KEY',
   });
   logger.info('AI configuration', `Loaded from ${aiRuntimeConfig.filePath}`);
   websiteBuilder = new WebsiteBuilderService(
