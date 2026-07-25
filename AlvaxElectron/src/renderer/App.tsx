@@ -42,6 +42,7 @@ export default function App() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const previewRunningSeen = useRef(new Map<string, boolean>());
+  const composerIsComposing = useRef(false);
 
   const loadProject = useCallback(async (id: string) => {
     const result = await window.alvax.websiteBuilder.getProject(id);
@@ -132,7 +133,23 @@ export default function App() {
                 <div className="mx-auto max-w-3xl">
                 {snapshot.project.status === 'checking' && <AcceptanceDock snapshot={snapshot} />}
                 <InputGroup className={cn('bg-card shadow-lg shadow-foreground/5', snapshot.project.status === 'checking' ? 'rounded-b-2xl rounded-t-none border-t-0' : 'rounded-2xl')}>
-                  <InputGroupTextarea value={composer} onChange={(event) => setComposer(event.target.value)} placeholder="描述你想生成或修改的网站内容…" className="min-h-24 resize-none px-4 pt-4 text-sm" onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} />
+                  <InputGroupTextarea
+                    value={composer}
+                    onChange={(event) => setComposer(event.target.value)}
+                    onCompositionStart={() => { composerIsComposing.current = true; }}
+                    onCompositionEnd={() => { composerIsComposing.current = false; }}
+                    onKeyDown={(event) => {
+                      const isComposing = composerIsComposing.current
+                        || event.nativeEvent.isComposing
+                        || event.nativeEvent.keyCode === 229;
+                      if (event.key === 'Enter' && !event.shiftKey && !isComposing) {
+                        event.preventDefault();
+                        void send();
+                      }
+                    }}
+                    placeholder="描述你想生成或修改的网站内容…"
+                    className="min-h-24 resize-none px-4 pt-4 text-sm"
+                  />
                   <InputGroupAddon align="block-end" className="justify-between px-3 pb-3">
                     <span className="text-xs text-muted-foreground">Enter 发送 · Shift+Enter 换行</span>
                     {isGenerating ? <InputGroupButton variant="outline" size="icon-sm" onClick={() => void perform(() => window.alvax.websiteBuilder.cancel(snapshot.project.id), setSnapshot)}><Square/></InputGroupButton> : <InputGroupButton variant="default" size="icon-sm" disabled={busy || !composer.trim()} onClick={() => void send()}><ArrowUp/></InputGroupButton>}
