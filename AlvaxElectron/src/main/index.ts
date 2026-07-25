@@ -81,17 +81,17 @@ void app.whenReady().then(async () => {
   const aiRuntimeConfig = new AiRuntimeConfigManager(
     path.join(app.getPath('userData'), 'config', 'ai-runtime.json'),
   );
-  const provider = 'opencode-go';
+  const provider = 'vercel-ai-gateway';
   const bundledAiConfig = app.isPackaged
     ? await new AiRuntimeConfigManager(path.join(bundledRuntimeRoot, 'ai-runtime.json')).load().catch(() => undefined)
     : undefined;
   await aiRuntimeConfig.ensure({
     version: 1,
     provider: bundledAiConfig?.provider ?? provider,
-    model: bundledAiConfig?.model ?? 'deepseek-v4-flash',
-    baseUrl: bundledAiConfig?.baseUrl ?? 'https://opencode.ai/zen/go/v1',
+    model: bundledAiConfig?.model ?? 'openai/gpt-5.6-luna',
+    baseUrl: bundledAiConfig?.baseUrl ?? 'https://ai-gateway.vercel.sh/v1',
     apiKey: process.env.OPENCODE_API_KEY ?? bundledAiConfig?.apiKey ?? await readExistingPiApiKey(app.getPath('home'), provider),
-    providerApiKeyEnv: bundledAiConfig?.providerApiKeyEnv ?? 'OPENCODE_API_KEY',
+    providerApiKeyEnv: bundledAiConfig?.providerApiKeyEnv ?? 'AI_GATEWAY_API_KEY',
   });
   logger.info('AI configuration', `Loaded from ${aiRuntimeConfig.filePath}`);
   websiteBuilder = new WebsiteBuilderService(
