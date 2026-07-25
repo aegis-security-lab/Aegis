@@ -11,6 +11,7 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    extraResource: ['.runtime'],
     icon: 'assets/icons/alvax-studio',
     appBundleId: 'com.yuanfen.alvax-studio',
     appCategoryType: 'public.app-category.developer-tools',

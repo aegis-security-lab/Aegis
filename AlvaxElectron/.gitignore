@@ -1,6 +1,7 @@
 node_modules/
 .vite/
 out/
+.runtime/
 coverage/
 /work/
 *.log

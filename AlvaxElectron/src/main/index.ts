@@ -57,17 +57,27 @@ void app.whenReady().then(async () => {
     broadcastRunEvent,
     new MockAgentRuntime(),
   );
-  const defaultRuntime: RuntimeSettings = {
-    nodePath: process.env.PI_NODE_PATH ?? path.join(process.env.NVM_BIN ?? '/usr/local/bin', 'node'),
-    piPath: process.env.PI_PATH ?? path.join(app.getPath('home'), 'Code/pi/packages/coding-agent/dist/cli.js'),
+  const bundledRuntimeRoot = path.join(process.resourcesPath, '.runtime', `${process.platform}-${process.arch}`);
+  const bundledRuntime: RuntimeSettings = {
+    nodePath: path.join(bundledRuntimeRoot, 'node', process.platform === 'win32' ? 'node.exe' : 'bin/node'),
+    piPath: path.join(bundledRuntimeRoot, 'pi', 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js'),
     provider: '',
     model: '',
+  };
+  const defaultRuntime: RuntimeSettings = app.isPackaged ? bundledRuntime : {
+    nodePath: process.env.PI_NODE_PATH ?? path.join(process.env.NVM_BIN ?? '/usr/local/bin', 'node'),
+    piPath: process.env.PI_PATH ?? path.join(app.getPath('home'), 'Code/pi/packages/coding-agent/dist/cli.js'),
+    provider: '', model: '',
   };
   const websiteStore = new WebsiteBuilderStore(
     path.join(app.getPath('userData'), 'website-builder-v1.json'),
     path.join(app.getPath('userData'), 'website-projects'),
     defaultRuntime,
   );
+  if (app.isPackaged) {
+    const savedRuntime = await websiteStore.getRuntime();
+    await websiteStore.saveRuntime({ ...savedRuntime, nodePath: bundledRuntime.nodePath, piPath: bundledRuntime.piPath });
+  }
   const aiRuntimeConfig = new AiRuntimeConfigManager(
     path.join(app.getPath('userData'), 'config', 'ai-runtime.json'),
   );

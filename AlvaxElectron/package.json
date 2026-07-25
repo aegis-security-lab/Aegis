@@ -10,6 +10,9 @@
   },
   "packageManager": "npm@11.17.0",
   "scripts": {
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "prepackage": "npm run prepare:runtime",
+    "premake": "npm run prepare:runtime",
     "dev": "electron-forge start",
     "start": "electron-forge start",
     "build": "electron-forge package",
