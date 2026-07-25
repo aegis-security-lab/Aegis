@@ -11,6 +11,7 @@ import type {
   SendWebsiteMessageInput,
   WebsiteBuilderEvent,
   WebsiteBuilderSnapshot,
+  WebsiteBrief,
   WebsiteProject,
 } from '../../shared/contracts/website-builder';
 import {
@@ -79,15 +80,16 @@ export class WebsiteBuilderService {
 
   async createProject(input: CreateWebsiteProjectInput): Promise<WebsiteBuilderSnapshot> {
     const now = new Date().toISOString();
+    const brief = normalizeWebsiteBrief(input);
     const project: WebsiteProject = {
       id: crypto.randomUUID(),
-      brief: input,
+      brief,
       status: 'generating',
       createdAt: now,
       updatedAt: now,
     };
-    const artifacts = await writeWebsiteStarter(this.store.workspacePath(project.id), input);
-    const request = buildInitialRequest(input);
+    const artifacts = await writeWebsiteStarter(this.store.workspacePath(project.id), brief);
+    const request = buildInitialRequest(brief);
     const snapshot = await this.store.save(createEmptySnapshot(project, artifacts, request));
     this.notify(project.id, 'snapshot');
     this.repairAttempts.set(project.id, 0);
@@ -467,7 +469,21 @@ export class WebsiteBuilderService {
   }
 }
 
-function buildInitialRequest(input: CreateWebsiteProjectInput): string {
+function normalizeWebsiteBrief(input: CreateWebsiteProjectInput): WebsiteBrief {
+  if (input.mode === 'create') return { ...input, referenceUrl: '', referenceRequest: '' };
+  const host = new URL(input.referenceUrl).hostname.replace(/^www\./, '');
+  return {
+    mode: 'reference', name: host, industry: '参考网站项目', offering: input.referenceRequest,
+    audience: '由 AI 根据参考网站与需求分析', purposes: ['brand', 'product', 'conversion', 'content'],
+    notes: '', referenceUrl: input.referenceUrl, referenceRequest: input.referenceRequest,
+  };
+}
+
+function buildInitialRequest(input: WebsiteBrief): string {
+  if (input.mode === 'reference') {
+    return [WEBSITE_BRIEF_MESSAGE_PREFIX, '创建模式：参考网站', `参考 URL：${input.referenceUrl}`,
+      `需求：${input.referenceRequest}`, '说明：该 URL 是需要研究和参考的目标网站，不是本项目提供的产品或服务。'].join('\n');
+  }
   const purposeLabels: Record<string, string> = {
     brand: '品牌展示', product: '产品介绍', conversion: '获客转化', content: '内容发布',
   };
@@ -492,7 +508,14 @@ function hasFinalDeliveryInLatestTurn(messages: ChatMessage[]): boolean {
 }
 
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {
-  return `你是 Alvax Studio 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范。\n\n你必须使用 Alvax 专用工具表达关键阶段，不要用普通 assistant 文本代替：\n- alvax_key_info(type=analysis)：完成需求或现有网站分析后立即调用，输出“AI 分析”。\n- alvax_key_info(type=suggestion)：仅在 URL 优化流程中调用，输出面向获客转化的“优化建议”。\n- alvax_request_confirmation：仅在 URL 优化流程中、修改代码之前调用。工具会暂停等待用户确认；确认后必须结合返回的用户建议开始工作，取消后立即停止。\n- alvax_key_info(type=final_delivery)：所有开发与 pre-flight check 完成后作为最后一个动作调用，输出最终交付报告。调用后不要再输出普通文本。\n\n严格执行以下两种流程：\n流程一（用户提供行业、产品、受众、页面要求等内容）：用户输入 → 调用 AI 分析 → 直接生成或修改本地页面 → 调用最终交付报告。\n流程二（用户输入网站 URL 或要求优化现有网站）：读取并分析 URL → 调用 AI 分析说明机会和问题 → 调用优化建议给出获客向方案 → 调用用户确认 → 用户确认后生成本地页面 → 调用最终交付报告。未经确认不得在流程二中修改源码。\n\n产品信息：\n- 名称：${snapshot.project.brief.name}\n- 行业：${snapshot.project.brief.industry}\n- 产品或服务：${snapshot.project.brief.offering}\n- 目标用户：${snapshot.project.brief.audience}\n\n用户本轮要求：${message}\n\n保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check。`;
+  const brief = snapshot.project.brief;
+  const workflow = brief.mode === 'reference'
+    ? '当前必须执行“参考网站”流程：研究参考 URL → 调用 AI 分析说明页面结构、视觉语言、内容与交互 → 调用优化建议说明具体实现方向 → 调用用户确认 → 确认后按用户需求生成参考网站的本地页面 → 调用最终交付报告。用户确认前不得修改源码。'
+    : '当前必须执行“创建网站项目”流程：分析行业、产品、受众与页面要求 → 调用 AI 分析 → 直接生成或修改本地页面 → 调用最终交付报告。';
+  const context = brief.mode === 'reference'
+    ? `参考目标：${brief.referenceUrl}\n参考需求：${brief.referenceRequest}\n\n最高优先级语义约束：参考 URL 是要研究、参考或复刻的网站，不是用户经营的产品，也不是要制作一个“复刻其他网站的工具”。除非用户明确要求，否则最终交付必须是参考目标网站本身风格、结构和体验的本地实现。`
+    : `产品信息：\n- 名称：${brief.name}\n- 行业：${brief.industry}\n- 产品或服务：${brief.offering}\n- 目标用户：${brief.audience}`;
+  return `你是 Alvax Studio 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范。\n\n你必须使用 Alvax 专用工具表达关键阶段，不要用普通 assistant 文本代替：\n- alvax_key_info(type=analysis)：完成需求或参考网站分析后立即调用，输出“AI 分析”。\n- alvax_key_info(type=suggestion)：在参考网站流程中调用，输出具体的复刻或优化实现建议。\n- alvax_request_confirmation：在参考网站流程中、修改代码之前调用。工具会暂停等待用户确认；确认后必须结合返回的用户建议开始工作，取消后立即停止。\n- alvax_key_info(type=final_delivery)：所有开发与 pre-flight check 完成后作为最后一个动作调用，输出最终交付报告。调用后不要再输出普通文本。\n\n${workflow}\n\n${context}\n\n用户本轮要求：${message}\n\n保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check。`;
 }
 
 function createChecks(projectId: string): AcceptanceCheck[] {

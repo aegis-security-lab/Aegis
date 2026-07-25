@@ -18,12 +18,15 @@ describe('website starter bundled skills', () => {
     temporaryDirectories.push(workspace);
 
     const artifacts = await writeWebsiteStarter(workspace, {
+      mode: 'create',
       name: 'Nova',
       industry: '企业服务',
       offering: 'AI 客户支持',
       audience: '客户成功团队',
       purposes: ['brand'],
       notes: '',
+      referenceUrl: '',
+      referenceRequest: '',
     });
     const skillPath = '.pi/skills/design-taste-frontend/SKILL.md';
     const content = await readFile(path.join(workspace, skillPath), 'utf8');

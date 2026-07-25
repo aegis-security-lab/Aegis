@@ -13,12 +13,15 @@ export const WebsitePurposeSchema = z.enum([
 export type WebsitePurpose = z.infer<typeof WebsitePurposeSchema>;
 
 export const WebsiteBriefSchema = z.object({
+  mode: z.enum(['create', 'reference']).default('create'),
   name: z.string().trim().min(1).max(80),
   industry: z.string().trim().min(1).max(120),
   offering: z.string().trim().min(1).max(240),
   audience: z.string().trim().min(1).max(240),
   purposes: z.array(WebsitePurposeSchema).min(1),
   notes: z.string().trim().max(2_000).default(''),
+  referenceUrl: z.string().trim().default(''),
+  referenceRequest: z.string().trim().max(4_000).default(''),
 });
 export type WebsiteBrief = z.infer<typeof WebsiteBriefSchema>;
 
@@ -83,8 +86,23 @@ export const WebsiteBuilderSnapshotSchema = z.object({
 });
 export type WebsiteBuilderSnapshot = z.infer<typeof WebsiteBuilderSnapshotSchema>;
 
-export const CreateWebsiteProjectInputSchema = WebsiteBriefSchema;
-export type CreateWebsiteProjectInput = WebsiteBrief;
+export const CreateWebsiteProjectInputSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('create'),
+    name: z.string().trim().min(1).max(80),
+    industry: z.string().trim().min(1).max(120),
+    offering: z.string().trim().min(1).max(240),
+    audience: z.string().trim().min(1).max(240),
+    purposes: z.array(WebsitePurposeSchema).min(1),
+    notes: z.string().trim().max(2_000).default(''),
+  }),
+  z.object({
+    mode: z.literal('reference'),
+    referenceUrl: z.url('请输入有效的参考网站 URL。').max(2_000),
+    referenceRequest: z.string().trim().min(1, '请描述希望如何参考该网站。').max(4_000),
+  }),
+]);
+export type CreateWebsiteProjectInput = z.infer<typeof CreateWebsiteProjectInputSchema>;
 
 export const SendWebsiteMessageInputSchema = z.object({
   projectId: z.string().uuid(),
