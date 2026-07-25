@@ -17,6 +17,10 @@ interface Session {
 export class PiRpcRuntime {
   private readonly sessions = new Map<string, Session>();
 
+  hasSession(projectId: string): boolean {
+    return this.sessions.has(projectId);
+  }
+
   async probe(settings: RuntimeSettings): Promise<{ ready: boolean; message: string }> {
     try {
       await Promise.all([access(settings.nodePath), access(settings.piPath)]);

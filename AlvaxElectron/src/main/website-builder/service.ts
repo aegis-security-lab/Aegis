@@ -34,6 +34,7 @@ export class WebsiteBuilderService {
   private readonly repairAttempts = new Map<string, number>();
   private readonly cancelledProjects = new Set<string>();
   private readonly continuationAttempts = new Map<string, number>();
+  private readonly recoveringProjects = new Set<string>();
 
   constructor(
     private readonly store: WebsiteBuilderStore,
@@ -44,8 +45,17 @@ export class WebsiteBuilderService {
     private readonly logError: (scope: string, error: unknown, context?: unknown) => string = () => '',
   ) {}
 
-  listProjects(): Promise<WebsiteProject[]> {
-    return this.store.listProjects();
+  async listProjects(): Promise<WebsiteProject[]> {
+    const projects = await this.store.listProjects();
+    for (const project of projects) {
+      if ((project.status === 'generating' || project.status === 'checking')
+        && !this.pi.hasSession(project.id)
+        && !this.recoveringProjects.has(project.id)) {
+        this.recoveringProjects.add(project.id);
+        void this.recoverInterruptedProject(project).finally(() => this.recoveringProjects.delete(project.id));
+      }
+    }
+    return projects;
   }
 
   async getProject(id: string): Promise<WebsiteBuilderSnapshot> {
@@ -343,6 +353,31 @@ export class WebsiteBuilderService {
     } else if (event.type === 'runtime_stderr') {
       this.logError('Pi stderr', event.message, { projectId });
     }
+  }
+
+  private async recoverInterruptedProject(project: WebsiteProject): Promise<void> {
+    await this.store.patch(project.id, (draft) => {
+      for (const message of draft.messages) {
+        if (message.state === 'streaming') message.state = 'complete';
+      }
+      draft.messages.push(createMessage(
+        project.id,
+        'system',
+        project.status === 'checking'
+          ? '检测到应用重启导致验收中断，正在自动重新验收。'
+          : '检测到应用重启导致 Agent 中断，正在从现有文件自动继续。',
+        'complete',
+      ));
+    });
+    this.notify(project.id, project.status === 'checking' ? 'acceptance' : 'agent');
+    if (project.status === 'checking') {
+      try { await this.runAcceptance(project.id); } catch (error) {
+        await this.failGeneration(project.id, error);
+      }
+      return;
+    }
+    const runtime = await this.store.getRuntime();
+    await this.startAgent(project.id, runtime, '应用重启中断了上一轮执行。请检查当前工作区已有文件和最近的验收错误，从中断处继续修复并完成任务，不要重做已经完成的页面。完成后必须调用 alvax_key_info(type=final_delivery) 输出最终交付报告。');
   }
 
   private async refreshArtifacts(projectId: string): Promise<void> {
