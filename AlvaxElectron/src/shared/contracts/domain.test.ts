@@ -36,24 +36,9 @@ describe('shared contracts', () => {
     expect(result.success).toBe(false);
   });
 
-  it('validates the required website discovery brief', () => {
+  it('validates an existing website upgrade request', () => {
     expect(CreateWebsiteProjectInputSchema.safeParse({
-      mode: 'create',
-      name: 'Nova',
-      industry: '企业服务',
-      offering: 'AI 客户支持平台',
-      audience: '中小企业客户成功团队',
-      purposes: ['brand', 'conversion'],
-      notes: '',
-    }).success).toBe(true);
-    expect(CreateWebsiteProjectInputSchema.safeParse({
-      mode: 'create', name: '', industry: '', offering: '', audience: '', purposes: [], notes: '',
-    }).success).toBe(false);
-  });
-
-  it('validates a reference website request independently from product fields', () => {
-    expect(CreateWebsiteProjectInputSchema.safeParse({
-      mode: 'reference', referenceUrl: 'https://www.playbook.com/', referenceRequest: '参考并复刻首页',
+      mode: 'reference', referenceUrl: 'https://www.playbook.com/', referenceRequest: '升级首页结构和转化表达',
     }).success).toBe(true);
     expect(CreateWebsiteProjectInputSchema.safeParse({
       mode: 'reference', referenceUrl: 'playbook.com', referenceRequest: '',

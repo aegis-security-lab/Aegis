@@ -478,10 +478,9 @@ export class WebsiteBuilderService {
 }
 
 function normalizeWebsiteBrief(input: CreateWebsiteProjectInput): WebsiteBrief {
-  if (input.mode === 'create') return { ...input, referenceUrl: '', referenceRequest: '' };
   const host = new URL(input.referenceUrl).hostname.replace(/^www\./, '');
   return {
-    mode: 'reference', name: host, industry: '参考网站项目', offering: input.referenceRequest,
+    mode: 'reference', name: host, industry: '网站升级项目', offering: input.referenceRequest,
     audience: '由 AI 根据参考网站与需求分析', purposes: ['brand', 'product', 'conversion', 'content'],
     notes: '', referenceUrl: input.referenceUrl, referenceRequest: input.referenceRequest,
   };
@@ -489,8 +488,8 @@ function normalizeWebsiteBrief(input: CreateWebsiteProjectInput): WebsiteBrief {
 
 function buildInitialRequest(input: WebsiteBrief): string {
   if (input.mode === 'reference') {
-    return [WEBSITE_BRIEF_MESSAGE_PREFIX, '创建模式：参考网站', `参考 URL：${input.referenceUrl}`,
-      `需求：${input.referenceRequest}`, '说明：该 URL 是需要研究和参考的目标网站，不是本项目提供的产品或服务。'].join('\n');
+    return [WEBSITE_BRIEF_MESSAGE_PREFIX, '任务类型：现有网站专业升级', `现有网站：${input.referenceUrl}`,
+      `升级需求：${input.referenceRequest}`, '目标：保留原网站的业务与品牌基础，通过专业诊断、竞品对比和系统化改版，交付可本地预览的升级版本。'].join('\n');
   }
   const purposeLabels: Record<string, string> = {
     brand: '品牌展示', product: '产品介绍', conversion: '获客转化', content: '内容发布',
@@ -518,12 +517,12 @@ function hasFinalDeliveryInLatestTurn(messages: ChatMessage[]): boolean {
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {
   const brief = snapshot.project.brief;
   const workflow = brief.mode === 'reference'
-    ? '当前必须执行“参考网站”流程：研究参考 URL → 调用 AI 分析说明页面结构、视觉语言、内容与交互 → 调用优化建议说明具体实现方向 → 调用用户确认 → 确认后按用户需求生成参考网站的本地页面 → 调用最终交付报告。用户确认前不得修改源码。'
+    ? '当前必须严格执行“现有网站专业升级”流程：\n1. 深入研究用户现有网站。\n2. 调用 alvax_key_info(type=analysis) 提交专业诊断。\n3. 调研 3–5 个同品类竞品网站，并调用 alvax_key_info(type=competitor_research) 提交竞品对比。\n4. 综合诊断和竞品洞察，调用 alvax_key_info(type=suggestion) 提交可执行的优化与改版方案。\n5. 调用 alvax_request_confirmation，请用户确认该方案；确认前严禁修改源码。\n6. 用户确认后，基于原网站的业务、品牌与内容生成专业升级版本。\n7. 完成验收准备后调用最终交付报告。每个阶段必须按顺序执行，不得合并或跳过。'
     : '当前必须执行“创建网站项目”流程：分析行业、产品、受众与页面要求 → 调用 AI 分析 → 直接生成或修改本地页面 → 调用最终交付报告。';
   const context = brief.mode === 'reference'
-    ? `参考目标：${brief.referenceUrl}\n参考需求：${brief.referenceRequest}\n\n最高优先级语义约束：参考 URL 是要研究、参考或复刻的网站，不是用户经营的产品，也不是要制作一个“复刻其他网站的工具”。除非用户明确要求，否则最终交付必须是参考目标网站本身风格、结构和体验的本地实现。`
+    ? `用户现有网站：${brief.referenceUrl}\n用户升级需求：${brief.referenceRequest}\n\n最高优先级产品语义：这是一次对用户现有网站的专业升级，不是复刻服务、不是模板生成器、也不是另起炉灶创建无关的新品牌。必须先理解原网站承载的业务、受众、品牌资产和核心内容，再在其基础上升级信息架构、文案表达、视觉风格、交互体验与获客转化。竞品必须是真实同类网站；如果无法访问或核实，不得编造。竞品调研卡必须列出网站名称、URL、可借鉴点和与原网站的差距。优化建议同时就是后续编写方案，必须包括页面结构、核心文案、视觉系统、关键组件、交互与转化路径，并明确保留、重构和新增的内容。`
     : `产品信息：\n- 名称：${brief.name}\n- 行业：${brief.industry}\n- 产品或服务：${brief.offering}\n- 目标用户：${brief.audience}`;
-  return `你是 Alvax Studio 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范。\n\n你必须使用 Alvax 专用工具表达关键阶段，不要用普通 assistant 文本代替：\n- alvax_key_info(type=analysis)：完成需求或参考网站分析后立即调用，输出“AI 分析”。\n- alvax_key_info(type=suggestion)：在参考网站流程中调用，输出具体的复刻或优化实现建议。\n- alvax_request_confirmation：在参考网站流程中、修改代码之前调用。工具会暂停等待用户确认；确认后必须结合返回的用户建议开始工作，取消后立即停止。\n- alvax_key_info(type=final_delivery)：所有开发与 pre-flight check 完成后作为最后一个动作调用，输出最终交付报告。调用后不要再输出普通文本。\n\n${workflow}\n\n${context}\n\n用户本轮要求：${message}\n\n保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check。`;
+  return `你是 Alvax Studio 的网站升级专家 Agent。你像一支由品牌策略、增长、UX、文案和前端工程专家组成的专业团队，执行过程必须严谨、透明、标准化。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范。\n\n你必须使用 Alvax 专用工具表达关键阶段，不要用普通 assistant 文本代替：\n- alvax_key_info(type=analysis)：分析现有网站的业务定位、受众、信息架构、页面结构、文案、视觉、交互与转化问题，输出“AI 专业诊断”。\n- alvax_key_info(type=competitor_research)：研究真实竞品并从结构、文案、风格、交互和转化路径进行对比，输出“竞品网站调研”。\n- alvax_key_info(type=suggestion)：综合前两步输出优先级明确、能够直接用于开发的“网站升级方案”。\n- alvax_request_confirmation：展示升级方案的工作方向并等待用户确认。确认后必须结合用户补充建议开始升级，取消后立即停止。\n- alvax_key_info(type=final_delivery)：所有开发与 pre-flight check 完成后作为最后一个动作调用，输出最终交付报告。调用后不要再输出普通文本。\n\n${workflow}\n\n${context}\n\n用户本轮要求：${message}\n\n保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check。`;
 }
 
 function createChecks(projectId: string): AcceptanceCheck[] {

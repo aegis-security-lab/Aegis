@@ -8,11 +8,12 @@ const bridgeRoot = process.env.ALVAX_CONFIRMATION_DIR ?? path.join(process.cwd()
 const keyInfoTool = defineTool({
   name: 'alvax_key_info',
   label: 'Alvax 关键信息',
-  description: '向用户输出关键阶段信息。类型必须是 AI 分析、优化建议或最终交付报告之一。',
-  promptSnippet: '输出 AI 分析、优化建议或最终交付报告卡片',
+  description: '向用户输出网站升级流程的关键阶段信息。类型必须是 AI 专业诊断、竞品网站调研、网站升级方案或最终交付报告之一。',
+  promptSnippet: '输出 AI 专业诊断、竞品网站调研、网站升级方案或最终交付报告卡片',
   parameters: Type.Object({
     type: Type.Union([
       Type.Literal('analysis'),
+      Type.Literal('competitor_research'),
       Type.Literal('suggestion'),
       Type.Literal('final_delivery'),
     ]),

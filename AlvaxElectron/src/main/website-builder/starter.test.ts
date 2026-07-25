@@ -39,6 +39,7 @@ describe('website starter bundled skills', () => {
     await expect(readFile(path.join(workspace, '.pi/skills/shadcn/rules/styling.md'), 'utf8')).resolves.toContain('Tailwind');
     const extensionPath = '.pi/extensions/alvax-tools.ts';
     await expect(readFile(path.join(workspace, extensionPath), 'utf8')).resolves.toContain("name: 'alvax_key_info'");
+    await expect(readFile(path.join(workspace, extensionPath), 'utf8')).resolves.toContain("Type.Literal('competitor_research')");
     expect(artifacts.some((artifact) => artifact.path === extensionPath)).toBe(true);
   });
 

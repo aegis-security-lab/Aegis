@@ -25,28 +25,16 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { MarkdownContent } from '@/components/markdown-content';
 import type { ApiResult } from '../shared/contracts/api';
 import type {
   ChatMessage, CreateWebsiteProjectInput, WebsiteBuilderSnapshot, WebsiteProject,
-  WebsitePurpose,
 } from '../shared/contracts/website-builder';
 import { WEBSITE_BRIEF_MESSAGE_PREFIX } from '../shared/contracts/website-builder';
 import { ALVAX_CONFIRMATION_PREFIX, ALVAX_KEY_INFO_PREFIX } from '../shared/contracts/website-builder';
 import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
-
-const purposeOptions: { value: WebsitePurpose; label: string }[] = [
-  { value: 'brand', label: '品牌展示' }, { value: 'product', label: '产品介绍' },
-  { value: 'conversion', label: '获客转化' }, { value: 'content', label: '内容发布' },
-];
-
-type CreateModeInput = Extract<CreateWebsiteProjectInput, { mode: 'create' }>;
-const initialBrief: CreateModeInput = {
-  mode: 'create', name: '', industry: '', offering: '', audience: '', purposes: ['brand'], notes: '',
-};
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<WebsiteBuilderSnapshot>();
@@ -190,7 +178,7 @@ export default function App() {
       <header className="app-titlebar window-drag-region flex h-12 shrink-0 items-center justify-between border-b bg-card/80 pr-4 backdrop-blur-xl">
         <h1 className="text-sm font-semibold tracking-tight">Alvax Studio</h1>
         <div className="window-no-drag flex items-center gap-2">
-          <Button variant="ghost" size="icon-sm" onClick={() => setNewProjectOpen(true)}><Plus/><span className="sr-only">新建网站</span></Button>
+          <Button variant="ghost" size="icon-sm" onClick={() => setNewProjectOpen(true)}><Plus/><span className="sr-only">升级现有网站</span></Button>
         </div>
       </header>
 
@@ -430,8 +418,8 @@ function RequirementCard({ content }: { content: string }) {
   });
   return <Card size="sm" className="max-w-2xl bg-muted/30">
     <CardHeader>
-      <CardTitle className="flex items-center gap-2"><Sparkles/>网站需求已提交</CardTitle>
-      <CardDescription>Alvax Agent 将根据以下信息设计并生成网站。</CardDescription>
+      <CardTitle className="flex items-center gap-2"><Sparkles/>网站升级任务已提交</CardTitle>
+      <CardDescription>Alvax Agent 将依次完成专业诊断、竞品调研、升级方案与改版交付。</CardDescription>
     </CardHeader>
     <CardContent>
       <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-[5rem_1fr]">
@@ -447,7 +435,7 @@ function RequirementCard({ content }: { content: string }) {
 function KeyInfoCard({ content }: { content: string }) {
   const data = parseCardPayload<{ type?: string; title?: string; content?: string }>(content);
   const labels: Record<string, string> = {
-    analysis: 'AI 分析', suggestion: '优化建议', final_delivery: '最终交付报告',
+    analysis: 'AI 专业诊断', competitor_research: '竞品网站调研', suggestion: '网站升级方案', final_delivery: '最终交付报告',
   };
   const label = labels[data.type ?? ''] ?? '关键信息';
   return <Card size="sm" className="shrink-0 bg-muted/30">
@@ -473,13 +461,13 @@ function ConfirmationCard({ content, pending, busy, onRespond }: { content: stri
           <Field>
             <FieldLabel htmlFor={`confirmation-${data.toolCallId}`}>补充建议</FieldLabel>
             <Textarea id={`confirmation-${data.toolCallId}`} value={suggestion} onChange={(event) => setSuggestion(event.target.value)} placeholder="可选：告诉 AI 需要调整或特别注意的内容…" disabled={busy} />
-            <FieldDescription>确认后，AI 会结合你的建议开始生成本地页面。</FieldDescription>
+            <FieldDescription>确认后，AI 会结合你的建议，在原网站基础上开始专业升级。</FieldDescription>
           </Field>
         </FieldGroup>
       </CardContent>
       <CardFooter className="justify-end gap-2">
         <Button variant="outline" disabled={busy || !data.toolCallId} onClick={() => data.toolCallId && onRespond(data.toolCallId, false, suggestion)}>取消任务</Button>
-        <Button disabled={busy || !data.toolCallId} onClick={() => data.toolCallId && onRespond(data.toolCallId, true, suggestion)}>{busy ? <Spinner/> : <Check/>}确认并开始</Button>
+        <Button disabled={busy || !data.toolCallId} onClick={() => data.toolCallId && onRespond(data.toolCallId, true, suggestion)}>{busy ? <Spinner/> : <Check/>}确认升级方案</Button>
       </CardFooter>
     </>}
   </Card>;
@@ -525,16 +513,12 @@ function DeliveryPanel({ snapshot, busy, onRun, onPreview, onOpenWindow }: { sna
   </aside>;
 }
 
-function EmptyWorkspace({ onCreate }: { onCreate(): void }) { return <div className="grid h-full place-items-center"><div className="max-w-md text-center"><img src={alvaxStudioIcon} alt="" className="mx-auto size-16 rounded-2xl"/><h2 className="mt-5 text-xl font-semibold tracking-tight">从一个产品想法开始</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">输入行业、服务和目标用户，Alvax Studio 会创建网站结构、文案与视觉，并自动验证可运行性。</p><Button className="mt-6" onClick={onCreate}><Plus/>创建网站项目</Button></div></div>; }
+function EmptyWorkspace({ onCreate }: { onCreate(): void }) { return <div className="grid h-full place-items-center"><div className="max-w-md text-center"><img src={alvaxStudioIcon} alt="" className="mx-auto size-16 rounded-2xl"/><h2 className="mt-5 text-xl font-semibold tracking-tight">让现有网站完成一次专业升级</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">提交你的网站，Alvax Agent 会完成深度诊断、竞品对比与升级方案，并在你确认后交付可直接预览的改版网站。</p><Button className="mt-6" onClick={onCreate}><Plus/>升级我的网站</Button></div></div>; }
 
 function NewProjectDialog({ open, onOpenChange, onCreate, busy }: { open: boolean; onOpenChange(value: boolean): void; onCreate(brief: CreateWebsiteProjectInput): void; busy: boolean }) {
-  const [mode, setMode] = useState<'create' | 'reference'>('create');
-  const [brief, setBrief] = useState(initialBrief);
   const [referenceUrl, setReferenceUrl] = useState('');
   const [referenceRequest, setReferenceRequest] = useState('');
-  const validCreate = Boolean(brief.name && brief.industry && brief.offering && brief.audience && brief.purposes.length);
-  const validReference = /^https?:\/\/\S+$/i.test(referenceUrl.trim()) && Boolean(referenceRequest.trim());
-  const update = (key: keyof CreateModeInput, value: string) => setBrief((current) => ({ ...current, [key]: value }));
-  const submit = () => onCreate(mode === 'create' ? brief : { mode: 'reference', referenceUrl: referenceUrl.trim(), referenceRequest: referenceRequest.trim() });
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>新建网站</DialogTitle><DialogDescription>从业务信息创建网站，或指定一个网站作为设计与内容参考。</DialogDescription></DialogHeader><Tabs value={mode} onValueChange={(value) => setMode(value as typeof mode)}><TabsList className="grid w-full grid-cols-2"><TabsTrigger value="create">创建网站项目</TabsTrigger><TabsTrigger value="reference">参考网站</TabsTrigger></TabsList><TabsContent value="create" className="pt-2"><FieldGroup className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>项目或品牌名称</FieldLabel><Input value={brief.name} onChange={(e) => update('name', e.target.value)} placeholder="例如：Nova Studio"/></Field><Field><FieldLabel>所属行业</FieldLabel><Input value={brief.industry} onChange={(e) => update('industry', e.target.value)} placeholder="例如：企业服务"/></Field><Field className="sm:col-span-2"><FieldLabel>产品或服务</FieldLabel><Input value={brief.offering} onChange={(e) => update('offering', e.target.value)} placeholder="描述你提供的核心产品或服务"/></Field><Field className="sm:col-span-2"><FieldLabel>目标用户</FieldLabel><Input value={brief.audience} onChange={(e) => update('audience', e.target.value)} placeholder="例如：正在数字化转型的中小企业管理者"/></Field><Field className="sm:col-span-2"><FieldLabel>网站用途</FieldLabel><div className="flex flex-wrap gap-2">{purposeOptions.map((option) => <Button key={option.value} type="button" variant={brief.purposes.includes(option.value) ? 'default' : 'outline'} size="sm" onClick={() => setBrief((current) => ({ ...current, purposes: current.purposes.includes(option.value) ? current.purposes.filter((item) => item !== option.value) : [...current.purposes, option.value] }))}>{brief.purposes.includes(option.value) && <Check/>}{option.label}</Button>)}</div></Field><Field className="sm:col-span-2"><FieldLabel>补充说明</FieldLabel><Input value={brief.notes} onChange={(e) => update('notes', e.target.value)} placeholder="品牌调性、差异化、希望包含的页面等（可选）"/></Field></FieldGroup></TabsContent><TabsContent value="reference" className="pt-2"><FieldGroup><Field><FieldLabel htmlFor="reference-url">参考网站 URL</FieldLabel><Input id="reference-url" type="url" value={referenceUrl} onChange={(event) => setReferenceUrl(event.target.value)} placeholder="https://www.example.com"/><FieldDescription>AI 会把它作为研究、参考或复刻对象，不会把它理解成你的产品。</FieldDescription></Field><Field><FieldLabel htmlFor="reference-request">需求</FieldLabel><Textarea id="reference-request" value={referenceRequest} onChange={(event) => setReferenceRequest(event.target.value)} placeholder="例如：复刻首页的视觉风格和页面结构，替换为我们的品牌内容，并强化获客转化。" rows={5}/></Field></FieldGroup></TabsContent></Tabs><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button disabled={(mode === 'create' ? !validCreate : !validReference) || busy} onClick={submit}>{busy ? <Spinner/> : <Sparkles/>}{mode === 'create' ? '创建并生成' : '分析并生成'}</Button></DialogFooter></DialogContent></Dialog>;
+  const valid = /^https?:\/\/\S+$/i.test(referenceUrl.trim()) && Boolean(referenceRequest.trim());
+  const submit = () => onCreate({ mode: 'reference', referenceUrl: referenceUrl.trim(), referenceRequest: referenceRequest.trim() });
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>升级你的现有网站</DialogTitle><DialogDescription>交给 Alvax Agent：它会像一支专业的网站策略与设计团队，诊断问题、研究竞品、制定方案，并在你确认后完成网站升级。</DialogDescription></DialogHeader><FieldGroup><Field><FieldLabel htmlFor="website-url">现有网站 URL</FieldLabel><Input id="website-url" type="url" value={referenceUrl} onChange={(event) => setReferenceUrl(event.target.value)} placeholder="https://www.yourwebsite.com"/><FieldDescription>AI 将深入理解你当前的网站、业务定位、品牌内容和转化路径。</FieldDescription></Field><Field><FieldLabel htmlFor="upgrade-request">这次最希望改善什么？</FieldLabel><Textarea id="upgrade-request" value={referenceRequest} onChange={(event) => setReferenceRequest(event.target.value)} placeholder="例如：品牌看起来不够专业，首页信息层级混乱，希望提升视觉质感、产品表达和咨询转化率。" rows={5}/><FieldDescription>可以描述当前问题、业务目标、希望保留的内容，或对新版本的期待。</FieldDescription></Field></FieldGroup><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>暂不升级</Button><Button disabled={!valid || busy} onClick={submit}>{busy ? <Spinner/> : <Sparkles/>}开始专业诊断</Button></DialogFooter></DialogContent></Dialog>;
 }
