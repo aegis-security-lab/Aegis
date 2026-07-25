@@ -1,0 +1,72 @@
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { Type } from '@earendil-works/pi-ai';
+import { defineTool, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
+
+const bridgeRoot = process.env.ALVAX_CONFIRMATION_DIR ?? path.join(process.cwd(), '.alvax', 'confirmations');
+
+const keyInfoTool = defineTool({
+  name: 'alvax_key_info',
+  label: 'Alvax 关键信息',
+  description: '向用户输出关键阶段信息。类型必须是 AI 分析、优化建议或最终交付报告之一。',
+  promptSnippet: '输出 AI 分析、优化建议或最终交付报告卡片',
+  parameters: Type.Object({
+    type: Type.Union([
+      Type.Literal('analysis'),
+      Type.Literal('suggestion'),
+      Type.Literal('final_delivery'),
+    ]),
+    title: Type.String({ description: '简短明确的标题' }),
+    content: Type.String({ description: '面向用户的关键信息正文，使用简洁中文' }),
+  }),
+  async execute(_toolCallId, params) {
+    return {
+      content: [{ type: 'text' as const, text: `已向用户展示：${params.title}` }],
+      details: params,
+      terminate: params.type === 'final_delivery',
+    };
+  },
+});
+
+const confirmationTool = defineTool({
+  name: 'alvax_request_confirmation',
+  label: 'Alvax 用户确认',
+  description: '暂停任务并请用户确认工作方向。仅在收到确认后继续修改网站；取消则终止任务。',
+  promptSnippet: '暂停并请求用户确认网站优化方向',
+  parameters: Type.Object({
+    title: Type.String({ description: '确认卡片标题' }),
+    description: Type.String({ description: '清楚描述准备采取的工作方向和主要改动' }),
+  }),
+  async execute(toolCallId, params, signal) {
+    await mkdir(bridgeRoot, { recursive: true });
+    const requestPath = path.join(bridgeRoot, `${toolCallId}.request.json`);
+    const responsePath = path.join(bridgeRoot, `${toolCallId}.response.json`);
+    await writeFile(requestPath, JSON.stringify({ toolCallId, ...params }), 'utf8');
+    try {
+      for (;;) {
+        if (signal?.aborted) return { content: [{ type: 'text' as const, text: '任务已取消。' }], details: { approved: false } };
+        try {
+          const response = JSON.parse(await readFile(responsePath, 'utf8')) as { approved: boolean; suggestion?: string };
+          if (!response.approved) {
+            return { content: [{ type: 'text' as const, text: '用户取消了任务，请立即停止。' }], details: response, terminate: true };
+          }
+          const suggestion = response.suggestion?.trim();
+          return {
+            content: [{ type: 'text' as const, text: suggestion ? `用户已确认，补充建议：${suggestion}` : '用户已确认，可以按计划开始工作。' }],
+            details: response,
+          };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      await Promise.all([rm(requestPath, { force: true }), rm(responsePath, { force: true })]);
+    }
+  },
+});
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool(keyInfoTool);
+  pi.registerTool(confirmationTool);
+}

@@ -13,6 +13,7 @@ import {
 } from '../../shared/contracts/domain';
 import {
   CreateWebsiteProjectInputSchema,
+  ConfirmationResponseInputSchema,
   RuntimeSettingsSchema,
   SendWebsiteMessageInputSchema,
 } from '../../shared/contracts/website-builder';
@@ -91,6 +92,9 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     websiteBuilder.sendMessage(input),
   );
   handle(IPC_CHANNELS.websiteMessageCancel, IdSchema, (id) => websiteBuilder.cancel(id));
+  handle(IPC_CHANNELS.websiteConfirmationRespond, ConfirmationResponseInputSchema, (input) =>
+    websiteBuilder.respondToConfirmation(input),
+  );
   handle(IPC_CHANNELS.websiteAcceptanceRun, IdSchema, (id) => websiteBuilder.runAcceptance(id));
   handle(IPC_CHANNELS.websitePreviewStart, IdSchema, (id) => websiteBuilder.startPreview(id));
   handle(IPC_CHANNELS.websitePreviewStop, IdSchema, (id) => websiteBuilder.stopPreview(id));

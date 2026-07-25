@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 export const WEBSITE_BRIEF_MESSAGE_PREFIX = '[[ALVAX_WEBSITE_BRIEF]]';
+export const ALVAX_KEY_INFO_PREFIX = '[[ALVAX_KEY_INFO]]';
+export const ALVAX_CONFIRMATION_PREFIX = '[[ALVAX_CONFIRMATION]]';
 
 export const WebsitePurposeSchema = z.enum([
   'brand',
@@ -89,6 +91,14 @@ export const SendWebsiteMessageInputSchema = z.object({
   message: z.string().trim().min(1).max(20_000),
 });
 export type SendWebsiteMessageInput = z.infer<typeof SendWebsiteMessageInputSchema>;
+
+export const ConfirmationResponseInputSchema = z.object({
+  projectId: z.string().uuid(),
+  toolCallId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  approved: z.boolean(),
+  suggestion: z.string().trim().max(4_000).default(''),
+});
+export type ConfirmationResponseInput = z.infer<typeof ConfirmationResponseInputSchema>;
 
 export const RuntimeSettingsSchema = z.object({
   nodePath: z.string().trim().min(1),

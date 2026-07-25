@@ -40,6 +40,7 @@ const api: AlvaxDesktopApi = {
     removeProject: (id) => invoke(IPC_CHANNELS.websiteProjectRemove, id),
     sendMessage: (input) => invoke(IPC_CHANNELS.websiteMessageSend, input),
     cancel: (projectId) => invoke(IPC_CHANNELS.websiteMessageCancel, projectId),
+    respondToConfirmation: (input) => invoke(IPC_CHANNELS.websiteConfirmationRespond, input),
     runAcceptance: (projectId) => invoke(IPC_CHANNELS.websiteAcceptanceRun, projectId),
     startPreview: (projectId) => invoke(IPC_CHANNELS.websitePreviewStart, projectId),
     stopPreview: (projectId) => invoke(IPC_CHANNELS.websitePreviewStop, projectId),

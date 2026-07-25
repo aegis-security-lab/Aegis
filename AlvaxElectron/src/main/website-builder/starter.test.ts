@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { installBundledSkills, writeWebsiteStarter } from './starter';
+import { installBundledAgentResources, writeWebsiteStarter } from './starter';
 
 const temporaryDirectories: string[] = [];
 
@@ -34,13 +34,16 @@ describe('website starter bundled skills', () => {
     await expect(readFile(path.join(workspace, shadcnPath), 'utf8')).resolves.toContain('name: shadcn');
     expect(artifacts.some((artifact) => artifact.path === shadcnPath)).toBe(true);
     await expect(readFile(path.join(workspace, '.pi/skills/shadcn/rules/styling.md'), 'utf8')).resolves.toContain('Tailwind');
+    const extensionPath = '.pi/extensions/alvax-tools.ts';
+    await expect(readFile(path.join(workspace, extensionPath), 'utf8')).resolves.toContain("name: 'alvax_key_info'");
+    expect(artifacts.some((artifact) => artifact.path === extensionPath)).toBe(true);
   });
 
   it('repairs the bundled skill in an existing workspace', async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), 'alvax-skill-'));
     temporaryDirectories.push(workspace);
 
-    await installBundledSkills(workspace);
+    await installBundledAgentResources(workspace);
 
     await expect(readFile(
       path.join(workspace, '.pi/skills/design-taste-frontend/SKILL.md'),
@@ -50,5 +53,9 @@ describe('website starter bundled skills', () => {
       path.join(workspace, '.pi/skills/shadcn/SKILL.md'),
       'utf8',
     )).resolves.toContain('name: shadcn');
+    await expect(readFile(
+      path.join(workspace, '.pi/extensions/alvax-tools.ts'),
+      'utf8',
+    )).resolves.toContain("name: 'alvax_request_confirmation'");
   });
 });

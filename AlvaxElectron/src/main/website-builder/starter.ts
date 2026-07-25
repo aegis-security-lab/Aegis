@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DeliveryArtifact, WebsiteBrief } from '../../shared/contracts/website-builder';
 import tasteSkill from './bundled-skills/taste-skill/SKILL.md?raw';
+import alvaxToolsExtension from './bundled-extensions/alvax-tools.ts.txt?raw';
 
 const shadcnSkillFiles = import.meta.glob('./bundled-skills/shadcn/**/*.{md,yml,json}', {
   query: '?raw',
@@ -15,6 +16,11 @@ const bundledSkillFiles: Record<string, string> = {
     `.pi/skills/shadcn/${sourcePath.replace('./bundled-skills/shadcn/', '')}`,
     content,
   ])),
+};
+
+const bundledAgentFiles: Record<string, string> = {
+  ...bundledSkillFiles,
+  '.pi/extensions/alvax-tools.ts': alvaxToolsExtension,
 };
 
 const purposeLabels = {
@@ -79,7 +85,7 @@ nav button,.actions button{padding:12px 18px;border-radius:999px;color:white;bac
 @media(max-width:760px){nav a{display:none}.hero h1{font-size:52px}.goals{grid-template-columns:1fr}.goals article{border-right:0;border-bottom:1px solid #cbc9c1}.goals article:last-child{border:0}}
 `,
     '.gitignore': 'node_modules\ndist\n.DS_Store\n',
-    ...bundledSkillFiles,
+    ...bundledAgentFiles,
   };
 
   for (const [relativePath, content] of Object.entries(files)) {
@@ -94,8 +100,8 @@ nav button,.actions button{padding:12px 18px;border-radius:999px;color:white;bac
   }));
 }
 
-export async function installBundledSkills(workspace: string): Promise<void> {
-  for (const [relativePath, content] of Object.entries(bundledSkillFiles)) {
+export async function installBundledAgentResources(workspace: string): Promise<void> {
+  for (const [relativePath, content] of Object.entries(bundledAgentFiles)) {
     const target = path.join(workspace, relativePath);
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, content, 'utf8');

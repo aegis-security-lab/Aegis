@@ -11,10 +11,10 @@ import {
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
@@ -24,6 +24,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
+import { Textarea } from '@/components/ui/textarea';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { ApiResult } from '../shared/contracts/api';
@@ -32,6 +33,7 @@ import type {
   WebsitePurpose,
 } from '../shared/contracts/website-builder';
 import { WEBSITE_BRIEF_MESSAGE_PREFIX } from '../shared/contracts/website-builder';
+import { ALVAX_CONFIRMATION_PREFIX, ALVAX_KEY_INFO_PREFIX } from '../shared/contracts/website-builder';
 import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
 
 const purposeOptions: { value: WebsitePurpose; label: string }[] = [
@@ -159,6 +161,23 @@ export default function App() {
     });
   };
 
+  const respondToConfirmation = async (toolCallId: string, approved: boolean, suggestion: string) => {
+    if (!snapshot) return;
+    setBusy(true); setError('');
+    try {
+      const response = await window.alvax.websiteBuilder.respondToConfirmation({
+        projectId: snapshot.project.id, toolCallId, approved, suggestion,
+      });
+      if (!response.ok) { setError(response.error.message); return; }
+      if (!approved) {
+        const cancelled = await window.alvax.websiteBuilder.cancel(snapshot.project.id);
+        if (cancelled.ok) setSnapshot(cancelled.data); else setError(cancelled.error.message);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '确认操作失败。');
+    } finally { setBusy(false); }
+  };
+
   const status = snapshot?.project.status;
   const isGenerating = status === 'generating';
 
@@ -184,7 +203,7 @@ export default function App() {
                   <MessageScrollerViewport>
                     <MessageScrollerContent className="mx-auto w-full max-w-3xl px-8 py-8">
                     <Marker variant="separator"><MarkerIcon><Sparkles/></MarkerIcon><MarkerContent>{snapshot.project.brief.industry} · {snapshot.project.brief.audience}</MarkerContent></Marker>
-                    <ChatTimeline messages={snapshot.messages} active={snapshot.project.status === 'generating'} />
+                    <ChatTimeline messages={snapshot.messages} active={snapshot.project.status === 'generating'} busy={busy} onConfirmation={(toolCallId, approved, suggestion) => void respondToConfirmation(toolCallId, approved, suggestion)} />
                     </MessageScrollerContent>
                   </MessageScrollerViewport>
                   <MessageScrollerButton />
@@ -292,29 +311,37 @@ function SessionDrawer({ open, projects, selectedId, busy, onOpenChange, onMouse
   </Sheet>;
 }
 
-function ChatTimeline({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
+function ChatTimeline({ messages, active, busy, onConfirmation }: { messages: ChatMessage[]; active: boolean; busy: boolean; onConfirmation(toolCallId: string, approved: boolean, suggestion: string): void }) {
   const turns = groupMessagesByTurn(messages);
   return turns.map((turn, index) => {
     const isActive = active && index === turns.length - 1;
     const user = turn[0]?.role === 'user' ? turn[0] : undefined;
     const responses = user ? turn.slice(1) : turn;
-    const final = isActive ? undefined : [...responses].reverse().find((message) => message.role === 'assistant' && message.content.trim());
+    const final = isActive ? undefined : [...responses].reverse().find((message) =>
+      (message.role === 'assistant' && message.content.trim()) || isFinalDeliveryMessage(message),
+    );
     const history = final ? responses.filter((message) => message.id !== final.id) : responses;
     return <MessageScrollerItem key={turn[0]?.id ?? index} messageId={turn.at(-1)!.id} scrollAnchor={isActive}>
       <div className="flex flex-col gap-3">
         {user && <ChatEntry message={user} active={isActive} />}
-        {history.length > 0 && <AgentProcess messages={history} active={isActive} />}
-        {final && <ChatEntry message={final} />}
+        {history.length > 0 && <AgentProcess messages={history} active={isActive} busy={busy} onConfirmation={onConfirmation} />}
+        {final && <ChatEntry message={final} busy={busy} onConfirmation={onConfirmation} />}
       </div>
     </MessageScrollerItem>;
   });
+}
+
+function isFinalDeliveryMessage(message: ChatMessage): boolean {
+  return message.role === 'tool'
+    && message.content.startsWith(ALVAX_KEY_INFO_PREFIX)
+    && message.content.includes('"type":"final_delivery"');
 }
 
 function formatSessionTime(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
-function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: boolean }) {
+function AgentProcess({ messages, active, busy, onConfirmation }: { messages: ChatMessage[]; active: boolean; busy: boolean; onConfirmation(toolCallId: string, approved: boolean, suggestion: string): void }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const processViewport = useRef<HTMLDivElement>(null);
   const open = active || historyOpen;
@@ -329,16 +356,22 @@ function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: b
     </CollapsibleTrigger>
     <CollapsibleContent className="mt-1 overflow-hidden data-[ending-style]:animate-out data-[starting-style]:animate-in">
       <div ref={processViewport} className="flex max-h-56 flex-col gap-2 overflow-y-auto py-1 pl-1 pr-3">
-        {messages.map((message) => <ChatEntry key={message.id} message={message} compact />)}
+        {messages.map((message) => <ChatEntry key={message.id} message={message} compact busy={busy} onConfirmation={onConfirmation} />)}
       </div>
     </CollapsibleContent>
   </Collapsible>;
 }
 
-function ChatEntry({ message, compact = false, active = false }: { message: ChatMessage; compact?: boolean; active?: boolean }) {
+function ChatEntry({ message, compact = false, active = false, busy = false, onConfirmation = () => undefined }: { message: ChatMessage; compact?: boolean; active?: boolean; busy?: boolean; onConfirmation?(toolCallId: string, approved: boolean, suggestion: string): void }) {
   if (message.role === 'system') return <Marker variant={compact ? 'default' : 'border'} className={cn(compact && 'shrink-0')}><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap text-xs">{message.content}</MarkerContent></Marker>;
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
+  if (isTool && message.content.startsWith(ALVAX_KEY_INFO_PREFIX)) {
+    return <KeyInfoCard content={message.content.slice(ALVAX_KEY_INFO_PREFIX.length)} state={message.state} />;
+  }
+  if (isTool && message.content.startsWith(ALVAX_CONFIRMATION_PREFIX)) {
+    return <ConfirmationCard content={message.content.slice(ALVAX_CONFIRMATION_PREFIX.length)} pending={message.state === 'streaming'} busy={busy} onRespond={onConfirmation} />;
+  }
   if (isUser && message.content.startsWith(WEBSITE_BRIEF_MESSAGE_PREFIX)) {
     return <RequirementCard content={message.content} active={active} />;
   }
@@ -386,6 +419,52 @@ function RequirementCard({ content, active }: { content: string; active: boolean
       </dl>
     </CardContent>
   </Card>;
+}
+
+function KeyInfoCard({ content, state }: { content: string; state: ChatMessage['state'] }) {
+  const data = parseCardPayload<{ type?: string; title?: string; content?: string }>(content);
+  const labels: Record<string, string> = {
+    analysis: 'AI 分析', suggestion: '优化建议', final_delivery: '最终交付报告',
+  };
+  const label = labels[data.type ?? ''] ?? '关键信息';
+  return <Card size="sm" className="shrink-0 bg-muted/30">
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2"><Sparkles/>{data.title || label}</CardTitle>
+      <CardAction><Badge variant={data.type === 'final_delivery' ? 'default' : 'secondary'}>{state === 'streaming' && <Spinner/>}{label}</Badge></CardAction>
+    </CardHeader>
+    <CardContent><p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{data.content || 'AI 正在整理关键信息…'}</p></CardContent>
+  </Card>;
+}
+
+function ConfirmationCard({ content, pending, busy, onRespond }: { content: string; pending: boolean; busy: boolean; onRespond(toolCallId: string, approved: boolean, suggestion: string): void }) {
+  const data = parseCardPayload<{ toolCallId?: string; title?: string; description?: string }>(content);
+  const [suggestion, setSuggestion] = useState('');
+  return <Card size="sm" className="shrink-0">
+    <CardHeader>
+      <CardTitle>{data.title || '确认工作方向'}</CardTitle>
+      <CardDescription className="whitespace-pre-wrap leading-5">{data.description || 'AI 正在等待你确认下一步工作。'}</CardDescription>
+      <CardAction><Badge variant="outline">{pending ? '等待确认' : '已处理'}</Badge></CardAction>
+    </CardHeader>
+    {pending && <>
+      <CardContent>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={`confirmation-${data.toolCallId}`}>补充建议</FieldLabel>
+            <Textarea id={`confirmation-${data.toolCallId}`} value={suggestion} onChange={(event) => setSuggestion(event.target.value)} placeholder="可选：告诉 AI 需要调整或特别注意的内容…" disabled={busy} />
+            <FieldDescription>确认后，AI 会结合你的建议开始生成本地页面。</FieldDescription>
+          </Field>
+        </FieldGroup>
+      </CardContent>
+      <CardFooter className="justify-end gap-2">
+        <Button variant="outline" disabled={busy || !data.toolCallId} onClick={() => data.toolCallId && onRespond(data.toolCallId, false, suggestion)}>取消任务</Button>
+        <Button disabled={busy || !data.toolCallId} onClick={() => data.toolCallId && onRespond(data.toolCallId, true, suggestion)}>{busy ? <Spinner/> : <Check/>}确认并开始</Button>
+      </CardFooter>
+    </>}
+  </Card>;
+}
+
+function parseCardPayload<T extends object>(value: string): T {
+  try { return JSON.parse(value) as T; } catch { return {} as T; }
 }
 
 function normalizeToolMessage(content: string): string {

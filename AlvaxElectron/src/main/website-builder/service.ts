@@ -1,9 +1,10 @@
-import { readdir } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../core/errors';
 import type {
   AcceptanceCheck,
   ChatMessage,
+  ConfirmationResponseInput,
   CreateWebsiteProjectInput,
   RuntimeSettings,
   RuntimeStatus,
@@ -12,9 +13,13 @@ import type {
   WebsiteBuilderSnapshot,
   WebsiteProject,
 } from '../../shared/contracts/website-builder';
-import { WEBSITE_BRIEF_MESSAGE_PREFIX } from '../../shared/contracts/website-builder';
+import {
+  ALVAX_CONFIRMATION_PREFIX,
+  ALVAX_KEY_INFO_PREFIX,
+  WEBSITE_BRIEF_MESSAGE_PREFIX,
+} from '../../shared/contracts/website-builder';
 import { createEmptySnapshot, type WebsiteBuilderStore } from './store';
-import { installBundledSkills, writeWebsiteStarter } from './starter';
+import { installBundledAgentResources, writeWebsiteStarter } from './starter';
 import type { PiRpcRuntime } from './pi-rpc-runtime';
 import type { PreviewManager } from './preview-manager';
 import { runCommand } from './process-utils';
@@ -27,6 +32,7 @@ export class WebsiteBuilderService {
   private readonly activeMessages = new Map<string, string>();
   private readonly activeTools = new Map<string, Map<string, string>>();
   private readonly repairAttempts = new Map<string, number>();
+  private readonly cancelledProjects = new Set<string>();
 
   constructor(
     private readonly store: WebsiteBuilderStore,
@@ -104,7 +110,10 @@ export class WebsiteBuilderService {
   }
 
   async cancel(projectId: string): Promise<WebsiteBuilderSnapshot> {
-    await this.pi.abort(projectId);
+    this.cancelledProjects.add(projectId);
+    try { await this.pi.abort(projectId); } catch (error) {
+      this.logError('Cancel website generation', error, { projectId });
+    }
     const snapshot = await this.store.patch(projectId, (draft) => {
       draft.project.status = 'ready';
       const message = draft.messages.find((entry) => entry.id === this.activeMessages.get(projectId));
@@ -114,6 +123,17 @@ export class WebsiteBuilderService {
     this.activeMessages.delete(projectId);
     this.notify(projectId, 'agent');
     return snapshot;
+  }
+
+  async respondToConfirmation(input: ConfirmationResponseInput): Promise<{ accepted: true }> {
+    await this.getProject(input.projectId);
+    const directory = path.join(this.store.workspacePath(input.projectId), '.alvax', 'confirmations');
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, `${input.toolCallId}.response.json`), JSON.stringify({
+      approved: input.approved,
+      suggestion: input.suggestion,
+    }), 'utf8');
+    return { accepted: true };
   }
 
   async runAcceptance(projectId: string): Promise<WebsiteBuilderSnapshot> {
@@ -254,7 +274,8 @@ export class WebsiteBuilderService {
     } else if (event.type === 'tool_execution_start') {
       await this.completeActiveMessage(projectId);
       const toolCallId = String(event.toolCallId ?? crypto.randomUUID());
-      const message = createMessage(projectId, 'tool', formatToolStart(String(event.toolName ?? 'tool'), event.args), 'streaming');
+      const toolName = String(event.toolName ?? 'tool');
+      const message = createMessage(projectId, 'tool', formatToolStart(toolName, event.args, toolCallId), 'streaming');
       const tools = this.activeTools.get(projectId) ?? new Map<string, string>();
       tools.set(toolCallId, message.id);
       this.activeTools.set(projectId, tools);
@@ -267,13 +288,21 @@ export class WebsiteBuilderService {
         const message = draft.messages.find((entry) => entry.id === messageId);
         if (message) {
           message.state = event.isError === true ? 'error' : 'complete';
-          message.content += event.isError === true ? ' · 失败' : ' · 完成';
+          if (!message.content.startsWith(ALVAX_KEY_INFO_PREFIX) && !message.content.startsWith(ALVAX_CONFIRMATION_PREFIX)) {
+            message.content += event.isError === true ? ' · 失败' : ' · 完成';
+          }
         }
       });
       this.activeTools.get(projectId)?.delete(toolCallId);
       this.notify(projectId, 'agent');
     } else if (event.type === 'agent_settled') {
       await this.completeActiveMessage(projectId);
+      if (this.cancelledProjects.delete(projectId)) {
+        this.activeMessages.delete(projectId);
+        this.activeTools.delete(projectId);
+        this.notify(projectId, 'agent');
+        return;
+      }
       await this.store.patch(projectId, (draft) => {
         draft.project.status = 'ready';
         draft.messages.push(createMessage(projectId, 'system', '开发完成，开始自动验收。', 'complete'));
@@ -315,13 +344,18 @@ export class WebsiteBuilderService {
 
   private async startAgent(projectId: string, runtime: RuntimeSettings, prompt: string): Promise<void> {
     try {
-      await installBundledSkills(this.store.workspacePath(projectId));
+      this.cancelledProjects.delete(projectId);
+      await installBundledAgentResources(this.store.workspacePath(projectId));
       const config = await this.aiConfig.load();
       const effectiveRuntime = { ...runtime, provider: config.provider, model: config.model };
       const systemPrompt = this.aiConfig.agentContext(config);
-      await this.pi.prompt(projectId, this.store.workspacePath(projectId), effectiveRuntime, prompt, (event) => {
+      const workspace = this.store.workspacePath(projectId);
+      await this.pi.prompt(projectId, workspace, effectiveRuntime, prompt, (event) => {
         void this.handlePiEvent(projectId, event);
-      }, this.aiConfig.environment(config), systemPrompt);
+      }, {
+        ...this.aiConfig.environment(config),
+        ALVAX_CONFIRMATION_DIR: path.join(workspace, '.alvax', 'confirmations'),
+      }, systemPrompt);
     } catch (error) {
       await this.failGeneration(projectId, error);
     }
@@ -388,7 +422,7 @@ function buildInitialRequest(input: CreateWebsiteProjectInput): string {
 }
 
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {
-  return `你是 Alvax Studio 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范，然后进行设计与开发。最终回复中简要说明 Design Read、三个参数以及使用的 shadcn 组件。\n\n产品信息：\n- 名称：${snapshot.project.brief.name}\n- 行业：${snapshot.project.brief.industry}\n- 产品或服务：${snapshot.project.brief.offering}\n- 目标用户：${snapshot.project.brief.audience}\n\n用户本轮要求：${message}\n\n请直接检查并修改源码完成要求。保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check，并用简洁中文总结改动。`;
+  return `你是 Alvax Studio 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范。\n\n你必须使用 Alvax 专用工具表达关键阶段，不要用普通 assistant 文本代替：\n- alvax_key_info(type=analysis)：完成需求或现有网站分析后立即调用，输出“AI 分析”。\n- alvax_key_info(type=suggestion)：仅在 URL 优化流程中调用，输出面向获客转化的“优化建议”。\n- alvax_request_confirmation：仅在 URL 优化流程中、修改代码之前调用。工具会暂停等待用户确认；确认后必须结合返回的用户建议开始工作，取消后立即停止。\n- alvax_key_info(type=final_delivery)：所有开发与 pre-flight check 完成后作为最后一个动作调用，输出最终交付报告。调用后不要再输出普通文本。\n\n严格执行以下两种流程：\n流程一（用户提供行业、产品、受众、页面要求等内容）：用户输入 → 调用 AI 分析 → 直接生成或修改本地页面 → 调用最终交付报告。\n流程二（用户输入网站 URL 或要求优化现有网站）：读取并分析 URL → 调用 AI 分析说明机会和问题 → 调用优化建议给出获客向方案 → 调用用户确认 → 用户确认后生成本地页面 → 调用最终交付报告。未经确认不得在流程二中修改源码。\n\n产品信息：\n- 名称：${snapshot.project.brief.name}\n- 行业：${snapshot.project.brief.industry}\n- 产品或服务：${snapshot.project.brief.offering}\n- 目标用户：${snapshot.project.brief.audience}\n\n用户本轮要求：${message}\n\n保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check。`;
 }
 
 function createChecks(projectId: string): AcceptanceCheck[] {
@@ -427,7 +461,11 @@ function createMessage(
   return { id, projectId, role, content, state, createdAt: new Date().toISOString() };
 }
 
-function formatToolStart(name: string, args: unknown): string {
+function formatToolStart(name: string, args: unknown, toolCallId: string): string {
+  if (name === 'alvax_key_info') return `${ALVAX_KEY_INFO_PREFIX}${JSON.stringify(args ?? {})}`;
+  if (name === 'alvax_request_confirmation') {
+    return `${ALVAX_CONFIRMATION_PREFIX}${JSON.stringify({ ...(args as object ?? {}), toolCallId })}`;
+  }
   const labels: Record<string, string> = {
     bash: '工具 · 执行命令',
     read: '工具 · 读取文件',

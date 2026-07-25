@@ -10,6 +10,7 @@ import type {
 } from './domain';
 import type {
   CreateWebsiteProjectInput,
+  ConfirmationResponseInput,
   RuntimeSettings,
   RuntimeStatus,
   SendWebsiteMessageInput,
@@ -36,6 +37,7 @@ export const IPC_CHANNELS = {
   websiteProjectRemove: 'alvax:website-project:remove',
   websiteMessageSend: 'alvax:website-message:send',
   websiteMessageCancel: 'alvax:website-message:cancel',
+  websiteConfirmationRespond: 'alvax:website-confirmation:respond',
   websiteAcceptanceRun: 'alvax:website-acceptance:run',
   websitePreviewStart: 'alvax:website-preview:start',
   websitePreviewStop: 'alvax:website-preview:stop',
@@ -89,6 +91,7 @@ export interface AlvaxDesktopApi {
     removeProject(id: string): Promise<ApiResult<{ id: string }>>;
     sendMessage(input: SendWebsiteMessageInput): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     cancel(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    respondToConfirmation(input: ConfirmationResponseInput): Promise<ApiResult<{ accepted: true }>>;
     runAcceptance(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     startPreview(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     stopPreview(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;

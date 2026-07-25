@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { RuntimeSettings } from '../../shared/contracts/website-builder';
 
 type EventSink = (event: Record<string, unknown>) => void;
@@ -70,7 +71,12 @@ export class PiRpcRuntime {
     fingerprint: string,
     systemPrompt: string,
   ): Session {
-    const args = [settings.piPath, '--mode', 'rpc', '--no-session'];
+    const args = [
+      settings.piPath,
+      '--mode', 'rpc',
+      '--no-session',
+      '--extension', path.join(workspace, '.pi/extensions/alvax-tools.ts'),
+    ];
     if (settings.provider) args.push('--provider', settings.provider);
     if (settings.model) args.push('--model', settings.model);
     if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
