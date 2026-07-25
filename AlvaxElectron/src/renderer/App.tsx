@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert,
-  Globe2, LoaderCircle, MoreHorizontal, PanelsTopLeft, Play, Plus, Settings2,
+  Globe2, LoaderCircle, PanelsTopLeft, Play, Plus,
   Sparkles, Square, TerminalSquare, X,
 } from 'lucide-react';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
@@ -20,7 +20,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { ApiResult } from '../shared/contracts/api';
 import type {
-  ChatMessage, CreateWebsiteProjectInput, RuntimeSettings, RuntimeStatus, WebsiteBuilderSnapshot,
+  ChatMessage, CreateWebsiteProjectInput, WebsiteBuilderSnapshot,
   WebsitePurpose,
 } from '../shared/contracts/website-builder';
 import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
@@ -36,12 +36,10 @@ const initialBrief: CreateWebsiteProjectInput = {
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<WebsiteBuilderSnapshot>();
-  const [runtime, setRuntime] = useState<RuntimeStatus>();
   const [composer, setComposer] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const previewRunningSeen = useRef(new Map<string, boolean>());
 
@@ -59,10 +57,7 @@ export default function App() {
   }, []);
 
   const load = useCallback(async () => {
-    const [projectResult, runtimeResult] = await Promise.all([
-      window.alvax.websiteBuilder.listProjects(), window.alvax.websiteBuilder.getRuntime(),
-    ]);
-    if (runtimeResult.ok) setRuntime(runtimeResult.data);
+    const projectResult = await window.alvax.websiteBuilder.listProjects();
     if (projectResult.ok) {
       const selectedId = snapshot?.project.id ?? projectResult.data[0]?.id;
       if (selectedId) await loadProject(selectedId);
@@ -111,8 +106,6 @@ export default function App() {
         <h1 className="text-sm font-semibold tracking-tight">Alvax Studio</h1>
         <div className="window-no-drag flex items-center gap-2">
           <Button variant="ghost" size="icon-sm" onClick={() => setNewProjectOpen(true)}><Plus/><span className="sr-only">新建网站</span></Button>
-          <Button variant="ghost" size="icon-sm" onClick={() => setSettingsOpen(true)}><Settings2/><span className="sr-only">Pi 设置</span></Button>
-          <Button variant="ghost" size="icon-sm"><MoreHorizontal/><span className="sr-only">更多</span></Button>
         </div>
       </header>
 
@@ -157,7 +150,6 @@ export default function App() {
     </main>
 
     <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={(brief) => void perform(() => window.alvax.websiteBuilder.createProject(brief), (value) => { setDeliveryOpen(false); setSnapshot(value); setNewProjectOpen(false); void load(); })} busy={busy}/>
-    {runtime && <RuntimeDialog open={settingsOpen} onOpenChange={setSettingsOpen} runtime={runtime.settings} onSave={(settings) => void perform(() => window.alvax.websiteBuilder.updateRuntime(settings), (value) => { setRuntime(value); setSettingsOpen(false); })} busy={busy}/>}
   </TooltipProvider>;
 }
 
@@ -266,9 +258,4 @@ function NewProjectDialog({ open, onOpenChange, onCreate, busy }: { open: boolea
   const valid = brief.name && brief.industry && brief.offering && brief.audience && brief.purposes.length;
   const update = (key: keyof CreateWebsiteProjectInput, value: string) => setBrief((current) => ({ ...current, [key]: value }));
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>创建网站项目</DialogTitle><DialogDescription>这些信息会成为 Pi Agent 生成网站的基础上下文。</DialogDescription></DialogHeader><FieldGroup className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>项目或品牌名称</FieldLabel><Input value={brief.name} onChange={(e) => update('name', e.target.value)} placeholder="例如：Nova Studio"/></Field><Field><FieldLabel>所属行业</FieldLabel><Input value={brief.industry} onChange={(e) => update('industry', e.target.value)} placeholder="例如：企业服务"/></Field><Field className="sm:col-span-2"><FieldLabel>产品或服务</FieldLabel><Input value={brief.offering} onChange={(e) => update('offering', e.target.value)} placeholder="描述你提供的核心产品或服务"/></Field><Field className="sm:col-span-2"><FieldLabel>目标用户</FieldLabel><Input value={brief.audience} onChange={(e) => update('audience', e.target.value)} placeholder="例如：正在数字化转型的中小企业管理者"/></Field><Field className="sm:col-span-2"><FieldLabel>网站用途</FieldLabel><div className="flex flex-wrap gap-2">{purposeOptions.map((option) => <Button key={option.value} type="button" variant={brief.purposes.includes(option.value) ? 'default' : 'outline'} size="sm" onClick={() => setBrief((current) => ({ ...current, purposes: current.purposes.includes(option.value) ? current.purposes.filter((item) => item !== option.value) : [...current.purposes, option.value] }))}>{brief.purposes.includes(option.value) && <Check/>}{option.label}</Button>)}</div></Field><Field className="sm:col-span-2"><FieldLabel>补充说明</FieldLabel><Input value={brief.notes} onChange={(e) => update('notes', e.target.value)} placeholder="品牌调性、差异化、希望包含的页面等（可选）"/></Field></FieldGroup><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button disabled={!valid || busy} onClick={() => onCreate(brief)}>{busy ? <Spinner/> : <Sparkles/>}创建并生成</Button></DialogFooter></DialogContent></Dialog>;
-}
-
-function RuntimeDialog({ open, onOpenChange, runtime, onSave, busy }: { open: boolean; onOpenChange(value: boolean): void; runtime: RuntimeSettings; onSave(value: RuntimeSettings): void; busy: boolean }) {
-  const [value, setValue] = useState(runtime);
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Pi Agent 运行时</DialogTitle><DialogDescription>路径只保存在本机 Electron userData 中，不会传给渲染进程以外的服务。</DialogDescription></DialogHeader><FieldGroup><Field><FieldLabel>Node.js 可执行文件</FieldLabel><Input value={value.nodePath} onChange={(e) => setValue({ ...value, nodePath: e.target.value })}/><FieldDescription>建议使用 Node.js 24。</FieldDescription></Field><Field><FieldLabel>Pi CLI 文件</FieldLabel><Input value={value.piPath} onChange={(e) => setValue({ ...value, piPath: e.target.value })}/></Field><div className="grid grid-cols-2 gap-3"><Field><FieldLabel>Provider（可选）</FieldLabel><Input value={value.provider} onChange={(e) => setValue({ ...value, provider: e.target.value })} placeholder="anthropic"/></Field><Field><FieldLabel>Model（可选）</FieldLabel><Input value={value.model} onChange={(e) => setValue({ ...value, model: e.target.value })} placeholder="claude-sonnet…"/></Field></div></FieldGroup><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button disabled={busy} onClick={() => onSave(value)}>{busy ? <Spinner/> : <Check/>}保存并检测</Button></DialogFooter></DialogContent></Dialog>;
 }
