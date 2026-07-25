@@ -4,7 +4,6 @@ import {
   Globe2, LoaderCircle, MoreHorizontal, PanelsTopLeft, Play, Plus, Settings2,
   Sparkles, Square, TerminalSquare, X,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -44,15 +43,16 @@ export default function App() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
-  const previewSeen = useRef(new Map<string, boolean>());
+  const previewRunningSeen = useRef(new Map<string, boolean>());
 
   const loadProject = useCallback(async (id: string) => {
     const result = await window.alvax.websiteBuilder.getProject(id);
     if (result.ok) {
-      const hadPreview = previewSeen.current.get(id);
-      previewSeen.current.set(id, Boolean(result.data.preview.url));
+      const wasPreviewing = previewRunningSeen.current.get(id);
+      const isPreviewing = result.data.project.status === 'previewing' && result.data.preview.status === 'running';
+      previewRunningSeen.current.set(id, isPreviewing);
       setSnapshot(result.data);
-      if (hadPreview === false && result.data.preview.url) {
+      if (wasPreviewing === false && isPreviewing) {
         setDeliveryOpen(true);
       }
     } else setError(result.error.message);
@@ -107,12 +107,8 @@ export default function App() {
 
   return <TooltipProvider>
     <main className="flex h-full flex-col bg-background">
-      <header className="app-titlebar window-drag-region flex h-16 shrink-0 items-center justify-between border-b bg-card/80 pr-5 backdrop-blur-xl">
-        <div className="flex items-center gap-3">
-          <img src={alvaxStudioIcon} alt="" className="size-9 rounded-xl" />
-          <div><h1 className="text-sm font-semibold tracking-tight">Alvax Studio</h1><p className="text-xs text-muted-foreground">{snapshot ? `${snapshot.project.brief.name} · Pi Agent 官网工作室` : 'Pi Agent 驱动的官网工作室'}</p></div>
-          {snapshot && <Badge variant="secondary" className="ml-2 font-normal">{statusLabel(status)}</Badge>}
-        </div>
+      <header className="app-titlebar window-drag-region flex h-12 shrink-0 items-center justify-between border-b bg-card/80 pr-4 backdrop-blur-xl">
+        <h1 className="text-sm font-semibold tracking-tight">Alvax Studio</h1>
         <div className="window-no-drag flex items-center gap-2">
           <Button variant="ghost" size="icon-sm" onClick={() => setNewProjectOpen(true)}><Plus/><span className="sr-only">新建网站</span></Button>
           <Button variant="ghost" size="icon-sm" onClick={() => setSettingsOpen(true)}><Settings2/><span className="sr-only">Pi 设置</span></Button>
@@ -125,7 +121,7 @@ export default function App() {
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={deliveryOpen ? 62 : 100} minSize={42}>
           <section className="relative flex h-full min-w-0 flex-col">
-            {snapshot && <Button variant="outline" size="icon-sm" className="absolute right-4 top-4 z-10 rounded-full bg-background/90 shadow-sm backdrop-blur" onClick={toggleDelivery}>{deliveryOpen ? <ChevronRight/> : <ChevronLeft/>}<span className="sr-only">{deliveryOpen ? '折叠侧栏' : '展开侧栏'}</span></Button>}
+            {snapshot && <Button variant="outline" size="icon-sm" className={cn('absolute right-4 top-3 z-10 rounded-full bg-background/90 shadow-sm backdrop-blur', snapshot.preview.status === 'running' && 'border-success/40 bg-success/10 text-success hover:bg-success/15 hover:text-success')} onClick={toggleDelivery}>{deliveryOpen ? <ChevronRight/> : <ChevronLeft/>}<span className="sr-only">{deliveryOpen ? '折叠侧栏' : '展开侧栏'}{snapshot.preview.status === 'running' ? '，预览运行中' : ''}</span></Button>}
             {snapshot ? <>
               <MessageScrollerProvider autoScroll defaultScrollPosition="end">
                 <MessageScroller className="flex-1">
@@ -276,5 +272,3 @@ function RuntimeDialog({ open, onOpenChange, runtime, onSave, busy }: { open: bo
   const [value, setValue] = useState(runtime);
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Pi Agent 运行时</DialogTitle><DialogDescription>路径只保存在本机 Electron userData 中，不会传给渲染进程以外的服务。</DialogDescription></DialogHeader><FieldGroup><Field><FieldLabel>Node.js 可执行文件</FieldLabel><Input value={value.nodePath} onChange={(e) => setValue({ ...value, nodePath: e.target.value })}/><FieldDescription>建议使用 Node.js 24。</FieldDescription></Field><Field><FieldLabel>Pi CLI 文件</FieldLabel><Input value={value.piPath} onChange={(e) => setValue({ ...value, piPath: e.target.value })}/></Field><div className="grid grid-cols-2 gap-3"><Field><FieldLabel>Provider（可选）</FieldLabel><Input value={value.provider} onChange={(e) => setValue({ ...value, provider: e.target.value })} placeholder="anthropic"/></Field><Field><FieldLabel>Model（可选）</FieldLabel><Input value={value.model} onChange={(e) => setValue({ ...value, model: e.target.value })} placeholder="claude-sonnet…"/></Field></div></FieldGroup><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button disabled={busy} onClick={() => onSave(value)}>{busy ? <Spinner/> : <Check/>}保存并检测</Button></DialogFooter></DialogContent></Dialog>;
 }
-
-function statusLabel(status?: string): string { return ({ ready: '待命', generating: '生成中', checking: '验收中', previewing: '预览运行中', failed: '需要处理' } as Record<string, string>)[status ?? ''] ?? '待命'; }
