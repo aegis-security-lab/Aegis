@@ -46,6 +46,18 @@ export class WebsiteBuilderService {
     return snapshot;
   }
 
+  async removeProject(id: string): Promise<{ id: string }> {
+    const current = await this.getProject(id);
+    if (current.project.status === 'generating') await this.pi.abort(id);
+    this.previews.stop(id);
+    const removed = await this.store.remove(id);
+    if (!removed) throw new AppError('NOT_FOUND', '网站项目不存在。');
+    this.activeMessages.delete(id);
+    this.activeTools.delete(id);
+    this.repairAttempts.delete(id);
+    return { id };
+  }
+
   async createProject(input: CreateWebsiteProjectInput): Promise<WebsiteBuilderSnapshot> {
     const now = new Date().toISOString();
     const project: WebsiteProject = {

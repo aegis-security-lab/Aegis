@@ -33,6 +33,7 @@ export const IPC_CHANNELS = {
   websiteProjectList: 'alvax:website-project:list',
   websiteProjectCreate: 'alvax:website-project:create',
   websiteProjectGet: 'alvax:website-project:get',
+  websiteProjectRemove: 'alvax:website-project:remove',
   websiteMessageSend: 'alvax:website-message:send',
   websiteMessageCancel: 'alvax:website-message:cancel',
   websiteAcceptanceRun: 'alvax:website-acceptance:run',
@@ -85,6 +86,7 @@ export interface AlvaxDesktopApi {
     listProjects(): Promise<ApiResult<WebsiteProject[]>>;
     createProject(input: CreateWebsiteProjectInput): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     getProject(id: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
+    removeProject(id: string): Promise<ApiResult<{ id: string }>>;
     sendMessage(input: SendWebsiteMessageInput): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     cancel(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;
     runAcceptance(projectId: string): Promise<ApiResult<WebsiteBuilderSnapshot>>;

@@ -2,8 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert,
   Globe2, LoaderCircle, MessagesSquare, PanelsTopLeft, Play, Plus,
-  Sparkles, Square, TerminalSquare, X,
+  Sparkles, Square, TerminalSquare, Trash2, X,
 } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -88,11 +92,11 @@ export default function App() {
     if (sessionCloseTimer.current) clearTimeout(sessionCloseTimer.current);
   }, []);
 
-  const perform = async <T,>(operation: () => Promise<ApiResult<T>>, onSuccess?: (value: T) => void) => {
+  const perform = async <T,>(operation: () => Promise<ApiResult<T>>, onSuccess?: (value: T) => void | Promise<void>) => {
     setBusy(true); setError('');
     try {
       const result = await operation();
-      if (result.ok) onSuccess?.(result.data); else setError(result.error.message);
+      if (result.ok) await onSuccess?.(result.data); else setError(result.error.message);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : '操作失败，请查看本地日志。';
       setError(message);
@@ -134,6 +138,22 @@ export default function App() {
     if (deliveryOpen && selected?.preview.url) {
       await perform(() => window.alvax.websiteBuilder.startPreview(id), setSnapshot);
     }
+  };
+
+  const removeProject = async (id: string) => {
+    const remaining = projects.filter((project) => project.id !== id);
+    await perform(() => window.alvax.websiteBuilder.removeProject(id), async () => {
+      previewRunningSeen.current.delete(id);
+      setProjects(remaining);
+      if (snapshot?.project.id !== id) return;
+      setDeliveryOpen(false);
+      const next = remaining[0];
+      if (next) await loadProject(next.id);
+      else {
+        setSnapshot(undefined);
+        setNewProjectOpen(true);
+      }
+    });
   };
 
   const status = snapshot?.project.status;
@@ -205,7 +225,7 @@ export default function App() {
       </ResizablePanelGroup>
     </main>
 
-    <SessionDrawer open={sessionsOpen} projects={projects} selectedId={snapshot?.project.id} onOpenChange={setSessionsOpen} onMouseEnter={openSessions} onMouseLeave={scheduleSessionsClose} onSelect={(id) => void selectProject(id)} />
+    <SessionDrawer open={sessionsOpen} projects={projects} selectedId={snapshot?.project.id} busy={busy} onOpenChange={setSessionsOpen} onMouseEnter={openSessions} onMouseLeave={scheduleSessionsClose} onSelect={(id) => void selectProject(id)} onDelete={(id) => void removeProject(id)} />
     <NewProjectDialog open={newProjectOpen} onOpenChange={setNewProjectOpen} onCreate={(brief) => void perform(() => window.alvax.websiteBuilder.createProject(brief), (value) => {
       setDeliveryOpen(false);
       setSnapshot(value);
@@ -215,38 +235,57 @@ export default function App() {
   </TooltipProvider>;
 }
 
-function SessionDrawer({ open, projects, selectedId, onOpenChange, onMouseEnter, onMouseLeave, onSelect }: {
+function SessionDrawer({ open, projects, selectedId, busy, onOpenChange, onMouseEnter, onMouseLeave, onSelect, onDelete }: {
   open: boolean;
   projects: WebsiteProject[];
   selectedId: string | undefined;
+  busy: boolean;
   onOpenChange(value: boolean): void;
   onMouseEnter(): void;
   onMouseLeave(): void;
   onSelect(id: string): void;
+  onDelete(id: string): void;
 }) {
+  const [deleteTarget, setDeleteTarget] = useState<WebsiteProject>();
   return <Sheet open={open} onOpenChange={onOpenChange} modal={false}>
     <SheetContent side="left" showCloseButton={false} showOverlay={false} className="w-80 gap-0 p-0 sm:max-w-80" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
-      <SheetHeader className="border-b px-4 py-3">
+      <SheetHeader className="border-b px-4 pb-3 pt-14">
         <div className="flex items-center gap-2"><MessagesSquare className="size-4 text-muted-foreground"/><SheetTitle>会话</SheetTitle></div>
         <SheetDescription className="text-xs">切换网站会话和对应预览</SheetDescription>
       </SheetHeader>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-1 p-2">
-          {projects.map((project) => <Button
-            key={project.id}
-            variant={project.id === selectedId ? 'secondary' : 'ghost'}
-            className="h-auto w-full justify-start px-3 py-2.5 text-left"
-            onClick={() => onSelect(project.id)}
-          >
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="truncate text-sm font-medium">{project.brief.name}</span>
-              <span className="truncate text-xs font-normal text-muted-foreground">{project.brief.industry} · {formatSessionTime(project.updatedAt)}</span>
-            </span>
-            {project.status === 'previewing' && <span className="size-1.5 shrink-0 rounded-full bg-success"/>}
-          </Button>)}
+          {projects.map((project) => <div key={project.id} className="group/session relative">
+            <Button
+              variant={project.id === selectedId ? 'secondary' : 'ghost'}
+              className="h-auto w-full justify-start py-2.5 pl-3 pr-10 text-left"
+              onClick={() => onSelect(project.id)}
+            >
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate text-sm font-medium">{project.brief.name}</span>
+                <span className="truncate text-xs font-normal text-muted-foreground">{project.brief.industry} · {formatSessionTime(project.updatedAt)}</span>
+              </span>
+              {project.status === 'previewing' && <span className="size-1.5 shrink-0 rounded-full bg-success transition-opacity group-hover/session:opacity-0"/>}
+            </Button>
+            <Button variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/session:opacity-100 focus-visible:opacity-100" disabled={busy} onClick={() => setDeleteTarget(project)}>
+              <Trash2/><span className="sr-only">删除 {project.brief.name}</span>
+            </Button>
+          </div>)}
         </div>
       </ScrollArea>
     </SheetContent>
+    <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(value) => { if (!value) setDeleteTarget(undefined); }}>
+      <AlertDialogContent size="sm" onMouseEnter={onMouseEnter}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>删除“{deleteTarget?.brief.name}”？</AlertDialogTitle>
+          <AlertDialogDescription>会话记录和本地生成的网站代码将被永久删除，此操作无法撤销。</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" disabled={busy} onClick={() => { if (deleteTarget) onDelete(deleteTarget.id); setDeleteTarget(undefined); }}>删除</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </Sheet>;
 }
 

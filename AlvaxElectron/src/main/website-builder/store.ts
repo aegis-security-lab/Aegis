@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import {
@@ -76,6 +76,17 @@ export class WebsiteBuilderStore {
       change(snapshot);
       snapshot.project.updatedAt = new Date().toISOString();
       return structuredClone(snapshot);
+    });
+  }
+
+  async remove(projectId: string): Promise<boolean> {
+    const existing = await this.get(projectId);
+    if (!existing) return false;
+    await rm(path.join(this.projectsRoot, projectId), { recursive: true, force: true });
+    return this.mutate((store) => {
+      if (!store.projects[projectId]) return false;
+      delete store.projects[projectId];
+      return true;
     });
   }
 

@@ -86,6 +86,7 @@ export function registerIpcHandlers(dependencies: IpcDependencies): void {
     websiteBuilder.createProject(input),
   );
   handle(IPC_CHANNELS.websiteProjectGet, IdSchema, (id) => websiteBuilder.getProject(id));
+  handle(IPC_CHANNELS.websiteProjectRemove, IdSchema, (id) => websiteBuilder.removeProject(id));
   handle(IPC_CHANNELS.websiteMessageSend, SendWebsiteMessageInputSchema, (input) =>
     websiteBuilder.sendMessage(input),
   );
