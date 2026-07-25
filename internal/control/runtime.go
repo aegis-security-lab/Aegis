@@ -363,7 +363,6 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 		"AEGIS_CONTROL_URL="+m.controlURL,
 		"AEGIS_EXECUTION_ID="+e.ID,
 		"AEGIS_CONTROL_TOKEN="+controlToken,
-		"AEGIS_MAX_CHILDREN_PER_REQUEST="+strconv.Itoa(cfg.MaxChildrenPerRequest),
 	)
 	if e.Kind == "validation" {
 		runtimeEnvironment = append(runtimeEnvironment, "AEGIS_VALIDATION_MODE=1")

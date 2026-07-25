@@ -258,15 +258,15 @@ function registerDescribedBuiltInTools(pi: ExtensionAPI) {
   }
 }
 
-const configuredMaxChildren = Math.max(
-  2,
-  Number.parseInt(process.env.AEGIS_MAX_CHILDREN_PER_REQUEST ?? "8", 10) || 8
-)
+// Keep the Pi tool schema at the product hard limit. The configured limit is
+// validated by the control plane on every call, so settings changes also take
+// effect for sessions that were already running when the setting was saved.
+const configuredMaxChildren = 100
 
 const createSubissuesTool = defineTool({
   name: "aegis_create_subissues",
   label: "Create child Issues",
-  description: `Atomically decompose the current Issue into 2-${configuredMaxChildren} durable child Issues. A successful call from a comment-awakened Session automatically reopens a completed Issue. Use this when the work is too broad or contains independently verifiable parts. After the tool succeeds, stop working and end the turn so Aegis can schedule the children.`,
+  description: `Atomically decompose the current Issue into durable child Issues (hard limit ${configuredMaxChildren}; the live configured limit is enforced by Aegis). A successful call from a comment-awakened Session automatically reopens a completed Issue. Use this when the work is too broad or contains independently verifiable parts. After the tool succeeds, stop working and end the turn so Aegis can schedule the children.`,
   promptSnippet:
     "Create durable child Issues and hand control back to the Aegis scheduler",
   promptGuidelines: [

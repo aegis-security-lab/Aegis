@@ -518,24 +518,16 @@ export function SettingsPage() {
               <CardContent>
                 <FieldGroup>
                   <Field>
-                    <FieldLabel>Worker 并发</FieldLabel>
-                    <Select
-                      value={String(form.concurrency)}
-                      onValueChange={(value) =>
-                        update("concurrency", Number(value))
-                      }
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {[1, 2, 3, 4, 6, 8].map((value) => (
-                          <SelectItem key={value} value={String(value)}>
-                            {value}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FieldLabel htmlFor="settings-worker-concurrency">Worker 并发</FieldLabel>
+                    <Input
+                      id="settings-worker-concurrency"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={form.concurrency}
+                      onChange={(event) => update("concurrency", Number(event.target.value))}
+                    />
+                    <FieldDescription>允许同时运行 1–100 个 Worker，保存后立即生效。</FieldDescription>
                   </Field>
                   <Field>
                     <FieldLabel>工具调用审批</FieldLabel>
@@ -654,7 +646,7 @@ export function SettingsPage() {
                         id="settings-max-per-request"
                         type="number"
                         min={2}
-                        max={50}
+                        max={100}
                         value={form.maxChildrenPerRequest}
                         onChange={(event) =>
                           update(
@@ -664,7 +656,7 @@ export function SettingsPage() {
                         }
                       />
                       <FieldDescription>
-                        一次工具调用允许创建 2 到该数量的子 Issue。
+                        一次工具调用允许创建 2 到该数量的子 Issue，默认 100。
                       </FieldDescription>
                     </Field>
                     <Field>
@@ -675,7 +667,7 @@ export function SettingsPage() {
                         id="settings-max-direct"
                         type="number"
                         min={2}
-                        max={200}
+                        max={100}
                         value={form.maxDirectChildren}
                         onChange={(event) =>
                           update(
@@ -685,7 +677,7 @@ export function SettingsPage() {
                         }
                       />
                       <FieldDescription>
-                        不得小于单次拆分上限，保存时会自动校正。
+                        不得小于单次拆分上限，默认 100，保存后立即生效。
                       </FieldDescription>
                     </Field>
                   </div>
@@ -734,8 +726,8 @@ function fromConfig(
     validationMode: config.validationMode || "fixed",
     maxValidationAttempts: config.maxValidationAttempts || 3,
     maxIssueDepth: config.maxIssueDepth || 4,
-    maxChildrenPerRequest: config.maxChildrenPerRequest || 8,
-    maxDirectChildren: config.maxDirectChildren || 16,
+    maxChildrenPerRequest: config.maxChildrenPerRequest || 100,
+    maxDirectChildren: config.maxDirectChildren || 100,
     issueBudget: config.issueBudget ?? {
       tokenLimit: null,
       costLimit: null,

@@ -72,6 +72,31 @@ type registrySeedMigrationRecord struct {
 	AppliedAt time.Time
 }
 
+const decompositionDefaults100MigrationID = "decomposition-defaults-100-v1"
+
+func (s *Store) migrateDecompositionDefaults(now time.Time) error {
+	var applied int64
+	if err := s.db.Model(&registrySeedMigrationRecord{}).Where("id = ?", decompositionDefaults100MigrationID).Count(&applied).Error; err != nil {
+		return err
+	}
+	if applied > 0 {
+		return nil
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 8/16 were the former shipped defaults. Upgrade only that exact pair;
+		// custom configurations are preserved.
+		if s.config.Configured && s.config.MaxChildrenPerRequest == 8 && s.config.MaxDirectChildren == 16 {
+			s.config.MaxChildrenPerRequest = 100
+			s.config.MaxDirectChildren = 100
+			s.config.UpdatedAt = now
+			if err := tx.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&registrySeedMigrationRecord{ID: decompositionDefaults100MigrationID, AppliedAt: now}).Error
+	})
+}
+
 func migrateTasks(db *gorm.DB) error {
 	var roots []Issue
 	if err := db.Where("hidden = ? AND parent_id = ? AND task_source_id = ?", false, "", "").Find(&roots).Error; err != nil {
@@ -161,6 +186,9 @@ func NewStore(dataDir string) (*Store, error) {
 		s.config.IssueHeartbeat = normalizeIssueHeartbeat(s.config.IssueHeartbeat)
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
+	}
+	if err := s.migrateDecompositionDefaults(time.Now()); err != nil {
+		return nil, fmt.Errorf("migrate decomposition defaults: %w", err)
 	}
 	if err := s.loadRegistry(); err != nil {
 		return nil, err
@@ -403,8 +431,8 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	if input.Concurrency < 1 {
 		input.Concurrency = 1
 	}
-	if input.Concurrency > 8 {
-		input.Concurrency = 8
+	if input.Concurrency > 100 {
+		input.Concurrency = 100
 	}
 	if input.Thinking == "" {
 		input.Thinking = "medium"
@@ -489,16 +517,16 @@ func normalizeDecompositionLimits(depth, perRequest, direct int) (int, int, int)
 		depth = 20
 	}
 	if perRequest < 2 {
-		perRequest = 8
+		perRequest = 100
 	}
-	if perRequest > 50 {
-		perRequest = 50
+	if perRequest > 100 {
+		perRequest = 100
 	}
 	if direct < 2 {
-		direct = 16
+		direct = 100
 	}
-	if direct > 200 {
-		direct = 200
+	if direct > 100 {
+		direct = 100
 	}
 	if direct < perRequest {
 		direct = perRequest

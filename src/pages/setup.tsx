@@ -84,8 +84,8 @@ export function SetupPage() {
     validationMode: "fixed",
     maxValidationAttempts: 3,
     maxIssueDepth: 4,
-    maxChildrenPerRequest: 8,
-    maxDirectChildren: 16,
+    maxChildrenPerRequest: 100,
+    maxDirectChildren: 100,
     issueBudget: {
       tokenLimit: null,
       costLimit: null,
@@ -555,22 +555,16 @@ function WorkspaceStep({
         </Field>
         <div className="grid gap-5 sm:grid-cols-2">
           <Field>
-            <FieldLabel>默认并发 Worker</FieldLabel>
-            <Select
-              value={String(form.concurrency)}
-              onValueChange={(value) => update("concurrency", Number(value))}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[1, 2, 3, 4, 6, 8].map((value) => (
-                  <SelectItem key={value} value={String(value)}>
-                    {value} 个
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <FieldLabel htmlFor="setup-worker-concurrency">默认并发 Worker</FieldLabel>
+            <Input
+              id="setup-worker-concurrency"
+              type="number"
+              min={1}
+              max={100}
+              value={form.concurrency}
+              onChange={(event) => update("concurrency", Number(event.target.value))}
+            />
+            <FieldDescription>可配置 1–100 个并发 Worker。</FieldDescription>
           </Field>
           <Field>
             <FieldLabel>工具调用审批策略</FieldLabel>
