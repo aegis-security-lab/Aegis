@@ -88,7 +88,7 @@ void app.whenReady().then(async () => {
   await aiRuntimeConfig.ensure({
     version: 1,
     provider: bundledAiConfig?.provider ?? provider,
-    model: bundledAiConfig?.model ?? 'openai/gpt-5.6-luna',
+    model: bundledAiConfig?.model ?? 'google/gemini-3.6-flash',
     baseUrl: bundledAiConfig?.baseUrl ?? 'https://ai-gateway.vercel.sh/v1',
     apiKey: process.env.OPENCODE_API_KEY ?? bundledAiConfig?.apiKey ?? await readExistingPiApiKey(app.getPath('home'), provider),
     providerApiKeyEnv: bundledAiConfig?.providerApiKeyEnv ?? 'AI_GATEWAY_API_KEY',
