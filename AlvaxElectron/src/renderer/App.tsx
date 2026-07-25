@@ -27,6 +27,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { MarkdownContent } from '@/components/markdown-content';
 import type { ApiResult } from '../shared/contracts/api';
 import type {
   ChatMessage, CreateWebsiteProjectInput, WebsiteBuilderSnapshot, WebsiteProject,
@@ -384,7 +385,7 @@ function ChatEntry({ message, compact = false, active = false, busy = false, onC
           className="min-w-0 flex-1 cursor-ew-resize overflow-x-auto whitespace-nowrap font-mono [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           title={displayContent}
           onWheel={(event) => { event.currentTarget.scrollLeft += event.deltaY || event.deltaX; }}
-        ><span className="inline-block w-max whitespace-nowrap">{displayContent || '正在执行…'}</span></span> : <span className="min-w-0 whitespace-pre-wrap">{displayContent || '正在思考…'}</span>}
+        ><span className="inline-block w-max whitespace-nowrap">{displayContent || '正在执行…'}</span></span> : <MarkdownContent compact className="flex-1">{displayContent || '正在思考…'}</MarkdownContent>}
         {message.state === 'streaming' && !isTool && <span className="mt-1 inline-block h-3 w-px shrink-0 animate-pulse bg-current"/>}
       </div>
     </MessageContent>
@@ -393,7 +394,7 @@ function ChatEntry({ message, compact = false, active = false, busy = false, onC
     <MessageContent>
       {!isUser && !compact && <MessageHeader>{isTool ? <TerminalSquare className="mr-1 size-3.5"/> : <Bot className="mr-1 size-3.5"/>}{isTool ? 'Agent 工具' : 'Alvax Agent'}</MessageHeader>}
       <Bubble variant={isUser ? 'default' : message.state === 'error' ? 'destructive' : 'ghost'} align={isUser ? 'end' : 'start'}>
-        <BubbleContent className={cn('whitespace-pre-wrap', isTool && 'truncate font-mono text-xs')}>{message.content || <span className="flex items-center gap-2"><Spinner/>正在思考…</span>}{message.state === 'streaming' && message.content && !isTool && <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-current align-middle"/>}</BubbleContent>
+        <BubbleContent className={cn(isTool && 'truncate font-mono text-xs')}>{message.content ? (isUser || isTool ? message.content : <MarkdownContent>{message.content}</MarkdownContent>) : <span className="flex items-center gap-2"><Spinner/>正在思考…</span>}{message.state === 'streaming' && message.content && !isTool && <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-current align-middle"/>}</BubbleContent>
       </Bubble>
     </MessageContent>
   </Message>;
@@ -432,7 +433,7 @@ function KeyInfoCard({ content, state }: { content: string; state: ChatMessage['
       <CardTitle className="flex items-center gap-2"><Sparkles/>{data.title || label}</CardTitle>
       <CardAction><Badge variant={data.type === 'final_delivery' ? 'default' : 'secondary'}>{state === 'streaming' && <Spinner/>}{label}</Badge></CardAction>
     </CardHeader>
-    <CardContent><p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{data.content || 'AI 正在整理关键信息…'}</p></CardContent>
+    <CardContent><MarkdownContent className="text-muted-foreground">{data.content || 'AI 正在整理关键信息…'}</MarkdownContent></CardContent>
   </Card>;
 }
 
