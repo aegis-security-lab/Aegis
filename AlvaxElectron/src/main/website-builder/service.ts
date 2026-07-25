@@ -33,6 +33,7 @@ export class WebsiteBuilderService {
   private readonly activeTools = new Map<string, Map<string, string>>();
   private readonly repairAttempts = new Map<string, number>();
   private readonly cancelledProjects = new Set<string>();
+  private readonly continuationAttempts = new Map<string, number>();
 
   constructor(
     private readonly store: WebsiteBuilderStore,
@@ -62,6 +63,7 @@ export class WebsiteBuilderService {
     this.activeMessages.delete(id);
     this.activeTools.delete(id);
     this.repairAttempts.delete(id);
+    this.continuationAttempts.delete(id);
     return { id };
   }
 
@@ -79,6 +81,7 @@ export class WebsiteBuilderService {
     const snapshot = await this.store.save(createEmptySnapshot(project, artifacts, request));
     this.notify(project.id, 'snapshot');
     this.repairAttempts.set(project.id, 0);
+    this.continuationAttempts.set(project.id, 0);
     const runtime = await this.store.getRuntime();
     void this.startAgent(project.id, runtime, buildAgentPrompt(snapshot, request));
     return snapshot;
@@ -105,6 +108,7 @@ export class WebsiteBuilderService {
     });
     this.notify(input.projectId, 'agent');
     this.repairAttempts.set(input.projectId, 0);
+    this.continuationAttempts.set(input.projectId, 0);
     await this.startAgent(input.projectId, runtime, buildAgentPrompt(current, input.message));
     return snapshot!;
   }
@@ -121,6 +125,7 @@ export class WebsiteBuilderService {
     });
     if (!snapshot) throw new AppError('NOT_FOUND', '网站项目不存在。');
     this.activeMessages.delete(projectId);
+    this.continuationAttempts.delete(projectId);
     this.notify(projectId, 'agent');
     return snapshot;
   }
@@ -303,6 +308,27 @@ export class WebsiteBuilderService {
         this.notify(projectId, 'agent');
         return;
       }
+      const current = await this.getProject(projectId);
+      if (!hasFinalDeliveryInLatestTurn(current.messages)) {
+        const attempt = (this.continuationAttempts.get(projectId) ?? 0) + 1;
+        if (attempt <= 3) {
+          this.continuationAttempts.set(projectId, attempt);
+          await this.store.patch(projectId, (draft) => {
+            draft.project.status = 'generating';
+            draft.messages.push(createMessage(projectId, 'system', `Agent 本轮尚未完成交付，正在自动继续（${attempt}/3）。`, 'complete'));
+          });
+          this.activeMessages.delete(projectId);
+          this.activeTools.delete(projectId);
+          this.notify(projectId, 'agent');
+          await delay(300);
+          const runtime = await this.store.getRuntime();
+          await this.startAgent(projectId, runtime, '继续完成当前任务。不要重复已经完成的工作；检查现有文件，从中断处继续。完成全部源码与 pre-flight check 后，必须调用 alvax_key_info(type=final_delivery) 输出最终交付报告。');
+          return;
+        }
+        await this.failGeneration(projectId, 'Agent 连续三轮未完成最终交付，请补充指令后继续。');
+        return;
+      }
+      this.continuationAttempts.delete(projectId);
       await this.store.patch(projectId, (draft) => {
         draft.project.status = 'ready';
         draft.messages.push(createMessage(projectId, 'system', '开发完成，开始自动验收。', 'complete'));
@@ -419,6 +445,15 @@ function buildInitialRequest(input: CreateWebsiteProjectInput): string {
     `网站用途：${input.purposes.map((purpose) => purposeLabels[purpose] ?? purpose).join('、')}`,
     ...(input.notes ? [`补充说明：${input.notes}`] : []),
   ].join('\n');
+}
+
+function hasFinalDeliveryInLatestTurn(messages: ChatMessage[]): boolean {
+  const lastUserIndex = messages.findLastIndex((message) => message.role === 'user');
+  return messages.slice(lastUserIndex + 1).some((message) =>
+    message.role === 'tool'
+      && message.content.startsWith(ALVAX_KEY_INFO_PREFIX)
+      && message.content.includes('"type":"final_delivery"'),
+  );
 }
 
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {

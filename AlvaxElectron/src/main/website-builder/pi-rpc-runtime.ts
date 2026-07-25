@@ -49,7 +49,7 @@ export class PiRpcRuntime {
     } else {
       session.sink = sink;
     }
-    await this.send(session, { type: 'prompt', message });
+    await this.send(session, { type: 'prompt', message, streamingBehavior: 'followUp' });
   }
 
   async abort(projectId: string): Promise<void> {
