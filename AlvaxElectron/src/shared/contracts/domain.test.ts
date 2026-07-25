@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SaveAgentInputSchema, StartRunInputSchema } from './domain';
-import { CreateWebsiteProjectInputSchema, SendWebsiteMessageInputSchema } from './website-builder';
+import { CreateWebsiteProjectInputSchema, isInitialWebsiteBriefMessage, SendWebsiteMessageInputSchema, WEBSITE_BRIEF_MESSAGE_PREFIX } from './website-builder';
 
 describe('shared contracts', () => {
   it('accepts a credential reference without accepting a raw secret field', () => {
@@ -49,5 +49,10 @@ describe('shared contracts', () => {
     expect(SendWebsiteMessageInputSchema.safeParse({
       projectId: crypto.randomUUID(), message: '   ',
     }).success).toBe(false);
+  });
+
+  it('runs the structured upgrade workflow only for the initial brief', () => {
+    expect(isInitialWebsiteBriefMessage(`${WEBSITE_BRIEF_MESSAGE_PREFIX}\n现有网站：https://example.com`)).toBe(true);
+    expect(isInitialWebsiteBriefMessage('首页按钮间距有问题，请直接修复')).toBe(false);
   });
 });

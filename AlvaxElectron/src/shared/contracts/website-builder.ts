@@ -4,6 +4,10 @@ export const WEBSITE_BRIEF_MESSAGE_PREFIX = '[[ALVAX_WEBSITE_BRIEF]]';
 export const ALVAX_KEY_INFO_PREFIX = '[[ALVAX_KEY_INFO]]';
 export const ALVAX_CONFIRMATION_PREFIX = '[[ALVAX_CONFIRMATION]]';
 
+export function isInitialWebsiteBriefMessage(message: string): boolean {
+  return message.startsWith(WEBSITE_BRIEF_MESSAGE_PREFIX);
+}
+
 export const WebsitePurposeSchema = z.enum([
   'brand',
   'product',

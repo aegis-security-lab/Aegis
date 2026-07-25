@@ -17,6 +17,7 @@ import type {
 import {
   ALVAX_CONFIRMATION_PREFIX,
   ALVAX_KEY_INFO_PREFIX,
+  isInitialWebsiteBriefMessage,
   WEBSITE_BRIEF_MESSAGE_PREFIX,
 } from '../../shared/contracts/website-builder';
 import { createEmptySnapshot, type WebsiteBuilderStore } from './store';
@@ -516,13 +517,19 @@ function hasFinalDeliveryInLatestTurn(messages: ChatMessage[]): boolean {
 
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {
   const brief = snapshot.project.brief;
-  const workflow = brief.mode === 'reference'
+  const isInitialTask = isInitialWebsiteBriefMessage(message);
+  const workflow = isInitialTask && brief.mode === 'reference'
     ? '当前必须严格执行“现有网站专业升级”流程：\n1. 深入研究用户现有网站。\n2. 调用 alvax_key_info(type=analysis) 提交专业诊断。\n3. 调研 3–5 个同品类竞品网站，并调用 alvax_key_info(type=competitor_research) 提交竞品对比。\n4. 综合诊断和竞品洞察，调用 alvax_key_info(type=suggestion) 提交可执行的优化与改版方案。\n5. 调用 alvax_request_confirmation，请用户确认该方案；确认前严禁修改源码。\n6. 用户确认后，基于原网站的业务、品牌与内容生成专业升级版本。\n7. 完成验收准备后调用最终交付报告。每个阶段必须按顺序执行，不得合并或跳过。'
-    : '当前必须执行“创建网站项目”流程：分析行业、产品、受众与页面要求 → 调用 AI 分析 → 直接生成或修改本地页面 → 调用最终交付报告。';
+    : isInitialTask
+      ? '这是项目首次任务：分析行业、产品、受众与页面要求 → 调用 AI 分析 → 直接生成或修改本地页面 → 调用最终交付报告。'
+      : '这是项目创建后的后续迭代。直接理解用户本轮反馈，检查现有源码并完成针对性修改，然后调用最终交付报告。严禁重复执行首次任务的专业诊断、竞品调研、升级方案或用户确认；除非用户本轮明确要求重新进行完整策略分析或竞品研究。';
+  const toolRules = isInitialTask
+    ? '- alvax_key_info(type=analysis)：分析现有网站的业务定位、受众、信息架构、页面结构、文案、视觉、交互与转化问题，输出“AI 专业诊断”。\n- alvax_key_info(type=competitor_research)：研究真实竞品并从结构、文案、风格、交互和转化路径进行对比，输出“竞品网站调研”。\n- alvax_key_info(type=suggestion)：综合前两步输出优先级明确、能够直接用于开发的“网站升级方案”。\n- alvax_request_confirmation：展示升级方案的工作方向并等待用户确认。确认后必须结合用户补充建议开始升级，取消后立即停止。'
+    : '- 后续迭代不要调用 analysis、competitor_research、suggestion 或 alvax_request_confirmation，直接修改现有网站。';
   const context = brief.mode === 'reference'
     ? `用户现有网站：${brief.referenceUrl}\n用户升级需求：${brief.referenceRequest}\n\n最高优先级产品语义：这是一次对用户现有网站的专业升级，不是复刻服务、不是模板生成器、也不是另起炉灶创建无关的新品牌。必须先理解原网站承载的业务、受众、品牌资产和核心内容，再在其基础上升级信息架构、文案表达、视觉风格、交互体验与获客转化。竞品必须是真实同类网站；如果无法访问或核实，不得编造。竞品调研卡必须列出网站名称、URL、可借鉴点和与原网站的差距。优化建议同时就是后续编写方案，必须包括页面结构、核心文案、视觉系统、关键组件、交互与转化路径，并明确保留、重构和新增的内容。`
     : `产品信息：\n- 名称：${brief.name}\n- 行业：${brief.industry}\n- 产品或服务：${brief.offering}\n- 目标用户：${brief.audience}`;
-  return `你是 Alvax Studio 的网站升级专家 Agent。你像一支由品牌策略、增长、UX、文案和前端工程专家组成的专业团队，执行过程必须严谨、透明、标准化。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范。\n\n你必须使用 Alvax 专用工具表达关键阶段，不要用普通 assistant 文本代替：\n- alvax_key_info(type=analysis)：分析现有网站的业务定位、受众、信息架构、页面结构、文案、视觉、交互与转化问题，输出“AI 专业诊断”。\n- alvax_key_info(type=competitor_research)：研究真实竞品并从结构、文案、风格、交互和转化路径进行对比，输出“竞品网站调研”。\n- alvax_key_info(type=suggestion)：综合前两步输出优先级明确、能够直接用于开发的“网站升级方案”。\n- alvax_request_confirmation：展示升级方案的工作方向并等待用户确认。确认后必须结合用户补充建议开始升级，取消后立即停止。\n- alvax_key_info(type=final_delivery)：所有开发与 pre-flight check 完成后作为最后一个动作调用，输出最终交付报告。调用后不要再输出普通文本。\n\n${workflow}\n\n${context}\n\n用户本轮要求：${message}\n\n保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check。`;
+  return `你是 Alvax Studio 的网站升级专家 Agent。你像一支由品牌策略、增长、UX、文案和前端工程专家组成的专业团队，执行过程必须严谨、透明、标准化。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范。\n\nAlvax 专用工具规则：\n${toolRules}\n- alvax_key_info(type=final_delivery)：所有开发与 pre-flight check 完成后作为最后一个动作调用，输出最终交付报告。调用后不要再输出普通文本。\n\n${workflow}\n\n${context}\n\n用户本轮要求：${message}\n\n保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check。`;
 }
 
 function createChecks(projectId: string): AcceptanceCheck[] {
