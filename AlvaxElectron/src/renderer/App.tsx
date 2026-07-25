@@ -196,15 +196,16 @@ function ChatEntry({ message, compact = false }: { message: ChatMessage; compact
   if (message.role === 'system') return <Marker variant={compact ? 'default' : 'border'}><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap text-xs">{message.content}</MarkerContent></Marker>;
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
+  const displayContent = isTool ? normalizeToolMessage(message.content) : message.content;
   if (compact) return <Message>
     <MessageContent>
       <div className={cn('flex min-w-0 items-start gap-2 text-xs leading-5 text-muted-foreground', message.state === 'error' && 'text-destructive')}>
         {isTool ? <TerminalSquare className="mt-0.5 size-3.5 shrink-0"/> : <Bot className="mt-0.5 size-3.5 shrink-0"/>}
         {isTool ? <span
           className="min-w-0 flex-1 cursor-ew-resize overflow-x-auto whitespace-nowrap font-mono [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          title={message.content}
+          title={displayContent}
           onWheel={(event) => { event.currentTarget.scrollLeft += event.deltaY || event.deltaX; }}
-        ><span className="inline-block w-max whitespace-nowrap">{message.content || '正在执行…'}</span></span> : <span className="min-w-0 whitespace-pre-wrap">{message.content || '正在思考…'}</span>}
+        ><span className="inline-block w-max whitespace-nowrap">{displayContent || '正在执行…'}</span></span> : <span className="min-w-0 whitespace-pre-wrap">{displayContent || '正在思考…'}</span>}
         {message.state === 'streaming' && !isTool && <span className="mt-1 inline-block h-3 w-px shrink-0 animate-pulse bg-current"/>}
       </div>
     </MessageContent>
@@ -217,6 +218,10 @@ function ChatEntry({ message, compact = false }: { message: ChatMessage; compact
       </Bubble>
     </MessageContent>
   </Message>;
+}
+
+function normalizeToolMessage(content: string): string {
+  return content.replace(/^工具 · (?:Edit|Read|Write|终端) · /, '工具 · ');
 }
 
 function groupMessagesByTurn(messages: ChatMessage[]): ChatMessage[][] {

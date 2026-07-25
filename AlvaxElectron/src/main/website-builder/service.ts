@@ -396,10 +396,10 @@ function createMessage(
 
 function formatToolStart(name: string, args: unknown): string {
   const labels: Record<string, string> = {
-    bash: '工具 · 终端 · 执行命令',
-    read: '工具 · Read · 读取文件',
-    write: '工具 · Write · 写入文件',
-    edit: '工具 · Edit · 修改文件',
+    bash: '工具 · 执行命令',
+    read: '工具 · 读取文件',
+    write: '工具 · 写入文件',
+    edit: '工具 · 修改文件',
   };
   let detail = '';
   if (args && typeof args === 'object') {
@@ -407,7 +407,7 @@ function formatToolStart(name: string, args: unknown): string {
     detail = String(value.path ?? value.file_path ?? value.command ?? value.cmd ?? '');
   }
   const compact = detail.replace(/\s+/g, ' ').trim().slice(0, 120);
-  return `${labels[name] ?? `工具 · ${name}`}${compact ? ` · ${compact}` : ''}`;
+  return `${labels[name] ?? `工具 · 调用 ${name}`}${compact ? ` · ${compact}` : ''}`;
 }
 
 function delay(durationMs: number): Promise<void> {
