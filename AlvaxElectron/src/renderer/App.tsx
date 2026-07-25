@@ -9,7 +9,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
@@ -29,6 +31,7 @@ import type {
   ChatMessage, CreateWebsiteProjectInput, WebsiteBuilderSnapshot, WebsiteProject,
   WebsitePurpose,
 } from '../shared/contracts/website-builder';
+import { WEBSITE_BRIEF_MESSAGE_PREFIX } from '../shared/contracts/website-builder';
 import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
 
 const purposeOptions: { value: WebsitePurpose; label: string }[] = [
@@ -299,7 +302,7 @@ function ChatTimeline({ messages, active }: { messages: ChatMessage[]; active: b
     const history = final ? responses.filter((message) => message.id !== final.id) : responses;
     return <MessageScrollerItem key={turn[0]?.id ?? index} messageId={turn.at(-1)!.id} scrollAnchor={isActive}>
       <div className="flex flex-col gap-3">
-        {user && <ChatEntry message={user} />}
+        {user && <ChatEntry message={user} active={isActive} />}
         {history.length > 0 && <AgentProcess messages={history} active={isActive} />}
         {final && <ChatEntry message={final} />}
       </div>
@@ -332,10 +335,13 @@ function AgentProcess({ messages, active }: { messages: ChatMessage[]; active: b
   </Collapsible>;
 }
 
-function ChatEntry({ message, compact = false }: { message: ChatMessage; compact?: boolean }) {
+function ChatEntry({ message, compact = false, active = false }: { message: ChatMessage; compact?: boolean; active?: boolean }) {
   if (message.role === 'system') return <Marker variant={compact ? 'default' : 'border'} className={cn(compact && 'shrink-0')}><MarkerIcon>{message.state === 'error' ? <CircleAlert/> : <Sparkles/>}</MarkerIcon><MarkerContent className="whitespace-pre-wrap text-xs">{message.content}</MarkerContent></Marker>;
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
+  if (isUser && message.content.startsWith(WEBSITE_BRIEF_MESSAGE_PREFIX)) {
+    return <RequirementCard content={message.content} active={active} />;
+  }
   const displayContent = isTool ? normalizeToolMessage(message.content) : message.content;
   if (compact) return <Message className="shrink-0">
     <MessageContent>
@@ -358,6 +364,28 @@ function ChatEntry({ message, compact = false }: { message: ChatMessage; compact
       </Bubble>
     </MessageContent>
   </Message>;
+}
+
+function RequirementCard({ content, active }: { content: string; active: boolean }) {
+  const fields = content.split('\n').slice(1).map((line) => {
+    const separator = line.indexOf('：');
+    return separator < 0 ? ['', line] : [line.slice(0, separator), line.slice(separator + 1)];
+  });
+  return <Card size="sm" className="max-w-2xl bg-muted/30">
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2"><Sparkles/>网站需求已提交</CardTitle>
+      <CardDescription>Alvax Agent 将根据以下信息设计并生成网站。</CardDescription>
+      <CardAction><Badge variant="secondary">{active ? <><Spinner/>AI 正在工作</> : '已交付'}</Badge></CardAction>
+    </CardHeader>
+    <CardContent>
+      <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-[5rem_1fr]">
+        {fields.map(([label, value]) => <div key={`${label}-${value}`} className="grid min-w-0 grid-cols-[5rem_1fr] gap-2 sm:col-span-2">
+          <dt className="text-xs text-muted-foreground">{label}</dt>
+          <dd className="min-w-0 text-xs leading-5 wrap-break-word">{value}</dd>
+        </div>)}
+      </dl>
+    </CardContent>
+  </Card>;
 }
 
 function normalizeToolMessage(content: string): string {

@@ -12,6 +12,7 @@ import type {
   WebsiteBuilderSnapshot,
   WebsiteProject,
 } from '../../shared/contracts/website-builder';
+import { WEBSITE_BRIEF_MESSAGE_PREFIX } from '../../shared/contracts/website-builder';
 import { createEmptySnapshot, type WebsiteBuilderStore } from './store';
 import { installTasteSkill, writeWebsiteStarter } from './starter';
 import type { PiRpcRuntime } from './pi-rpc-runtime';
@@ -63,13 +64,17 @@ export class WebsiteBuilderService {
     const project: WebsiteProject = {
       id: crypto.randomUUID(),
       brief: input,
-      status: 'ready',
+      status: 'generating',
       createdAt: now,
       updatedAt: now,
     };
     const artifacts = await writeWebsiteStarter(this.store.workspacePath(project.id), input);
-    const snapshot = await this.store.save(createEmptySnapshot(project, artifacts));
+    const request = buildInitialRequest(input);
+    const snapshot = await this.store.save(createEmptySnapshot(project, artifacts, request));
     this.notify(project.id, 'snapshot');
+    this.repairAttempts.set(project.id, 0);
+    const runtime = await this.store.getRuntime();
+    void this.startAgent(project.id, runtime, buildAgentPrompt(snapshot, request));
     return snapshot;
   }
 
@@ -302,6 +307,7 @@ export class WebsiteBuilderService {
       draft.project.status = 'failed';
       const message = draft.messages.find((entry) => entry.id === this.activeMessages.get(projectId));
       if (message) { message.state = 'error'; message.content ||= toMessage(error); }
+      else draft.messages.push(createMessage(projectId, 'system', `AI 生成启动失败：${toMessage(error)}`, 'error'));
     });
     this.activeMessages.delete(projectId);
     this.notify(projectId, 'error');
@@ -364,6 +370,21 @@ export class WebsiteBuilderService {
   private notify(projectId: string, type: WebsiteBuilderEvent['type']): void {
     this.emit({ projectId, type, sequence: ++this.sequence });
   }
+}
+
+function buildInitialRequest(input: CreateWebsiteProjectInput): string {
+  const purposeLabels: Record<string, string> = {
+    brand: '品牌展示', product: '产品介绍', conversion: '获客转化', content: '内容发布',
+  };
+  return [
+    WEBSITE_BRIEF_MESSAGE_PREFIX,
+    `项目：${input.name}`,
+    `行业：${input.industry}`,
+    `产品或服务：${input.offering}`,
+    `目标用户：${input.audience}`,
+    `网站用途：${input.purposes.map((purpose) => purposeLabels[purpose] ?? purpose).join('、')}`,
+    ...(input.notes ? [`补充说明：${input.notes}`] : []),
+  ].join('\n');
 }
 
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {

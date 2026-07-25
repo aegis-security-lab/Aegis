@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const WEBSITE_BRIEF_MESSAGE_PREFIX = '[[ALVAX_WEBSITE_BRIEF]]';
+
 export const WebsitePurposeSchema = z.enum([
   'brand',
   'product',

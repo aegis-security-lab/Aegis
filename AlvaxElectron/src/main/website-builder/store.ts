@@ -128,15 +128,12 @@ export class WebsiteBuilderStore {
 export function createEmptySnapshot(
   project: WebsiteProject,
   artifacts: DeliveryArtifact[],
+  initialRequest?: string,
 ): WebsiteBuilderSnapshot {
-  const messages: ChatMessage[] = [{
-    id: crypto.randomUUID(),
-    projectId: project.id,
-    role: 'assistant',
-    content: `已为「${project.brief.name}」创建网站工作区。我先生成了一套可运行的现代化首页。你可以继续告诉我品牌调性、页面结构或文案调整，我会直接修改并重新验收。`,
-    state: 'complete',
-    createdAt: new Date().toISOString(),
-  }];
+  const messages: ChatMessage[] = initialRequest ? [{
+    id: crypto.randomUUID(), projectId: project.id, role: 'user',
+    content: initialRequest, state: 'complete', createdAt: new Date().toISOString(),
+  }] : [];
   const checks: AcceptanceCheck[] = [];
   const preview: PreviewState = { status: 'stopped' };
   return { project, messages, checks, artifacts, preview };
