@@ -3,6 +3,20 @@ import path from 'node:path';
 import type { DeliveryArtifact, WebsiteBrief } from '../../shared/contracts/website-builder';
 import tasteSkill from './bundled-skills/taste-skill/SKILL.md?raw';
 
+const shadcnSkillFiles = import.meta.glob('./bundled-skills/shadcn/**/*.{md,yml,json}', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+
+const bundledSkillFiles: Record<string, string> = {
+  '.pi/skills/design-taste-frontend/SKILL.md': tasteSkill,
+  ...Object.fromEntries(Object.entries(shadcnSkillFiles).map(([sourcePath, content]) => [
+    `.pi/skills/shadcn/${sourcePath.replace('./bundled-skills/shadcn/', '')}`,
+    content,
+  ])),
+};
+
 const purposeLabels = {
   brand: '建立清晰品牌认知',
   product: '讲清产品与服务价值',
@@ -65,7 +79,7 @@ nav button,.actions button{padding:12px 18px;border-radius:999px;color:white;bac
 @media(max-width:760px){nav a{display:none}.hero h1{font-size:52px}.goals{grid-template-columns:1fr}.goals article{border-right:0;border-bottom:1px solid #cbc9c1}.goals article:last-child{border:0}}
 `,
     '.gitignore': 'node_modules\ndist\n.DS_Store\n',
-    '.pi/skills/design-taste-frontend/SKILL.md': tasteSkill,
+    ...bundledSkillFiles,
   };
 
   for (const [relativePath, content] of Object.entries(files)) {
@@ -80,8 +94,10 @@ nav button,.actions button{padding:12px 18px;border-radius:999px;color:white;bac
   }));
 }
 
-export async function installTasteSkill(workspace: string): Promise<void> {
-  const target = path.join(workspace, '.pi/skills/design-taste-frontend/SKILL.md');
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, tasteSkill, 'utf8');
+export async function installBundledSkills(workspace: string): Promise<void> {
+  for (const [relativePath, content] of Object.entries(bundledSkillFiles)) {
+    const target = path.join(workspace, relativePath);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, content, 'utf8');
+  }
 }

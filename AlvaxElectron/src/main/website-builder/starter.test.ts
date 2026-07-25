@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { installTasteSkill, writeWebsiteStarter } from './starter';
+import { installBundledSkills, writeWebsiteStarter } from './starter';
 
 const temporaryDirectories: string[] = [];
 
@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe('website starter bundled skills', () => {
-  it('installs design-taste-frontend into every new workspace', async () => {
+  it('installs design and shadcn skills into every new workspace', async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), 'alvax-starter-'));
     temporaryDirectories.push(workspace);
 
@@ -30,17 +30,25 @@ describe('website starter bundled skills', () => {
 
     expect(content).toContain('name: design-taste-frontend');
     expect(artifacts.some((artifact) => artifact.path === skillPath)).toBe(true);
+    const shadcnPath = '.pi/skills/shadcn/SKILL.md';
+    await expect(readFile(path.join(workspace, shadcnPath), 'utf8')).resolves.toContain('name: shadcn');
+    expect(artifacts.some((artifact) => artifact.path === shadcnPath)).toBe(true);
+    await expect(readFile(path.join(workspace, '.pi/skills/shadcn/rules/styling.md'), 'utf8')).resolves.toContain('Tailwind');
   });
 
   it('repairs the bundled skill in an existing workspace', async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), 'alvax-skill-'));
     temporaryDirectories.push(workspace);
 
-    await installTasteSkill(workspace);
+    await installBundledSkills(workspace);
 
     await expect(readFile(
       path.join(workspace, '.pi/skills/design-taste-frontend/SKILL.md'),
       'utf8',
     )).resolves.toContain('# tasteskill: Anti-Slop Frontend Skill');
+    await expect(readFile(
+      path.join(workspace, '.pi/skills/shadcn/SKILL.md'),
+      'utf8',
+    )).resolves.toContain('name: shadcn');
   });
 });

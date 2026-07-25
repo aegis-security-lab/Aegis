@@ -14,7 +14,7 @@ import type {
 } from '../../shared/contracts/website-builder';
 import { WEBSITE_BRIEF_MESSAGE_PREFIX } from '../../shared/contracts/website-builder';
 import { createEmptySnapshot, type WebsiteBuilderStore } from './store';
-import { installTasteSkill, writeWebsiteStarter } from './starter';
+import { installBundledSkills, writeWebsiteStarter } from './starter';
 import type { PiRpcRuntime } from './pi-rpc-runtime';
 import type { PreviewManager } from './preview-manager';
 import { runCommand } from './process-utils';
@@ -315,7 +315,7 @@ export class WebsiteBuilderService {
 
   private async startAgent(projectId: string, runtime: RuntimeSettings, prompt: string): Promise<void> {
     try {
-      await installTasteSkill(this.store.workspacePath(projectId));
+      await installBundledSkills(this.store.workspacePath(projectId));
       const config = await this.aiConfig.load();
       const effectiveRuntime = { ...runtime, provider: config.provider, model: config.model };
       const systemPrompt = this.aiConfig.agentContext(config);
@@ -388,7 +388,7 @@ function buildInitialRequest(input: CreateWebsiteProjectInput): string {
 }
 
 function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): string {
-  return `你是 Alvax Studio 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须读取并遵循项目内置技能：.pi/skills/design-taste-frontend/SKILL.md。先根据技能完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY，再进行设计与开发。最终回复中简要说明 Design Read 和三个参数。\n\n产品信息：\n- 名称：${snapshot.project.brief.name}\n- 行业：${snapshot.project.brief.industry}\n- 产品或服务：${snapshot.project.brief.offering}\n- 目标用户：${snapshot.project.brief.audience}\n\n用户本轮要求：${message}\n\n请直接检查并修改源码完成要求。保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check，并用简洁中文总结改动。`;
+  return `你是 Alvax Studio 的网站开发 Agent。当前工作目录就是网站源码目录。\n\n开始工作前必须依次读取并遵循两个项目内置技能：\n1. .pi/skills/design-taste-frontend/SKILL.md\n2. .pi/skills/shadcn/SKILL.md\n\n先根据 design-taste-frontend 完成 Design Read，推导 DESIGN_VARIANCE、MOTION_INTENSITY、VISUAL_DENSITY；再按 shadcn 技能核对项目上下文、组件组合、表单、图标与样式规范，然后进行设计与开发。最终回复中简要说明 Design Read、三个参数以及使用的 shadcn 组件。\n\n产品信息：\n- 名称：${snapshot.project.brief.name}\n- 行业：${snapshot.project.brief.industry}\n- 产品或服务：${snapshot.project.brief.offering}\n- 目标用户：${snapshot.project.brief.audience}\n\n用户本轮要求：${message}\n\n请直接检查并修改源码完成要求。保持 Vite + React + TypeScript + Tailwind 技术栈；可创建首页、Use Cases、FAQ、Blog/Article 等页面。不要启动长期运行的服务，也不要执行 npm install、typecheck 或 build，宿主应用会统一验收。不要修改工作目录之外的文件。结束前执行 taste skill 的 pre-flight check，并用简洁中文总结改动。`;
 }
 
 function createChecks(projectId: string): AcceptanceCheck[] {
