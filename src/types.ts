@@ -1,5 +1,6 @@
 export interface ConfigView {
   configured: boolean
+  language: "zh" | "en"
   nodePath: string
   piPath: string
   provider: string
@@ -246,6 +247,8 @@ export interface Execution {
   systemPrompt?: string
   toolsSnapshot: ToolSnapshot[]
   result?: string
+  finalResult?: string
+  finalResultSubmitted: boolean
   error?: string
   cost: number
   tokens: number
@@ -336,6 +339,11 @@ export interface Message {
   streaming: boolean
   createdAt: string
   updatedAt: string
+}
+export interface OperatorAttachment {
+  name: string
+  path: string
+  size: number
 }
 export interface ConciergeConversation {
   id: string
@@ -454,6 +462,12 @@ export interface IssueDetail {
   eventsPage: PageInfo
   executionsPage: PageInfo
   watermark: string
+}
+export interface IssueAgentTimeline {
+  session: IssueAgentSession
+  executions: Execution[]
+  messages: Message[]
+  events: ExecutionEvent[]
 }
 export interface PageInfo {
   nextCursor?: string
@@ -665,6 +679,7 @@ export interface AppState {
   updatedAt: string
 }
 export interface SaveConfigInput {
+  language: "zh" | "en"
   nodePath: string
   piPath: string
   provider: string

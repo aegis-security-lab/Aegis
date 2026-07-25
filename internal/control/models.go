@@ -15,6 +15,7 @@ type IssueHeartbeatConfig struct {
 
 type Config struct {
 	Configured            bool                 `json:"configured"`
+	Language              string               `json:"language"`
 	NodePath              string               `json:"nodePath"`
 	PiPath                string               `json:"piPath"`
 	Provider              string               `json:"provider"`
@@ -40,6 +41,7 @@ type Config struct {
 
 type ConfigView struct {
 	Configured            bool                 `json:"configured"`
+	Language              string               `json:"language"`
 	NodePath              string               `json:"nodePath"`
 	PiPath                string               `json:"piPath"`
 	Provider              string               `json:"provider"`
@@ -770,6 +772,13 @@ type IssueDetail struct {
 	ExecutionsPage PageInfo             `json:"executionsPage"`
 	Watermark      time.Time            `json:"watermark"`
 }
+
+type IssueAgentTimeline struct {
+	Session    IssueAgentSession `json:"session"`
+	Executions []Execution       `json:"executions"`
+	Messages   []Message         `json:"messages"`
+	Events     []ExecutionEvent  `json:"events"`
+}
 type SessionSummary struct {
 	Execution       Execution `json:"execution"`
 	IssueIdentifier string    `json:"issueIdentifier"`
@@ -1071,6 +1080,7 @@ type CreateRelationInput struct {
 }
 
 type SaveConfigInput struct {
+	Language              string               `json:"language"`
 	NodePath              string               `json:"nodePath"`
 	PiPath                string               `json:"piPath"`
 	Provider              string               `json:"provider"`

@@ -23,10 +23,12 @@ import type {
   Issue,
   IssueComment,
   IssueDetail,
+  IssueAgentTimeline,
   KnowledgeBase,
   KnowledgeBaseDetail,
   KnowledgeDocument,
   Message,
+  OperatorAttachment,
   RuntimeProbe,
   SaveConfigInput,
   SaveUncoverProviderInput,
@@ -72,9 +74,13 @@ export type SaveKnowledgeDocumentInput = Pick<
   "name" | "content"
 >
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  if (!(init?.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json")
+  }
   const response = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers,
   })
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
@@ -177,6 +183,8 @@ export const saveSettings = (input: SaveConfigInput) =>
   })
 export const fetchIssue = (id: string) =>
   request<IssueDetail>(`/api/issues/${encodeURIComponent(id)}`)
+export const fetchIssueAgentTimeline = (id: string, agentId: string) =>
+  request<IssueAgentTimeline>(`/api/issues/${encodeURIComponent(id)}/agents/${encodeURIComponent(agentId)}/timeline`)
 const pageQuery = (before?: string, limit = 50) => {
   const query = new URLSearchParams({ limit: String(limit) })
   if (before) query.set("before", before)
@@ -251,11 +259,21 @@ export const createIssueComment = (id: string, body: string) =>
     method: "POST",
     body: JSON.stringify({ body }),
   })
-export const sendChat = (id: string, message: string, executionId?: string) =>
+export const sendChat = (id: string, message: string, executionId?: string, agentId?: string) =>
   request<Message>(`/api/issues/${encodeURIComponent(id)}/chat`, {
     method: "POST",
-    body: JSON.stringify({ message, executionId }),
+    body: JSON.stringify({ message, executionId, agentId }),
   })
+export const sendChatWithAttachments = (id: string, message: string, executionId: string, files: File[]) => {
+  const body = new FormData()
+  body.set("message", message)
+  body.set("executionId", executionId)
+  files.forEach((file) => body.append("attachments", file))
+  return request<{ message: Message; attachments: OperatorAttachment[] }>(
+    `/api/issues/${encodeURIComponent(id)}/chat-with-attachments`,
+    { method: "POST", body }
+  )
+}
 export const resolveApproval = (id: string, approved: boolean, reviewContent = "") =>
   request<Approval>(`/api/approvals/${encodeURIComponent(id)}`, {
     method: "POST",

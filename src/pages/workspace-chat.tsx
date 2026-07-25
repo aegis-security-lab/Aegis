@@ -100,6 +100,11 @@ export function WorkspaceChatPage() {
   }, [loadConversations, state?.updatedAt])
 
   React.useEffect(() => {
+    if (loading || conversationId || conversations.length === 0) return
+    navigate(`/workspace/${conversations[0].id}`, { replace: true })
+  }, [conversationId, conversations, loading, navigate])
+
+  React.useEffect(() => {
     if (!conversationId) {
       const timer = window.setTimeout(() => {
         setDetail(null)
@@ -263,9 +268,9 @@ export function WorkspaceChatPage() {
   return (
     <div className="flex size-full min-h-0 max-h-full overflow-hidden bg-background">
       <aside
+        aria-hidden="true"
         className={cn(
-          "min-h-0 w-full shrink-0 flex-col border-r bg-muted/20 md:flex md:w-72",
-          conversationId ? "hidden" : "flex"
+          "hidden min-h-0 w-full shrink-0 flex-col border-r bg-muted/20 md:w-72"
         )}
       >
         <div className="flex h-14 shrink-0 items-center justify-between gap-3 px-4">
@@ -346,11 +351,10 @@ export function WorkspaceChatPage() {
 
       <section
         className={cn(
-          "h-full min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto]",
-          conversationId ? "grid" : "hidden md:grid"
+          "grid h-full min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_auto]"
         )}
       >
-        <div className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
+        <div className="hidden">
           <Button
             type="button"
             variant="ghost"
@@ -414,18 +418,17 @@ export function WorkspaceChatPage() {
           </div>
         )}
 
-        <div className="border-t bg-background px-4 py-4">
+        <div className="shrink-0 border-t bg-background p-3">
           <form
-            className="mx-auto max-w-3xl"
+            className="mx-auto max-w-4xl"
             onSubmit={(event) => {
               event.preventDefault()
               void send()
             }}
           >
-            <InputGroup className="rounded-2xl bg-background shadow-sm">
+            <InputGroup className="min-h-24 items-stretch rounded-2xl bg-background">
               <InputGroupTextarea
                 value={draft}
-                rows={3}
                 maxLength={50000}
                 aria-label="给管家发送消息"
                 placeholder="告诉管家你的需求…"
@@ -440,9 +443,10 @@ export function WorkspaceChatPage() {
                     void send()
                   }
                 }}
+                className="min-h-14 resize-none text-[13px]"
               />
               <InputGroupAddon align="block-end" className="justify-between">
-                <span className="text-xs font-normal">
+                <span className="px-1 text-xs font-normal text-muted-foreground">
                   Enter 发送 · Shift+Enter 换行
                 </span>
                 <InputGroupButton

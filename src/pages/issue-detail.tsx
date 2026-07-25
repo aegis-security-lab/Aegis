@@ -20,6 +20,7 @@ import { toast } from "sonner"
 import { ExecutionEvents } from "@/components/execution-events"
 import { InterruptToolButton } from "@/components/interrupt-tool-button"
 import { IssueCommentsList } from "@/components/issue-comments-list"
+import { IssueChatWorkspace } from "@/components/issue-chat-workspace"
 import { IssueTree } from "@/components/issue-tree"
 import { MarkdownContent } from "@/components/markdown-content"
 import { PageHeader } from "@/components/page-header"
@@ -160,10 +161,11 @@ export function IssueDetailPage() {
     const refreshActivity = async () => {
       if (!issueId) return
       try {
-        const [comments, events, executions] = await Promise.all([
+        const [comments, events, executions, snapshot] = await Promise.all([
           fetchIssueComments(issueId, undefined, 20),
           fetchIssueEvents(issueId, undefined, 20),
           fetchIssueExecutions(issueId, undefined, 20),
+          fetchIssue(issueId),
         ])
         setDetail((current) => {
           if (!current) return current
@@ -205,6 +207,8 @@ export function IssueDetailPage() {
             executions.page.total > current.executionsPage.total
           return {
             ...current,
+            issue: snapshot.issue,
+            agentSessions: snapshot.agentSessions,
             comments: commentsMissed ? comments.items : mergedComments,
             events: eventsMissed ? events.items : mergedEvents,
             executions: executionsMissed ? executions.items : mergedExecutions,
@@ -454,7 +458,8 @@ export function IssueDetailPage() {
     }
   }
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex size-full min-h-0 flex-col overflow-hidden">
+      <div className="hidden">
       <PageHeader
         eyebrow={`${issue.identifier} · ${issue.id}`}
         title={issue.title}
@@ -806,7 +811,17 @@ export function IssueDetailPage() {
           </AlertDescription>
         </Alert>
       )}
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+      </div>
+      <IssueChatWorkspace
+        detail={detail}
+        state={state}
+        busy={busy}
+        onBusyChange={setBusy}
+        onReload={load}
+        onCancel={() => setCancelOpen(true)}
+        onManualReject={() => setManualRejectOpen(true)}
+      />
+      <div className="hidden grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0 space-y-5">
           <Card className="h-[360px] gap-0 overflow-hidden py-0 sm:h-[420px]">
             <CardHeader className="shrink-0 border-b py-4">
@@ -1191,7 +1206,7 @@ function ValidationHistoryItem({
   )
 }
 
-function BroadcastHistory({
+export function BroadcastHistory({
   broadcasts,
   issues,
   agents,

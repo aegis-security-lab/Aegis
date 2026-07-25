@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Bot, Database, Gauge, HeartPulse, KeyRound, Radar, Save, ShieldCheck } from "lucide-react"
+import { Bot, Database, Gauge, Languages, HeartPulse, KeyRound, Radar, Save, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -49,8 +50,8 @@ export function SettingsPage() {
     fromConfig(config)
   )
   const [section, setSection] = React.useState<
-    "runtime" | "model" | "workspace" | "budget" | "policy"
-  >("runtime")
+    "general" | "runtime" | "model" | "workspace" | "budget" | "policy"
+  >("general")
   const update = <K extends keyof SaveConfigInput>(
     key: K,
     value: SaveConfigInput[K]
@@ -117,6 +118,7 @@ export function SettingsPage() {
         >
           {(
             [
+              ["general", "全局配置"],
               ["runtime", "Pi Runtime"],
               ["model", "模型与认证"],
               ["workspace", "工作区"],
@@ -137,6 +139,29 @@ export function SettingsPage() {
         </nav>
         <div className="min-w-0">
           <div className="flex flex-col gap-5">
+            <Card className={section === "general" ? undefined : "hidden"}>
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <span className="flex size-9 items-center justify-center rounded-lg bg-muted"><Languages className="size-4" /></span>
+                  <CardTitle>语言</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Field>
+                  <FieldLabel>AI 输出语言</FieldLabel>
+                  <Select value={form.language} onValueChange={(value) => update("language", value as SaveConfigInput["language"])}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="zh">中文</SelectItem>
+                        <SelectItem value="en">English</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>用于所有新启动 Agent 的文本回复、分析结论和报告。</FieldDescription>
+                </Field>
+              </CardContent>
+            </Card>
             <Card className={section === "runtime" ? undefined : "hidden"}>
               <CardHeader>
                 <div className="flex items-center gap-3">
@@ -710,6 +735,7 @@ function fromConfig(
   config: NonNullable<ReturnType<typeof useAppState>["state"]>["config"]
 ): SaveConfigInput {
   return {
+    language: config.language || "zh",
     nodePath: config.nodePath,
     piPath: config.piPath,
     provider: config.provider,

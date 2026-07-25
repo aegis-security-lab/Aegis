@@ -1,3 +1,4 @@
+import * as React from "react"
 import {
   Building2,
   Boxes,
@@ -13,7 +14,6 @@ import {
   Plus,
   Radar,
   Settings,
-  ShieldCheck,
   ShieldAlert,
   Sparkles,
   Sun,
@@ -24,19 +24,26 @@ import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
+import { AegisLogo } from "@/components/aegis-logo"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { FloatingTaskPet } from "@/components/floating-task-pet"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -45,6 +52,18 @@ import {
 } from "@/components/ui/sidebar"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
+
+const ManagementTalentLibrary = React.lazy(() => import("@/pages/talent-library").then((module) => ({ default: module.TalentLibraryPage })))
+const ManagementDepartments = React.lazy(() => import("@/pages/departments").then((module) => ({ default: module.DepartmentsPage })))
+const ManagementSkills = React.lazy(() => import("@/pages/skills").then((module) => ({ default: module.SkillsPage })))
+const ManagementKnowledgeBases = React.lazy(() => import("@/pages/knowledge-bases").then((module) => ({ default: module.KnowledgeBasesPage })))
+const ManagementSessions = React.lazy(() => import("@/pages/sessions").then((module) => ({ default: module.SessionsPage })))
+const ManagementApprovals = React.lazy(() => import("@/pages/approvals").then((module) => ({ default: module.ApprovalsPage })))
+const ManagementContainers = React.lazy(() => import("@/pages/containers").then((module) => ({ default: module.ContainersPage })))
+const ManagementSecurity = React.lazy(() => import("@/pages/security").then((module) => ({ default: module.SecurityPage })))
+const ManagementFindings = React.lazy(() => import("@/pages/findings").then((module) => ({ default: module.FindingsPage })))
+const ManagementUncover = React.lazy(() => import("@/pages/uncover").then((module) => ({ default: module.UncoverPage })))
+const ManagementSettings = React.lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })))
 
 const navigation = [
   {
@@ -57,45 +76,48 @@ const navigation = [
       { to: "/issues", label: "Issues", icon: CheckSquare2 },
     ],
   },
-  {
-    label: "Agent 系统",
-    items: [
-      { to: "/talent-library", label: "人才库", icon: Users },
-      { to: "/departments", label: "组织架构", icon: Building2 },
-      { to: "/skills", label: "Skills", icon: Wrench },
-      { to: "/knowledge-bases", label: "知识库", icon: LibraryBig },
-    ],
-  },
-  {
-    label: "运行时",
-    items: [
-      { to: "/sessions", label: "Sessions", icon: MessagesSquare },
-      { to: "/approvals", label: "审批中心", icon: ClipboardCheck },
-      { to: "/containers", label: "容器管理", icon: Boxes },
-    ],
-  },
-  {
-    label: "安全",
-    items: [
-      { to: "/security", label: "安全态势", icon: ShieldAlert, end: true },
-      { to: "/security/findings", label: "发现详情", icon: FileSearch },
-      { to: "/security/uncover", label: "空间搜索", icon: Radar },
-    ],
-  },
+]
+
+const managementGroups = [
+  { label: "Agent 系统", items: [
+    { id: "talent-library", label: "人才库", icon: Users, page: ManagementTalentLibrary },
+    { id: "departments", label: "组织架构", icon: Building2, page: ManagementDepartments },
+    { id: "skills", label: "Skills", icon: Wrench, page: ManagementSkills },
+    { id: "knowledge-bases", label: "知识库", icon: LibraryBig, page: ManagementKnowledgeBases },
+  ] },
+  { label: "运行时", items: [
+    { id: "sessions", label: "Sessions", icon: MessagesSquare, page: ManagementSessions },
+    { id: "approvals", label: "审批中心", icon: ClipboardCheck, page: ManagementApprovals },
+    { id: "containers", label: "容器管理", icon: Boxes, page: ManagementContainers },
+  ] },
+  { label: "安全", items: [
+    { id: "security", label: "安全态势", icon: ShieldAlert, page: ManagementSecurity },
+    { id: "findings", label: "发现详情", icon: FileSearch, page: ManagementFindings },
+    { id: "uncover", label: "空间搜索", icon: Radar, page: ManagementUncover },
+  ] },
+  { label: "设置", items: [
+    { id: "settings", label: "全局设置", icon: Settings, page: ManagementSettings },
+  ] },
 ]
 
 export function AppShell() {
-  const { state, error } = useAppState()
+  const { error } = useAppState()
   const location = useLocation()
   const { resolvedTheme, setTheme } = useTheme()
-  const pendingApprovals =
-    state?.approvals.filter((item) => item.status === "pending").length ?? 0
-  const workspaceRoute = location.pathname.startsWith("/workspace")
+  const [managementItem, setManagementItem] = React.useState("talent-library")
+  const selectedManagementItem = managementGroups.flatMap((group) => group.items).find((item) => item.id === managementItem) ?? managementGroups[0].items[0]
+  const ManagementPage = selectedManagementItem.page
+  const workspaceRoute =
+    location.pathname.startsWith("/workspace") ||
+    /^\/issues\/[^/]+$/.test(location.pathname)
 
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
+    <SidebarProvider
+      className="h-svh overflow-hidden"
+      style={{ "--sidebar-width": "13.5rem" } as React.CSSProperties}
+    >
       <Sidebar collapsible="icon" variant="sidebar">
-        <SidebarHeader className="border-b p-3">
+        <SidebarHeader className="h-14 border-b p-1">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -104,7 +126,7 @@ export function AppShell() {
                 render={<Link to="/" aria-label="Aegis 首页" />}
               >
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
-                  <ShieldCheck className="size-4" />
+                  <AegisLogo className="size-5" />
                 </span>
                 <span className="min-w-0 leading-tight">
                   <span className="block truncate font-semibold">Aegis</span>
@@ -136,11 +158,6 @@ export function AppShell() {
                           <item.icon />
                           <span>{item.label}</span>
                         </SidebarMenuButton>
-                        {item.to === "/approvals" && pendingApprovals > 0 ? (
-                          <SidebarMenuBadge className="text-amber-700">
-                            {pendingApprovals}
-                          </SidebarMenuBadge>
-                        ) : null}
                       </SidebarMenuItem>
                     )
                   })}
@@ -149,20 +166,6 @@ export function AppShell() {
             </SidebarGroup>
           ))}
         </SidebarContent>
-        <SidebarFooter className="border-t p-3">
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={location.pathname.startsWith("/settings")}
-                tooltip="设置"
-                render={<NavLink to="/settings" />}
-              >
-                <Settings />
-                <span>设置</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
         <SidebarRail />
       </Sidebar>
       <SidebarInset className="h-svh min-h-0 overflow-hidden">
@@ -194,6 +197,45 @@ export function AppShell() {
           >
             {resolvedTheme === "dark" ? <Sun /> : <Moon />}
           </Button>
+          <Dialog>
+            <DialogTrigger
+              render={<Button variant="ghost" size="icon-sm" aria-label="打开系统管理" />}
+            >
+              <Settings />
+            </DialogTrigger>
+            <DialogContent
+              className="grid h-[92dvh] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden p-0"
+              style={{
+                width: "min(1500px, calc(100vw - 48px))",
+                maxWidth: "none",
+              }}
+            >
+              <DialogHeader className="sr-only">
+                <DialogTitle>系统管理</DialogTitle>
+                <DialogDescription>在一个窗口中管理 Agent、运行环境、安全能力和全局设置。</DialogDescription>
+              </DialogHeader>
+              <div className="grid size-full min-h-0 grid-cols-[240px_minmax(0,1fr)] overflow-hidden">
+                <nav className="min-h-0 overflow-y-auto border-r bg-muted/20 px-3 py-8">
+                  {managementGroups.map((group) => (
+                    <div key={group.label} className="mb-6 flex flex-col gap-1">
+                      <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">{group.label}</p>
+                      {group.items.map((item) => (
+                        <Button key={item.id} variant={managementItem === item.id ? "secondary" : "ghost"} className="w-full justify-start" onClick={() => setManagementItem(item.id)}>
+                          <item.icon data-icon="inline-start" />
+                          {item.label}
+                        </Button>
+                      ))}
+                    </div>
+                  ))}
+                </nav>
+                <div className="min-h-0 min-w-0 overflow-y-auto px-6 py-8 lg:px-10">
+                  <React.Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载…</div>}>
+                    <ManagementPage />
+                  </React.Suspense>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </header>
         <div
           data-slot="app-content-scroller"

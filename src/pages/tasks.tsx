@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ArrowRight, Copy, ListTodo, Plus, RotateCcw } from "lucide-react"
+import { ArrowRight, Copy, ListTodo, RotateCcw } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
@@ -37,17 +37,11 @@ export function TasksPage() {
   const tasks = state?.tasks ?? []
 
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-5">
       <PageHeader
         eyebrow="Workspace"
         title="任务"
         description="顶层 Issue 代表用户目标；进度由它的子 Issues 自动汇总。"
-        actions={
-          <Button render={<Link to="/tasks/new" />}>
-            <Plus data-icon="inline-start" />
-            发布任务
-          </Button>
-        }
       />
       {tasks.length === 0 ? (
         <Card>

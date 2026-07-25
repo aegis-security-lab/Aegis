@@ -1,17 +1,10 @@
 import * as React from "react"
-import { Search } from "lucide-react"
+import { ChevronsDown, ChevronsUp } from "lucide-react"
 
 import { IssueTree } from "@/components/issue-tree"
-import { PageHeader } from "@/components/page-header"
+import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAppState } from "@/lib/state"
 import type { Issue, IssueStatus } from "@/types"
 
@@ -27,66 +20,36 @@ const statuses: IssueStatus[] = [
 
 export function IssuesPage() {
   const { state } = useAppState()
-  const [query, setQuery] = React.useState("")
   const [filter, setFilter] = React.useState("all")
+  const [expansion, setExpansion] = React.useState<"none" | "roots" | "all">("roots")
+  const [expansionVersion, setExpansionVersion] = React.useState(0)
   const allIssues = state?.issues ?? []
   const matched = allIssues.filter(
     (issue) =>
-      (filter === "all" || issue.status === filter) &&
-      `${issue.identifier} ${issue.title}`
-        .toLowerCase()
-        .includes(query.toLowerCase())
+      filter === "all" || issue.status === filter
   )
   const hierarchyIssues = includeAncestors(matched, allIssues)
   const displayedIssues = hierarchyIssues
 
   return (
-    <div className="flex flex-col gap-7">
-      <PageHeader
-        eyebrow="Shared work"
-        title="Issues"
-        description="按父子关系展示任务拆解层级与每个 Issue 的执行状态。"
-      />
-
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative max-w-md flex-1">
-          <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索编号或标题…"
-          />
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ToggleGroup value={[filter]} onValueChange={(value) => setFilter(String(value[0] ?? "all"))} variant="outline" size="sm">
+          <ToggleGroupItem value="all">全部</ToggleGroupItem>
+          {statuses.map((status) => <ToggleGroupItem key={status} value={status}>{status}</ToggleGroupItem>)}
+        </ToggleGroup>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => { setExpansion("all"); setExpansionVersion((value) => value + 1) }}><ChevronsDown />展开全部</Button>
+          <Button size="sm" variant="outline" onClick={() => { setExpansion("none"); setExpansionVersion((value) => value + 1) }}><ChevronsUp />收起全部</Button>
         </div>
-        <Select
-          value={filter}
-          onValueChange={(value) => setFilter(String(value))}
-        >
-          <SelectTrigger className="w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部状态</SelectItem>
-            {statuses.map((status) => (
-              <SelectItem key={status} value={status}>
-                {status}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       <div>
-        <div className="mb-3 flex flex-wrap items-center justify-end gap-3">
-          <span className="text-xs text-muted-foreground">
-            {matched.length} / {allIssues.length} Issues
-          </span>
-        </div>
-
-        <p className="mb-3 text-xs text-muted-foreground">按父子关系展示任务拆解层级与直属子项进度。</p>
         <Card className="overflow-hidden p-0">
           <IssueTree
+            key={`${filter}-${expansion}-${expansionVersion}`}
             mode="hierarchy"
+            defaultExpansion={expansion}
             issues={displayedIssues}
             relations={state?.relations ?? []}
             agents={state?.agents ?? []}

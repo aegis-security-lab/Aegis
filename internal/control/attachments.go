@@ -1,17 +1,64 @@
 package control
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+type OperatorAttachment struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+// UploadOperatorAttachment streams an operator-supplied file directly into
+// the task container. No host workspace path is exposed to the Agent.
+func (m *Manager) UploadOperatorAttachment(issueID, executionID, name string, source io.Reader, size int64) (OperatorAttachment, error) {
+	if source == nil || size < 0 || size > MaxAttachmentSize {
+		return OperatorAttachment{}, fmt.Errorf("附件不能超过 %d MB", MaxAttachmentSize>>20)
+	}
+	issue, err := m.store.GetIssue(issueID)
+	if err != nil {
+		return OperatorAttachment{}, err
+	}
+	session := m.getSession(executionID)
+	if session == nil || session.issueID != issue.ID {
+		return OperatorAttachment{}, errors.New("该 Agent 当前没有连接中的 Pi session")
+	}
+	if issue.ContainerID == "" {
+		return OperatorAttachment{}, errors.New("当前任务没有绑定容器，无法上传附件")
+	}
+	container, err := m.store.StartContainer(issue.ContainerID)
+	if err != nil {
+		return OperatorAttachment{}, err
+	}
+	cleanName := filepath.Base(strings.TrimSpace(name))
+	if cleanName == "" || cleanName == "." {
+		return OperatorAttachment{}, errors.New("附件名称无效")
+	}
+	dir := filepath.ToSlash(filepath.Join(container.WorkspacePath, ".aegis", "operator-attachments", nextID("upload")))
+	destination := filepath.ToSlash(filepath.Join(dir, cleanName))
+	data, err := io.ReadAll(io.LimitReader(source, MaxAttachmentSize+1))
+	if err != nil || int64(len(data)) != size {
+		return OperatorAttachment{}, errors.New("附件上传内容不完整")
+	}
+	cmd := exec.Command("docker", "exec", "-i", container.Name, "sh", "-c", `mkdir -p "$1" && cat > "$2"`, "aegis-upload", dir, destination)
+	cmd.Stdin = bytes.NewReader(data)
+	if output, runErr := cmd.CombinedOutput(); runErr != nil {
+		return OperatorAttachment{}, fmt.Errorf("写入任务容器失败: %s", strings.TrimSpace(string(output)))
+	}
+	return OperatorAttachment{Name: cleanName, Path: destination, Size: size}, nil
+}
 
 const MaxAttachmentSize = 100 << 20
 const maxValidationAttachmentChunk = 32 << 10

@@ -366,6 +366,10 @@ func (s *Store) seedProject() error {
 func (s *Store) DataDir() string { return s.dataDir }
 func (s *Store) Config() Config  { s.mu.RLock(); defer s.mu.RUnlock(); return s.config }
 func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
+	input.Language = strings.TrimSpace(input.Language)
+	if input.Language == "" {
+		input.Language = "zh"
+	}
 	input.NodePath = strings.TrimSpace(input.NodePath)
 	input.PiPath = strings.TrimSpace(input.PiPath)
 	input.Provider = strings.TrimSpace(input.Provider)
@@ -418,6 +422,9 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	if !slices.Contains([]string{"fixed", "automatic"}, input.ValidationMode) {
 		return ConfigView{}, errors.New("不支持的验收策略")
 	}
+	if !slices.Contains([]string{"zh", "en"}, input.Language) {
+		return ConfigView{}, errors.New("不支持的输出语言")
+	}
 	input.ValidationMode, input.MaxValidationAttempts = normalizeValidationPolicy(input.ValidationMode, input.MaxValidationAttempts)
 	input.MaxIssueDepth, input.MaxChildrenPerRequest, input.MaxDirectChildren = normalizeDecompositionLimits(input.MaxIssueDepth, input.MaxChildrenPerRequest, input.MaxDirectChildren)
 	input.IssueBudget = normalizeIssueBudget(input.IssueBudget)
@@ -446,7 +453,7 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 		return ConfigView{}, errors.New("API Key 认证需要填写密钥")
 	}
 	now := time.Now()
-	s.config = Config{Configured: true, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, MaxIssueDepth: input.MaxIssueDepth, MaxChildrenPerRequest: input.MaxChildrenPerRequest, MaxDirectChildren: input.MaxDirectChildren, IssueBudget: input.IssueBudget, IssueHeartbeat: input.IssueHeartbeat, UpdatedAt: now}
+	s.config = Config{Configured: true, Language: input.Language, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, MaxIssueDepth: input.MaxIssueDepth, MaxChildrenPerRequest: input.MaxChildrenPerRequest, MaxDirectChildren: input.MaxDirectChildren, IssueBudget: input.IssueBudget, IssueHeartbeat: input.IssueHeartbeat, UpdatedAt: now}
 	if err := s.db.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
 		s.mu.Unlock()
 		return ConfigView{}, err
@@ -465,7 +472,7 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 func configView(c Config) ConfigView {
 	mode, attempts := normalizeValidationPolicy(c.ValidationMode, c.MaxValidationAttempts)
 	depth, perRequest, direct := normalizeDecompositionLimits(c.MaxIssueDepth, c.MaxChildrenPerRequest, c.MaxDirectChildren)
-	return ConfigView{Configured: c.Configured, NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, MaxIssueDepth: depth, MaxChildrenPerRequest: perRequest, MaxDirectChildren: direct, IssueBudget: normalizeIssueBudget(c.IssueBudget), IssueHeartbeat: normalizeIssueHeartbeat(c.IssueHeartbeat), UpdatedAt: c.UpdatedAt}
+	return ConfigView{Configured: c.Configured, Language: fallback(c.Language, "zh"), NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, MaxIssueDepth: depth, MaxChildrenPerRequest: perRequest, MaxDirectChildren: direct, IssueBudget: normalizeIssueBudget(c.IssueBudget), IssueHeartbeat: normalizeIssueHeartbeat(c.IssueHeartbeat), UpdatedAt: c.UpdatedAt}
 }
 
 func normalizeIssueHeartbeat(heartbeat IssueHeartbeatConfig) IssueHeartbeatConfig {
@@ -1003,6 +1010,34 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 		return IssueDetail{}, err
 	}
 	return d, nil
+}
+
+func (s *Store) IssueAgentTimeline(issueID, agentID string) (IssueAgentTimeline, error) {
+	if _, err := s.GetIssue(issueID); err != nil {
+		return IssueAgentTimeline{}, err
+	}
+	var session IssueAgentSession
+	if err := s.db.Where("issue_id = ? AND agent_id = ?", issueID, strings.TrimSpace(agentID)).Order("updated_at desc").First(&session).Error; err != nil {
+		return IssueAgentTimeline{}, errors.New("该 Agent 尚未关联当前 Issue 的 Session")
+	}
+	result := IssueAgentTimeline{Session: session, Executions: []Execution{}, Messages: []Message{}, Events: []ExecutionEvent{}}
+	if err := s.db.Where("issue_id = ? AND session_id = ?", issueID, session.SessionID).Order("started_at asc").Find(&result.Executions).Error; err != nil {
+		return IssueAgentTimeline{}, err
+	}
+	if len(result.Executions) == 0 {
+		return result, nil
+	}
+	ids := make([]string, len(result.Executions))
+	for index := range result.Executions {
+		ids[index] = result.Executions[index].ID
+	}
+	if err := s.db.Where("execution_id IN ?", ids).Order("created_at asc").Find(&result.Messages).Error; err != nil {
+		return IssueAgentTimeline{}, err
+	}
+	if err := s.db.Where("execution_id IN ?", ids).Order("created_at asc").Find(&result.Events).Error; err != nil {
+		return IssueAgentTimeline{}, err
+	}
+	return result, nil
 }
 
 func (s *Store) GetExecutionEvent(id string) (ExecutionEvent, error) {

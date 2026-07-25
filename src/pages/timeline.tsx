@@ -15,7 +15,6 @@ import { toast } from "sonner"
 
 import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -32,8 +31,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
 import {
   Select,
   SelectContent,
@@ -115,23 +114,15 @@ export function TimelinePage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <Card>
-        <CardHeader className="gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-col gap-1">
-            <CardTitle>任务时间线</CardTitle>
-            <CardDescription>
-              观察整个任务树的 Issue、Agent、结果、验收、评论与审批。
-            </CardDescription>
-          </div>
-          <Field className="w-full lg:w-[480px]">
-            <FieldLabel htmlFor="timeline-task">选择任务</FieldLabel>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <div className="w-72 shrink-0">
             <Select
               items={taskItems}
               value={resolvedTaskID || null}
               onValueChange={(value) => setTaskID(value ?? "")}
               disabled={tasks.length === 0}
             >
-              <SelectTrigger id="timeline-task" className="w-full">
+              <SelectTrigger id="timeline-task" className="w-full min-w-0">
                 <SelectValue placeholder="选择一个顶层任务" />
               </SelectTrigger>
               <SelectContent alignItemWithTrigger={false}>
@@ -146,24 +137,14 @@ export function TimelinePage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <FieldDescription>
-              时间线包含所选任务下任意层级的子 Issues。
-            </FieldDescription>
-          </Field>
-        </CardHeader>
-        {visibleTimeline ? (
-          <CardContent className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={visibleTimeline.task.status} />
-            <Badge variant="outline">{visibleTimeline.task.identifier}</Badge>
-            <Badge variant="secondary">
-              {visibleTimeline.issueCount} 个 Issues
-            </Badge>
-            <Badge variant="secondary">
-              {visibleTimeline.events.length} 个关键事件
-            </Badge>
-          </CardContent>
-        ) : null}
-      </Card>
+          </div>
+          <Separator orientation="vertical" className="h-7" />
+          <div className="min-w-0 flex-1 overflow-x-auto py-1">
+            <ToggleGroup value={[filter]} onValueChange={(value) => { if (value[0]) setFilter(value[0] as TimelineFilter) }} variant="outline" size="sm" aria-label="筛选时间线事件">
+              {filters.map((item) => <ToggleGroupItem key={item.value} value={item.value}>{item.label}</ToggleGroupItem>)}
+            </ToggleGroup>
+          </div>
+      </div>
 
       {tasks.length === 0 ? (
         <Card>
@@ -183,24 +164,6 @@ export function TimelinePage() {
         </Card>
       ) : (
         <>
-          <div className="overflow-x-auto pb-1">
-            <ToggleGroup
-              value={[filter]}
-              onValueChange={(value) => {
-                if (value[0]) setFilter(value[0] as TimelineFilter)
-              }}
-              variant="outline"
-              size="sm"
-              aria-label="筛选时间线事件"
-            >
-              {filters.map((item) => (
-                <ToggleGroupItem key={item.value} value={item.value}>
-                  {item.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-
           {!visibleTimeline ? (
             <div className="flex flex-col gap-3">
               {Array.from({ length: 4 }).map((_, index) => (
@@ -295,14 +258,17 @@ function TimelineItem({
   const content = showDetail ? detail : summary
 
   return (
-    <article className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 pb-4">
-      <div className="relative flex justify-center">
+    <article className="grid grid-cols-[92px_minmax(0,1fr)] gap-3 pb-4">
+      <div className="relative flex items-start gap-2">
         {!last ? (
-          <span className="absolute top-8 bottom-0 w-px bg-border" />
+          <span className="absolute top-8 bottom-0 left-4 w-px bg-border" />
         ) : null}
         <span className="relative flex size-8 items-center justify-center rounded-full border bg-background text-muted-foreground">
           <EventIcon kind={event.kind} />
         </span>
+        <time className="pt-1 text-[11px] leading-4 text-muted-foreground">
+          {formatTime(event.createdAt)}
+        </time>
       </div>
       <Card className="py-4">
         <CardHeader className="px-4">
@@ -318,7 +284,6 @@ function TimelineItem({
                 {event.actorName}
               </span>
               <span>{event.issueIdentifier}</span>
-              <span>{formatTime(event.createdAt)}</span>
             </CardDescription>
           </div>
           <CardAction className="flex items-center gap-2">

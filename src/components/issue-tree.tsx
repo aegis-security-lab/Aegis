@@ -41,6 +41,7 @@ interface IssueTreeProps {
   executions?: Execution[]
   rootIds?: string[]
   mode?: "hierarchy" | "dependency"
+  defaultExpansion?: "none" | "roots" | "all"
   className?: string
 }
 
@@ -51,6 +52,7 @@ export function IssueTree({
   executions = [],
   rootIds,
   mode = "hierarchy",
+  defaultExpansion = "roots",
   className,
 }: IssueTreeProps) {
   const issueMap = React.useMemo(
@@ -141,7 +143,15 @@ export function IssueTree({
     [executionMap, visibleIssues]
   )
   const [expanded, setExpanded] = React.useState<Set<string>>(
-    () => new Set(roots.map((issue) => issue.id))
+    () =>
+      new Set(
+        (defaultExpansion === "all"
+          ? issues
+          : defaultExpansion === "roots"
+            ? roots
+            : []
+        ).map((issue) => issue.id)
+      )
   )
   const rows = React.useMemo(() => {
     const items: Array<{

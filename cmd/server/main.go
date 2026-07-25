@@ -260,6 +260,14 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(200, v)
 	})
+	api.GET("/issues/:id/agents/:agentId/timeline", func(c *gin.Context) {
+		result, err := store.IssueAgentTimeline(c.Param("id"), c.Param("agentId"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
 	api.GET("/issues/:id/comments", func(c *gin.Context) {
 		v, err := store.IssueCommentsPage(c.Param("id"), c.Query("before"), detailLimit(c))
 		if err != nil {
@@ -875,17 +883,61 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	api.POST("/issues/:id/chat", func(c *gin.Context) {
 		var in struct {
 			ExecutionID string `json:"executionId"`
+			AgentID     string `json:"agentId"`
 			Message     string `json:"message"`
 		}
 		if !bindJSON(c, &in) {
 			return
 		}
-		v, err := manager.SendChat(c.Param("id"), in.ExecutionID, in.Message)
+		v, err := manager.SendIssueChat(c.Param("id"), in.ExecutionID, in.AgentID, in.Message)
 		if err != nil {
 			writeError(c, 422, err)
 			return
 		}
 		c.JSON(201, v)
+	})
+	api.POST("/issues/:id/chat-with-attachments", func(c *gin.Context) {
+		executionID := strings.TrimSpace(c.PostForm("executionId"))
+		message := strings.TrimSpace(c.PostForm("message"))
+		form, err := c.MultipartForm()
+		if err != nil {
+			writeError(c, 422, err)
+			return
+		}
+		files := form.File["attachments"]
+		if len(files) > 10 {
+			writeError(c, 422, errors.New("每次最多上传 10 个附件"))
+			return
+		}
+		uploaded := make([]control.OperatorAttachment, 0, len(files))
+		for _, header := range files {
+			file, openErr := header.Open()
+			if openErr != nil {
+				writeError(c, 422, openErr)
+				return
+			}
+			item, uploadErr := manager.UploadOperatorAttachment(c.Param("id"), executionID, header.Filename, file, header.Size)
+			file.Close()
+			if uploadErr != nil {
+				writeError(c, 422, uploadErr)
+				return
+			}
+			uploaded = append(uploaded, item)
+		}
+		if len(uploaded) > 0 {
+			var manifest strings.Builder
+			manifest.WriteString("\n\n以下附件已由用户直接上传到你的任务容器，可按容器内绝对路径读取：\n")
+			for _, item := range uploaded {
+				fmt.Fprintf(&manifest, "- %s: %s (%d bytes)\n", item.Name, item.Path, item.Size)
+			}
+			message += manifest.String()
+		}
+		v, sendErr := manager.SendChat(c.Param("id"), executionID, message)
+		if sendErr != nil {
+			writeError(c, 422, sendErr)
+			return
+		}
+		c.JSON(201, gin.H{"message": v, "attachments": uploaded})
 	})
 	api.POST("/executions/:id/stop", func(c *gin.Context) {
 		if err := manager.StopExecution(c.Param("id")); err != nil {

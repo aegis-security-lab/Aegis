@@ -1,12 +1,9 @@
 import * as React from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { Bot, UserRound } from "lucide-react"
-
 import { MarkdownContent } from "@/components/markdown-content"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
-import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
+import { Message, MessageContent } from "@/components/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -14,7 +11,6 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { Spinner } from "@/components/ui/spinner"
-import { formatTime } from "@/lib/format"
 import type { Message as ChatMessage } from "@/types"
 
 export function ConciergeConversationView({
@@ -37,7 +33,7 @@ export function ConciergeConversationView({
     estimateSize: (index) => {
       if (hasMore && index === 0) return 56
       const message = messages[index - (hasMore ? 1 : 0)]
-      return Math.min(720, 92 + Math.ceil((message?.content.length ?? 0) / 5))
+      return Math.min(720, 64 + Math.ceil((message?.content.length ?? 0) / 5))
     },
     getItemKey: (index) => {
       if (hasMore && index === 0) return "load-more-concierge-messages"
@@ -55,7 +51,7 @@ export function ConciergeConversationView({
       <MessageScroller className="h-full min-h-0">
         <MessageScrollerViewport ref={viewportRef} className="h-full">
           <div
-            className="relative mx-auto w-full max-w-3xl"
+            className="relative mx-auto w-full max-w-4xl"
             style={{ height: virtualizer.getTotalSize() + 48 }}
           >
             {virtualizer.getVirtualItems().map((virtualItem) => {
@@ -65,7 +61,7 @@ export function ConciergeConversationView({
                   key={virtualItem.key}
                   ref={virtualizer.measureElement}
                   data-index={virtualItem.index}
-                  className="absolute top-0 left-0 w-full px-5 pb-6"
+                  className="absolute top-0 left-0 w-full px-5 pb-3 sm:px-8"
                   style={{
                     transform: `translateY(${virtualItem.start + 24}px)`,
                   }}
@@ -103,27 +99,21 @@ function ConversationMessage({ message }: { message: ChatMessage }) {
   const assistant = message.role === "assistant"
   return (
     <Message align={assistant ? "start" : "end"}>
-      <MessageAvatar>
-        <Avatar className="size-8">
-          <AvatarFallback>{assistant ? <Bot /> : <UserRound />}</AvatarFallback>
-        </Avatar>
-      </MessageAvatar>
       <MessageContent>
-        <Bubble variant={assistant ? "ghost" : "secondary"}>
-          <BubbleContent>
-            {assistant ? (
-              <MarkdownContent>
-                {message.content || "正在思考…"}
-              </MarkdownContent>
-            ) : (
-              <p className="whitespace-pre-wrap">{message.content}</p>
-            )}
-          </BubbleContent>
-        </Bubble>
-        <span className="px-1 text-xs text-muted-foreground">
-          {assistant ? "Aegis 管家" : "你"} · {formatTime(message.createdAt)}
-          {message.streaming ? " · 回复中" : ""}
-        </span>
+        {assistant ? (
+          <>
+            <MarkdownContent className="text-[13px] !leading-5 [&>*+*]:!mt-2">
+              {message.content || "正在思考…"}
+            </MarkdownContent>
+            {message.streaming ? <span className="text-xs text-muted-foreground">正在生成…</span> : null}
+          </>
+        ) : (
+          <Bubble variant="secondary" align="end">
+            <BubbleContent className="text-[13px] leading-5">
+              <MarkdownContent className="!leading-5 [&>*+*]:!mt-2">{message.content}</MarkdownContent>
+            </BubbleContent>
+          </Bubble>
+        )}
       </MessageContent>
     </Message>
   )

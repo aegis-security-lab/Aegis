@@ -68,6 +68,7 @@ export function SetupPage() {
   const [busy, setBusy] = React.useState<"probe" | "test" | "save" | null>(null)
   const [accepted, setAccepted] = React.useState(false)
   const [form, setForm] = React.useState<SaveConfigInput>(() => ({
+    language: "zh",
     nodePath: state?.runtime.nodePath ?? "",
     piPath: state?.runtime.piPath ?? "",
     provider: "anthropic",

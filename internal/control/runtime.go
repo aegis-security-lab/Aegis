@@ -297,12 +297,13 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 		return nil, errors.New("Agent 关联的知识库不存在")
 	}
 	systemPrompt := agentKnowledgeSystemPrompt(agent.SystemPrompt, knowledgeBases)
+	systemPrompt = agentLanguageSystemPrompt(systemPrompt, cfg.Language)
 	systemPrompt = agentToolDescriptionSystemPrompt(systemPrompt)
 	if e.Kind != "validation" && e.Kind != "concierge" {
 		systemPrompt = agentProgressSystemPrompt(systemPrompt)
 		systemPrompt = agentBroadcastSystemPrompt(systemPrompt)
 	}
-	if e.Kind != "concierge" {
+	if e.Kind != "concierge" && e.Kind != "chat" {
 		if taskContainer != nil && issue.Workspace != "" {
 			prompt = strings.ReplaceAll(prompt, issue.Workspace, runtimeWorkspace)
 		}
@@ -310,7 +311,7 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 	}
 	var priorSessionExecutions int64
 	_ = m.store.db.Model(&Execution{}).Where("session_id = ? AND id <> ?", e.SessionID, e.ID).Count(&priorSessionExecutions).Error
-	if e.InitialPrompt == "" && e.Kind != "concierge" && priorSessionExecutions == 0 {
+	if e.InitialPrompt == "" && e.Kind != "concierge" && e.Kind != "chat" && priorSessionExecutions == 0 {
 		prompt = agentMemoInitialPrompt(prompt, agent.Memo)
 	}
 	runtimePrompt := prompt
@@ -444,6 +445,13 @@ func (m *Manager) startSession(issue Issue, e Execution, agent AgentDefinition, 
 		return nil, err
 	}
 	return s, nil
+}
+
+func agentLanguageSystemPrompt(systemPrompt, language string) string {
+	if language == "en" {
+		return systemPrompt + "\n\nUnless the user explicitly requests another language, use English for all user-facing text and reports."
+	}
+	return systemPrompt + "\n\n除非用户明确要求其他语言，所有面向用户的文本、分析结论和报告均使用中文。"
 }
 
 func (m *Manager) closePreviousRuntimeForSession(sessionID, executionID string) {
@@ -938,6 +946,12 @@ func (m *Manager) handleSettled(s *PiSession) {
 	now := time.Now()
 	if responseError := s.takeResponseError(); responseError != "" {
 		result = m.persistAssistantError(s, responseError)
+		if s.kind == "chat" {
+			_ = m.store.updateExecution(s.executionID, map[string]any{"status": "failed", "result": result, "error": m.visibleModelError(responseError), "current_tool": "", "finished_at": now, "pid": 0})
+			m.closeRuntime(s.executionID)
+			m.store.notify()
+			return
+		}
 		if s.kind == "concierge" {
 			_ = m.store.updateExecution(s.executionID, map[string]any{
 				"status": "idle", "result": result, "error": m.visibleModelError(responseError),
@@ -972,6 +986,12 @@ func (m *Manager) handleSettled(s *PiSession) {
 	}
 	if s.kind == "validation" {
 		m.handleValidationSettled(issue, s, result)
+		return
+	}
+	if s.kind == "chat" {
+		_ = m.store.updateExecution(s.executionID, map[string]any{"status": "completed", "result": result, "error": "", "current_tool": "", "finished_at": now, "pid": 0})
+		m.closeRuntime(s.executionID)
+		m.store.notify()
 		return
 	}
 	// AbandonRequestedAt is historical state for an Issue that was previously
@@ -2474,6 +2494,51 @@ func (m *Manager) SendChat(issueID, executionID, message string) (Message, error
 		return Message{}, errors.New("该 Issue 当前没有连接中的 Pi session")
 	}
 	return m.sendSessionPrompt(s, message)
+}
+
+// SendIssueChat sends an operator message to an Issue Agent without creating an
+// Issue comment. When no live runtime exists, it starts a chat-only execution
+// that reuses the durable Issue/Agent Pi session. Chat-only completion is kept
+// in the conversation timeline and never published back as an Issue comment.
+func (m *Manager) SendIssueChat(issueID, executionID, agentID, message string) (Message, error) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return Message{}, errors.New("消息不能为空")
+	}
+	if executionID != "" {
+		return m.SendChat(issueID, executionID, message)
+	}
+	issue, err := m.store.GetIssue(issueID)
+	if err != nil {
+		return Message{}, err
+	}
+	agentID = fallback(strings.TrimSpace(agentID), issue.AssigneeAgentID)
+	if agentID == "" {
+		return Message{}, errors.New("该 Issue 没有关联 Agent")
+	}
+	agent, err := m.store.executionAgent(agentID)
+	if err != nil {
+		return Message{}, err
+	}
+	var execution Execution
+	err = m.store.db.Where("issue_id = ? AND agent_id = ? AND kind = ? AND status IN ?", issue.ID, agent.ID, "chat", activeExecutionStatuses).
+		Order("started_at desc").First(&execution).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		execution, err = m.store.createExecution(issue, agent.ID, "chat")
+	}
+	if err != nil {
+		return Message{}, err
+	}
+	if session := m.getSession(execution.ID); session != nil && !session.closed.Load() {
+		return m.sendSessionPrompt(session, message)
+	}
+	if _, err = m.startSession(issue, execution, agent, message); err != nil {
+		_ = m.store.updateExecution(execution.ID, map[string]any{"status": "failed", "error": err.Error(), "finished_at": time.Now(), "pid": 0})
+		return Message{}, err
+	}
+	var sent Message
+	err = m.store.db.Where("execution_id = ? AND role = ?", execution.ID, "user").Order("created_at desc, id desc").First(&sent).Error
+	return sent, err
 }
 
 func (m *Manager) CreateConciergeConversation() (ConciergeConversation, error) {
