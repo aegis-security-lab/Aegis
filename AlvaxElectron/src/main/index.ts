@@ -15,6 +15,7 @@ import { PreviewManager } from './website-builder/preview-manager';
 import { WebsiteBuilderService } from './website-builder/service';
 import { AppLogger } from './logging/app-logger';
 import { AiRuntimeConfigManager, readExistingPiApiKey } from './website-builder/ai-runtime-config';
+import { BrowserResearchManager } from './website-builder/browser-research-manager';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -100,6 +101,7 @@ void app.whenReady().then(async () => {
     new PreviewManager(),
     broadcastWebsiteEvent,
     aiRuntimeConfig,
+    new BrowserResearchManager(),
     (scope, error, context) => logger.error(scope, error, context),
   );
   registerIpcHandlers({

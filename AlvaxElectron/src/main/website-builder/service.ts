@@ -26,6 +26,7 @@ import type { PiRpcRuntime } from './pi-rpc-runtime';
 import type { PreviewManager } from './preview-manager';
 import { runCommand } from './process-utils';
 import type { AiRuntimeConfigManager } from './ai-runtime-config';
+import type { BrowserResearchManager } from './browser-research-manager';
 
 type EventSink = (event: WebsiteBuilderEvent) => void;
 
@@ -44,6 +45,7 @@ export class WebsiteBuilderService {
     private readonly previews: PreviewManager,
     private readonly emit: EventSink,
     private readonly aiConfig: AiRuntimeConfigManager,
+    private readonly browserResearch: BrowserResearchManager,
     private readonly logError: (scope: string, error: unknown, context?: unknown) => string = () => '',
   ) {}
 
@@ -264,6 +266,7 @@ export class WebsiteBuilderService {
   shutdown(): void {
     this.pi.shutdown();
     this.previews.shutdown();
+    this.browserResearch.shutdown();
   }
 
   private async handlePiEvent(projectId: string, event: Record<string, unknown>): Promise<void> {
@@ -307,6 +310,9 @@ export class WebsiteBuilderService {
       this.activeTools.set(projectId, tools);
       await this.store.patch(projectId, (draft) => { draft.messages.push(message); });
       this.notify(projectId, 'agent');
+      if (toolName === 'alvax_browser_inspect') {
+        void this.runBrowserInspection(projectId, toolCallId, event.args);
+      }
     } else if (event.type === 'tool_execution_end') {
       const toolCallId = String(event.toolCallId ?? '');
       const messageId = this.activeTools.get(projectId)?.get(toolCallId);
@@ -363,6 +369,20 @@ export class WebsiteBuilderService {
       await this.failGeneration(projectId, event.message);
     } else if (event.type === 'runtime_stderr') {
       this.logError('Pi stderr', event.message, { projectId });
+    }
+  }
+
+  private async runBrowserInspection(projectId: string, toolCallId: string, args: unknown): Promise<void> {
+    const directory = path.join(this.store.workspacePath(projectId), '.alvax', 'browser');
+    const responsePath = path.join(directory, `${toolCallId}.response.json`);
+    await mkdir(directory, { recursive: true });
+    try {
+      const url = String((args as { url?: unknown } | undefined)?.url ?? '');
+      const result = await this.browserResearch.inspect(url, directory);
+      await writeFile(responsePath, JSON.stringify(result), 'utf8');
+    } catch (error) {
+      this.logError('Browser inspection', error, { projectId, toolCallId });
+      await writeFile(responsePath, JSON.stringify({ error: toMessage(error) }), 'utf8');
     }
   }
 
@@ -427,6 +447,7 @@ export class WebsiteBuilderService {
       }, runtimeEnvironment({
         ...this.aiConfig.environment(config),
         ALVAX_CONFIRMATION_DIR: path.join(workspace, '.alvax', 'confirmations'),
+        ALVAX_BROWSER_BRIDGE_DIR: path.join(workspace, '.alvax', 'browser'),
       }, runtime.nodePath), systemPrompt);
     } catch (error) {
       await this.failGeneration(projectId, error);
@@ -519,7 +540,7 @@ function buildAgentPrompt(snapshot: WebsiteBuilderSnapshot, message: string): st
   const brief = snapshot.project.brief;
   const isInitialTask = isInitialWebsiteBriefMessage(message);
   const workflow = isInitialTask && brief.mode === 'reference'
-    ? '当前必须严格执行“现有网站专业升级”流程：\n1. 深入研究用户现有网站。\n2. 调用 alvax_key_info(type=analysis) 提交专业诊断。\n3. 调研 3–5 个同品类竞品网站，并调用 alvax_key_info(type=competitor_research) 提交竞品对比。\n4. 综合诊断和竞品洞察，调用 alvax_key_info(type=suggestion) 提交可执行的优化与改版方案。\n5. 调用 alvax_request_confirmation，请用户确认该方案；确认前严禁修改源码。\n6. 用户确认后，基于原网站的业务、品牌与内容生成专业升级版本。\n7. 完成验收准备后调用最终交付报告。每个阶段必须按顺序执行，不得合并或跳过。'
+    ? '当前必须严格执行“现有网站专业升级”流程：\n1. 调用 alvax_browser_inspect 打开用户网站，基于 React/Vue 等脚本执行后的真实页面研究现有网站；禁止用 curl 结果代替浏览器检查。\n2. 调用 alvax_key_info(type=analysis) 提交专业诊断。\n3. 使用 alvax_browser_inspect 调研 3–5 个同品类竞品网站，并调用 alvax_key_info(type=competitor_research) 提交竞品对比。\n4. 综合诊断和竞品洞察，调用 alvax_key_info(type=suggestion) 提交可执行的优化与改版方案。\n5. 调用 alvax_request_confirmation，请用户确认该方案；确认前严禁修改源码。\n6. 用户确认后，基于原网站的业务、品牌与内容生成专业升级版本。\n7. 完成验收准备后调用最终交付报告。每个阶段必须按顺序执行，不得合并或跳过。'
     : isInitialTask
       ? '这是项目首次任务：分析行业、产品、受众与页面要求 → 调用 AI 分析 → 直接生成或修改本地页面 → 调用最终交付报告。'
       : '这是项目创建后的后续迭代。直接理解用户本轮反馈，检查现有源码并完成针对性修改，然后调用最终交付报告。严禁重复执行首次任务的专业诊断、竞品调研、升级方案或用户确认；除非用户本轮明确要求重新进行完整策略分析或竞品研究。';
@@ -583,6 +604,7 @@ function formatToolStart(name: string, args: unknown, toolCallId: string): strin
     return `${ALVAX_CONFIRMATION_PREFIX}${JSON.stringify({ ...(args as object ?? {}), toolCallId })}`;
   }
   const labels: Record<string, string> = {
+    alvax_browser_inspect: '工具 · 内置浏览器检查网页',
     bash: '工具 · 执行命令',
     read: '工具 · 读取文件',
     write: '工具 · 写入文件',
@@ -591,7 +613,7 @@ function formatToolStart(name: string, args: unknown, toolCallId: string): strin
   let detail = '';
   if (args && typeof args === 'object') {
     const value = args as Record<string, unknown>;
-    detail = String(value.path ?? value.file_path ?? value.command ?? value.cmd ?? '');
+    detail = String(value.url ?? value.path ?? value.file_path ?? value.command ?? value.cmd ?? '');
   }
   const compact = detail.replace(/\s+/g, ' ').trim().slice(0, 120);
   return `${labels[name] ?? `工具 · 调用 ${name}`}${compact ? ` · ${compact}` : ''}`;

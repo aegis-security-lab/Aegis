@@ -40,6 +40,7 @@ describe('website starter bundled skills', () => {
     const extensionPath = '.pi/extensions/alvax-tools.ts';
     await expect(readFile(path.join(workspace, extensionPath), 'utf8')).resolves.toContain("name: 'alvax_key_info'");
     await expect(readFile(path.join(workspace, extensionPath), 'utf8')).resolves.toContain("Type.Literal('competitor_research')");
+    await expect(readFile(path.join(workspace, extensionPath), 'utf8')).resolves.toContain("name: 'alvax_browser_inspect'");
     expect(artifacts.some((artifact) => artifact.path === extensionPath)).toBe(true);
   });
 
@@ -61,5 +62,9 @@ describe('website starter bundled skills', () => {
       path.join(workspace, '.pi/extensions/alvax-tools.ts'),
       'utf8',
     )).resolves.toContain("name: 'alvax_request_confirmation'");
+    await expect(readFile(
+      path.join(workspace, '.pi/extensions/alvax-tools.ts'),
+      'utf8',
+    )).resolves.toContain("name: 'alvax_browser_inspect'");
   });
 });
