@@ -1,4 +1,5 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
+import path from 'node:path';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerRpm } from '@electron-forge/maker-rpm';
@@ -12,7 +13,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     extraResource: ['.runtime'],
-    icon: 'assets/icons/alvax-studio',
+    icon: path.resolve('assets/icons/alvax-studio.icns'),
     appBundleId: 'com.yuanfen.alvax-studio',
     appCategoryType: 'public.app-category.developer-tools',
   },

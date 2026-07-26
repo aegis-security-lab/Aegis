@@ -90,9 +90,20 @@ export const WebsiteBuilderSnapshotSchema = z.object({
 });
 export type WebsiteBuilderSnapshot = z.infer<typeof WebsiteBuilderSnapshotSchema>;
 
+export const WebsiteUrlSchema = z.url('请输入有效的网站 URL。').max(2_000)
+  .refine((value) => {
+    try {
+      const parsed = new URL(value);
+      return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+        && (parsed.hostname === 'localhost' || parsed.hostname.includes('.'));
+    } catch {
+      return false;
+    }
+  }, '请输入以 http:// 或 https:// 开头的完整网站地址，例如 https://example.com。');
+
 export const CreateWebsiteProjectInputSchema = z.object({
   mode: z.literal('reference'),
-  referenceUrl: z.url('请输入有效的网站 URL。').max(2_000),
+  referenceUrl: WebsiteUrlSchema,
   referenceRequest: z.string().trim().min(1, '请描述希望重点升级的内容。').max(4_000),
 });
 export type CreateWebsiteProjectInput = z.infer<typeof CreateWebsiteProjectInputSchema>;

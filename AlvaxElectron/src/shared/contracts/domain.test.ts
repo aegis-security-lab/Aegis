@@ -43,6 +43,12 @@ describe('shared contracts', () => {
     expect(CreateWebsiteProjectInputSchema.safeParse({
       mode: 'reference', referenceUrl: 'playbook.com', referenceRequest: '',
     }).success).toBe(false);
+    expect(CreateWebsiteProjectInputSchema.safeParse({
+      mode: 'reference', referenceUrl: 'ftp://example.com', referenceRequest: '升级首页',
+    }).success).toBe(false);
+    expect(CreateWebsiteProjectInputSchema.safeParse({
+      mode: 'reference', referenceUrl: 'https://not-a-domain', referenceRequest: '升级首页',
+    }).success).toBe(false);
   });
 
   it('rejects blank website chat messages', () => {

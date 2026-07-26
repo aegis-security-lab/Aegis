@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
@@ -32,7 +32,7 @@ import type { ApiResult } from '../shared/contracts/api';
 import type {
   ChatMessage, CreateWebsiteProjectInput, WebsiteBuilderSnapshot, WebsiteProject,
 } from '../shared/contracts/website-builder';
-import { WEBSITE_BRIEF_MESSAGE_PREFIX } from '../shared/contracts/website-builder';
+import { WEBSITE_BRIEF_MESSAGE_PREFIX, WebsiteUrlSchema } from '../shared/contracts/website-builder';
 import { ALVAX_CONFIRMATION_PREFIX, ALVAX_KEY_INFO_PREFIX } from '../shared/contracts/website-builder';
 import alvaxStudioIcon from '../../assets/icons/alvax-studio.png';
 
@@ -518,7 +518,22 @@ function EmptyWorkspace({ onCreate }: { onCreate(): void }) { return <div classN
 function NewProjectDialog({ open, onOpenChange, onCreate, busy }: { open: boolean; onOpenChange(value: boolean): void; onCreate(brief: CreateWebsiteProjectInput): void; busy: boolean }) {
   const [referenceUrl, setReferenceUrl] = useState('');
   const [referenceRequest, setReferenceRequest] = useState('');
-  const valid = /^https?:\/\/\S+$/i.test(referenceUrl.trim()) && Boolean(referenceRequest.trim());
-  const submit = () => onCreate({ mode: 'reference', referenceUrl: referenceUrl.trim(), referenceRequest: referenceRequest.trim() });
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-xl"><DialogHeader className="sr-only"><DialogTitle>网站升级设置</DialogTitle></DialogHeader><FieldGroup><Field><FieldLabel htmlFor="website-url">现有网站 URL</FieldLabel><Input id="website-url" type="url" value={referenceUrl} onChange={(event) => setReferenceUrl(event.target.value)} placeholder="https://www.yourwebsite.com"/><FieldDescription>AI 将深入理解你当前的网站、业务定位、品牌内容和转化路径。</FieldDescription></Field><Field><FieldLabel htmlFor="upgrade-request">这次最希望改善什么？</FieldLabel><Textarea id="upgrade-request" value={referenceRequest} onChange={(event) => setReferenceRequest(event.target.value)} placeholder="例如：品牌看起来不够专业，首页信息层级混乱，希望提升视觉质感、产品表达和咨询转化率。" rows={5}/><FieldDescription>可以描述当前问题、业务目标、希望保留的内容，或对新版本的期待。</FieldDescription></Field></FieldGroup><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>暂不升级</Button><Button disabled={!valid || busy} onClick={submit}>{busy ? <Spinner/> : <Sparkles/>}开始专业诊断</Button></DialogFooter></DialogContent></Dialog>;
+  const [urlTouched, setUrlTouched] = useState(false);
+  const urlValid = WebsiteUrlSchema.safeParse(referenceUrl.trim()).success;
+  const urlInvalid = urlTouched && !urlValid;
+  const normalizeUrl = () => {
+    const value = referenceUrl.trim();
+    if (value && !/^[a-z][a-z\d+.-]*:\/\//i.test(value)) {
+      const candidate = `https://${value}`;
+      if (WebsiteUrlSchema.safeParse(candidate).success) setReferenceUrl(candidate);
+    }
+    setUrlTouched(true);
+  };
+  const submit = () => {
+    setUrlTouched(true);
+    const result = WebsiteUrlSchema.safeParse(referenceUrl.trim());
+    if (!result.success || !referenceRequest.trim()) return;
+    onCreate({ mode: 'reference', referenceUrl: result.data, referenceRequest: referenceRequest.trim() });
+  };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-xl"><DialogHeader className="sr-only"><DialogTitle>网站升级设置</DialogTitle></DialogHeader><FieldGroup><Field data-invalid={urlInvalid || undefined}><FieldLabel htmlFor="website-url">现有网站 URL</FieldLabel><Input id="website-url" type="url" value={referenceUrl} onChange={(event) => { setReferenceUrl(event.target.value); if (urlTouched) setUrlTouched(false); }} onBlur={normalizeUrl} placeholder="https://example.com" aria-invalid={urlInvalid}/>{urlInvalid ? <FieldError>请输入以 http:// 或 https:// 开头的完整网站地址，例如 https://example.com。</FieldError> : <FieldDescription>地址必须包含 http:// 或 https:// 前缀；输入 example.com 后失焦会自动补全 https://。</FieldDescription>}</Field><Field><FieldLabel htmlFor="upgrade-request">这次最希望改善什么？</FieldLabel><Textarea id="upgrade-request" value={referenceRequest} onChange={(event) => setReferenceRequest(event.target.value)} placeholder="例如：品牌看起来不够专业，首页信息层级混乱，希望提升视觉质感、产品表达和咨询转化率。" rows={5}/><FieldDescription>可以描述当前问题、业务目标、希望保留的内容，或对新版本的期待。</FieldDescription></Field></FieldGroup><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>暂不升级</Button><Button disabled={!referenceRequest.trim() || busy} onClick={submit}>{busy ? <Spinner/> : <Sparkles/>}开始专业诊断</Button></DialogFooter></DialogContent></Dialog>;
 }
