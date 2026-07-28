@@ -65,10 +65,6 @@ func compactExecutionEvent(event ExecutionEvent) ExecutionEvent {
 		copyKeys("stage", "summary", "currentActivity")
 	case "aegis_get_issue_progress":
 		copyKeys("sessionId", "mode", "progressLimit", "messageLimit")
-	case "aegis_broadcast":
-		copyKeys("subject", "message", "importance")
-	case "aegis_list_broadcasts":
-		copyKeys("limit")
 	case "aegis_uncover_search":
 		copyKeys("engine", "query", "limit", "format", "field", "timeout")
 	case "grep":

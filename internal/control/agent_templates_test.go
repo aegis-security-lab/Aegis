@@ -13,8 +13,8 @@ import (
 func TestExistingAgentsSeedTalentTemplates(t *testing.T) {
 	store := configuredStore(t)
 	templates := store.AgentTemplates()
-	if len(templates) < len(store.Agents()) {
-		t.Fatalf("templates=%d agents=%d", len(templates), len(store.Agents()))
+	if len(templates) == 0 {
+		t.Fatal("no talent templates were seeded")
 	}
 	for _, agent := range store.Agents() {
 		if agent.TemplateID == "" {
@@ -39,7 +39,7 @@ func TestDevelopmentLeadIsSeededWithPlanningResponsibilities(t *testing.T) {
 	if !agent.Builtin || !agent.Enabled || agent.Category != "development" {
 		t.Fatalf("unexpected development lead definition: %+v", agent)
 	}
-	for _, expected := range []string{"market", "development plan", "aegis_create_subissues", "backend-engineer", "frontend-engineer", "aegis_report_progress"} {
+	for _, expected := range []string{"market", "development plan", "aegis_create_subissues", "backend engineer", "frontend engineer", "aegis_report_progress", "specific available person"} {
 		if !strings.Contains(strings.ToLower(agent.SystemPrompt), strings.ToLower(expected)) {
 			t.Fatalf("development lead prompt missing %q", expected)
 		}

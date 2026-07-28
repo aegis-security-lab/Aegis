@@ -96,6 +96,12 @@ export function SetupPage() {
     issueHeartbeat: {
       intervalSeconds: 60,
     },
+    webSearch: {
+      engine: "tavily",
+      baseUrl: "https://api.tavily.com/search",
+      apiKey: "",
+      enabled: false,
+    },
   }))
 
   const update = <K extends keyof SaveConfigInput>(

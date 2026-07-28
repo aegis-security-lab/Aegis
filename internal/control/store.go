@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,6 +121,92 @@ func migrateTasks(db *gorm.DB) error {
 	})
 }
 
+func migrateTaskContainers(db *gorm.DB) error {
+	var tasks []Task
+	var issues []Issue
+	var containers []ContainerInstance
+	if err := db.Find(&tasks).Error; err != nil {
+		return err
+	}
+	if err := db.Select("id", "parent_id", "task_source_id", "container_profile_id", "container_id").Find(&issues).Error; err != nil {
+		return err
+	}
+	if err := db.Find(&containers).Error; err != nil {
+		return err
+	}
+	var defaultProfile ContainerProfile
+	if err := db.Where("enabled = ?", true).
+		Order("case when lower(name) = 'default' then 0 else 1 end").
+		Order("created_at asc").First(&defaultProfile).Error; err != nil {
+		return errors.New("没有可用的 Docker 容器配置，无法迁移任务容器")
+	}
+	containerByTask := make(map[string]ContainerInstance, len(containers))
+	for _, container := range containers {
+		containerByTask[container.TaskID] = container
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, task := range tasks {
+			profileID := strings.TrimSpace(task.ContainerProfileID)
+			if profileID == "" {
+				profileID = defaultProfile.ID
+			}
+			container, exists := containerByTask[task.ID]
+			if !exists {
+				var profile ContainerProfile
+				if err := tx.First(&profile, "id = ?", profileID).Error; err != nil || !profile.Enabled {
+					profile = defaultProfile
+					profileID = profile.ID
+				}
+				now := time.Now()
+				container = ContainerInstance{
+					ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: task.ID,
+					Image: profile.Image, NodePath: profile.NodePath, PiPath: profile.PiPath,
+					WorkspacePath: profile.WorkspacePath, NetworkMode: profile.NetworkMode,
+					MemoryMB: profile.MemoryMB, CPUs: profile.CPUs, CreatedAt: now, UpdatedAt: now,
+				}
+				container.Name = taskContainerName(container.ID)
+				if err := tx.Create(&container).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Model(&Task{}).Where("id = ?", task.ID).Updates(map[string]any{
+				"container_profile_id": container.ContainerProfileID,
+				"container_id":         container.ID,
+			}).Error; err != nil {
+				return err
+			}
+			bound := make(map[string]bool)
+			for _, issue := range issues {
+				if issue.TaskSourceID == task.ID {
+					bound[issue.ID] = true
+				}
+			}
+			for changed := true; changed; {
+				changed = false
+				for _, issue := range issues {
+					if issue.ParentID != "" && bound[issue.ParentID] && !bound[issue.ID] {
+						bound[issue.ID] = true
+						changed = true
+					}
+				}
+			}
+			ids := make([]string, 0, len(bound))
+			for id := range bound {
+				ids = append(ids, id)
+			}
+			if len(ids) > 0 {
+				if err := tx.Model(&Issue{}).Where("id IN ?", ids).Updates(map[string]any{
+					"container_profile_id": container.ContainerProfileID,
+					"container_id":         container.ID,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
 func NewStore(dataDir string) (*Store, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return nil, errors.New("data directory is required")
@@ -158,20 +245,62 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := db.Exec("DROP INDEX IF EXISTS idx_executions_session_id").Error; err != nil {
 		return nil, fmt.Errorf("migrate reusable execution sessions: %w", err)
 	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &AgentTemplate{}, &Department{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{}, &Task{}, &Issue{}, &ConciergeConversation{}, &IssueRelation{}, &IssueAgentSession{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &TaskBroadcast{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &Finding{}); err != nil {
+	if err := db.Exec("DROP INDEX IF EXISTS idx_employee_sessions_agent_id").Error; err != nil {
+		return nil, fmt.Errorf("migrate task-scoped employee sessions: %w", err)
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS idx_employee_task_session").Error; err != nil {
+		return nil, fmt.Errorf("migrate Issue-scoped employee sessions: %w", err)
+	}
+	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &AgentTemplate{}, &Department{}, &Position{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{}, &Task{}, &Issue{}, &ConciergeConversation{}, &IssueRelation{}, &EmployeeSession{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{}); err != nil {
 		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
+	}
+	if db.Migrator().HasColumn("employee_sessions", "task_issue_id") {
+		if err := db.Exec("UPDATE employee_sessions SET issue_id = task_issue_id WHERE (issue_id IS NULL OR issue_id = '') AND task_issue_id <> ''").Error; err != nil {
+			return nil, fmt.Errorf("carry forward legacy employee Session scope: %w", err)
+		}
+	}
+	if err := db.Model(&EmployeeSession{}).Where("issue_id IS NULL").Update("issue_id", "").Error; err != nil {
+		return nil, fmt.Errorf("normalize employee session Issue scope: %w", err)
+	}
+	// Older releases created blocks edges between sibling Issues and from each
+	// child to its parent. Hierarchy plus IssueChildWait now owns coordination.
+	if err := db.Exec(`DELETE FROM issue_relations
+		WHERE EXISTS (
+			SELECT 1 FROM issues blocker, issues blocked
+			WHERE blocker.id = issue_relations.issue_id
+			  AND blocked.id = issue_relations.related_issue_id
+			  AND (blocker.parent_id = blocked.id
+			    OR blocked.parent_id = blocker.id
+			    OR (blocker.parent_id <> '' AND blocker.parent_id = blocked.parent_id))
+		)`).Error; err != nil {
+		return nil, fmt.Errorf("remove legacy child Issue dependencies: %w", err)
+	}
+	var containerProfileCount int64
+	if err := db.Model(&ContainerProfile{}).Count(&containerProfileCount).Error; err != nil {
+		return nil, fmt.Errorf("inspect default container profile: %w", err)
+	}
+	if containerProfileCount == 0 {
+		now := time.Now()
+		profile := ContainerProfile{
+			ID: "container-profile-default", Name: "default", Description: "Aegis 默认 Docker 隔离环境",
+			Image: WorkerContainerImage, NodePath: "node", PiPath: "/usr/local/bin/pi", WorkspacePath: "/workspace",
+			NetworkMode: "bridge", Enabled: true, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := db.Create(&profile).Error; err != nil {
+			return nil, fmt.Errorf("create default container profile: %w", err)
+		}
+	}
+	if err := migrateLegacyUserPromptContext(db); err != nil {
+		return nil, fmt.Errorf("migrate legacy user prompt context: %w", err)
 	}
 	if err := db.Model(&IssueComment{}).Where("type = '' OR type IS NULL").Update("type", "normal").Error; err != nil {
 		return nil, fmt.Errorf("migrate Issue comment types: %w", err)
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_agent_session_current ON issue_agent_sessions(issue_id, agent_id) WHERE status = 'active'").Error; err != nil {
-		return nil, fmt.Errorf("create current Issue-Agent session constraint: %w", err)
-	}
-	if err := migrateIssueAgentSessions(db); err != nil {
-		return nil, fmt.Errorf("migrate Issue-Agent sessions: %w", err)
-	}
 	if err := migrateTasks(db); err != nil {
 		return nil, fmt.Errorf("migrate reusable Tasks: %w", err)
+	}
+	if err := migrateTaskContainers(db); err != nil {
+		return nil, fmt.Errorf("migrate one container per Task: %w", err)
 	}
 	if err := db.Where("status = ? AND type = ?", "pending", "tool_call").Delete(&Approval{}).Error; err != nil {
 		return nil, fmt.Errorf("remove invalid approvals: %w", err)
@@ -199,8 +328,18 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := s.seedAgentTemplates(time.Now()); err != nil {
 		return nil, fmt.Errorf("seed Agent templates: %w", err)
 	}
+	if err := s.seedPositionsAndEmployeeIdentity(time.Now()); err != nil {
+		return nil, fmt.Errorf("seed positions and employee identities: %w", err)
+	}
 	if err := s.seedProject(); err != nil {
 		return nil, err
+	}
+	for _, agent := range s.agents {
+		if isEmployeeAgent(agent) {
+			if _, err := s.ensureEmployeeWorkspace(agent); err != nil {
+				return nil, fmt.Errorf("initialize employee session %s: %w", agent.ID, err)
+			}
+		}
 	}
 	now := time.Now()
 	if err := db.Transaction(func(tx *gorm.DB) error {
@@ -347,6 +486,52 @@ func NewStore(dataDir string) (*Store, error) {
 	return s, nil
 }
 
+func stripLegacyUserPromptContext(content string) string {
+	cut := len(content)
+	for _, marker := range []string{
+		"\n\n## Organization delegation boundary\n",
+		"\n\n<organization_delegation_boundary>",
+		"\n\n<agent_permission_boundary>",
+		"\n\n<agent_memo>",
+	} {
+		if index := strings.Index(content, marker); index >= 0 && index < cut {
+			cut = index
+		}
+	}
+	if cut == len(content) {
+		return content
+	}
+	return strings.TrimSpace(content[:cut])
+}
+
+func migrateLegacyUserPromptContext(db *gorm.DB) error {
+	var messages []Message
+	if err := db.Where("role = ?", "user").Find(&messages).Error; err != nil {
+		return err
+	}
+	for _, message := range messages {
+		cleaned := stripLegacyUserPromptContext(message.Content)
+		if cleaned != message.Content {
+			if err := db.Model(&Message{}).Where("id = ?", message.ID).UpdateColumn("content", cleaned).Error; err != nil {
+				return err
+			}
+		}
+	}
+	var executions []Execution
+	if err := db.Where("initial_prompt <> ?", "").Find(&executions).Error; err != nil {
+		return err
+	}
+	for _, execution := range executions {
+		cleaned := stripLegacyUserPromptContext(execution.InitialPrompt)
+		if cleaned != execution.InitialPrompt {
+			if err := db.Model(&Execution{}).Where("id = ?", execution.ID).UpdateColumn("initial_prompt", cleaned).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Store) seedProject() error {
 	var count int64
 	if err := s.db.Model(&Project{}).Count(&count).Error; err != nil {
@@ -381,6 +566,8 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	input.ApprovalMode = strings.TrimSpace(input.ApprovalMode)
 	input.ReworkApprovalMode = strings.TrimSpace(input.ReworkApprovalMode)
 	input.ValidationMode = strings.TrimSpace(input.ValidationMode)
+	input.WebSearch.Engine = strings.TrimSpace(input.WebSearch.Engine)
+	input.WebSearch.BaseURL = strings.TrimSpace(input.WebSearch.BaseURL)
 	if input.ReworkApprovalMode == "" {
 		input.ReworkApprovalMode = "all"
 	}
@@ -425,6 +612,18 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	if !slices.Contains([]string{"zh", "en"}, input.Language) {
 		return ConfigView{}, errors.New("不支持的输出语言")
 	}
+	if input.WebSearch.Engine == "" {
+		input.WebSearch.Engine = "tavily"
+	}
+	if input.WebSearch.BaseURL == "" {
+		input.WebSearch.BaseURL = "https://api.tavily.com/search"
+	}
+	if input.WebSearch.Engine != "tavily" {
+		return ConfigView{}, errors.New("当前仅支持 Tavily 搜索引擎")
+	}
+	if parsed, parseErr := url.ParseRequestURI(input.WebSearch.BaseURL); parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return ConfigView{}, errors.New("搜索服务 URL 必须是有效的 HTTP 或 HTTPS 地址")
+	}
 	input.ValidationMode, input.MaxValidationAttempts = normalizeValidationPolicy(input.ValidationMode, input.MaxValidationAttempts)
 	input.MaxIssueDepth, input.MaxChildrenPerRequest, input.MaxDirectChildren = normalizeDecompositionLimits(input.MaxIssueDepth, input.MaxChildrenPerRequest, input.MaxDirectChildren)
 	input.IssueBudget = normalizeIssueBudget(input.IssueBudget)
@@ -452,8 +651,18 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 		s.mu.Unlock()
 		return ConfigView{}, errors.New("API Key 认证需要填写密钥")
 	}
+	if input.WebSearch.APIKey == "" {
+		input.WebSearch.APIKey = s.config.WebSearch.APIKey
+	}
+	if input.WebSearch.APIKey != "" {
+		input.WebSearch.Enabled = true
+	}
+	if input.WebSearch.Enabled && input.WebSearch.APIKey == "" {
+		s.mu.Unlock()
+		return ConfigView{}, errors.New("启用 Tavily 搜索需要填写 API Key")
+	}
 	now := time.Now()
-	s.config = Config{Configured: true, Language: input.Language, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, MaxIssueDepth: input.MaxIssueDepth, MaxChildrenPerRequest: input.MaxChildrenPerRequest, MaxDirectChildren: input.MaxDirectChildren, IssueBudget: input.IssueBudget, IssueHeartbeat: input.IssueHeartbeat, UpdatedAt: now}
+	s.config = Config{Configured: true, Language: input.Language, NodePath: input.NodePath, PiPath: input.PiPath, Provider: input.Provider, Model: input.Model, Pricing: input.Pricing, BaseURL: input.BaseURL, Thinking: input.Thinking, AuthMode: input.AuthMode, APIKey: input.APIKey, Workspace: workspace, Concurrency: input.Concurrency, ApprovalMode: input.ApprovalMode, ReworkApprovalMode: input.ReworkApprovalMode, ValidationMode: input.ValidationMode, MaxValidationAttempts: input.MaxValidationAttempts, MaxIssueDepth: input.MaxIssueDepth, MaxChildrenPerRequest: input.MaxChildrenPerRequest, MaxDirectChildren: input.MaxDirectChildren, IssueBudget: input.IssueBudget, IssueHeartbeat: input.IssueHeartbeat, WebSearch: input.WebSearch, UpdatedAt: now}
 	if err := s.db.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
 		s.mu.Unlock()
 		return ConfigView{}, err
@@ -465,6 +674,17 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 	if err := s.seedAgentTemplates(now); err != nil {
 		return ConfigView{}, fmt.Errorf("refresh Agent templates: %w", err)
 	}
+	if err := s.seedPositionsAndEmployeeIdentity(now); err != nil {
+		return ConfigView{}, fmt.Errorf("refresh positions: %w", err)
+	}
+	for _, agent := range s.Agents() {
+		if !isEmployeeAgent(agent) {
+			continue
+		}
+		if _, err := s.ensureEmployeeWorkspace(agent); err != nil {
+			return ConfigView{}, fmt.Errorf("initialize employee session %s: %w", agent.ID, err)
+		}
+	}
 	s.notify()
 	return configView(savedConfig), nil
 }
@@ -472,7 +692,10 @@ func (s *Store) SaveConfig(input SaveConfigInput) (ConfigView, error) {
 func configView(c Config) ConfigView {
 	mode, attempts := normalizeValidationPolicy(c.ValidationMode, c.MaxValidationAttempts)
 	depth, perRequest, direct := normalizeDecompositionLimits(c.MaxIssueDepth, c.MaxChildrenPerRequest, c.MaxDirectChildren)
-	return ConfigView{Configured: c.Configured, Language: fallback(c.Language, "zh"), NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, MaxIssueDepth: depth, MaxChildrenPerRequest: perRequest, MaxDirectChildren: direct, IssueBudget: normalizeIssueBudget(c.IssueBudget), IssueHeartbeat: normalizeIssueHeartbeat(c.IssueHeartbeat), UpdatedAt: c.UpdatedAt}
+	search := c.WebSearch
+	search.Engine = fallback(search.Engine, "tavily")
+	search.BaseURL = fallback(search.BaseURL, "https://api.tavily.com/search")
+	return ConfigView{Configured: c.Configured, Language: fallback(c.Language, "zh"), NodePath: c.NodePath, PiPath: c.PiPath, Provider: c.Provider, Model: c.Model, Pricing: c.Pricing, BaseURL: c.BaseURL, Thinking: c.Thinking, AuthMode: c.AuthMode, HasAPIKey: c.APIKey != "", Workspace: c.Workspace, Concurrency: c.Concurrency, ApprovalMode: c.ApprovalMode, ReworkApprovalMode: fallback(c.ReworkApprovalMode, "all"), ValidationMode: mode, MaxValidationAttempts: attempts, MaxIssueDepth: depth, MaxChildrenPerRequest: perRequest, MaxDirectChildren: direct, IssueBudget: normalizeIssueBudget(c.IssueBudget), IssueHeartbeat: normalizeIssueHeartbeat(c.IssueHeartbeat), WebSearch: WebSearchConfigView{Engine: search.Engine, BaseURL: search.BaseURL, HasAPIKey: search.APIKey != "", Enabled: search.Enabled}, UpdatedAt: c.UpdatedAt}
 }
 
 func normalizeIssueHeartbeat(heartbeat IssueHeartbeatConfig) IssueHeartbeatConfig {
@@ -573,6 +796,7 @@ func (s *Store) stateViewLocked() StateView {
 	var executions []Execution
 	var approvals []Approval
 	var departments []Department
+	var positions []Position
 	knowledgeBases, _ := s.listKnowledgeBases()
 	s.db.Order("created_at asc").Find(&projects)
 	s.db.Order("created_at asc").Find(&containerProfiles)
@@ -586,13 +810,14 @@ func (s *Store) stateViewLocked() StateView {
 	s.db.Where("issue_id IN (?)", s.db.Model(&Issue{}).Select("id").Where("hidden = ?", false)).Order("started_at desc").Limit(300).Find(&executions)
 	s.db.Order("created_at desc").Limit(200).Find(&approvals)
 	s.db.Order("name asc").Find(&departments)
+	s.db.Order("department_id asc, name asc").Find(&positions)
 	for index := range issues {
 		issues[index] = compactIssueForState(issues[index])
 	}
 	for index := range executions {
 		executions[index] = compactExecution(executions[index])
 	}
-	return StateView{Configured: s.config.Configured, Config: configView(s.config), Runtime: s.runtime, Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), Departments: departments, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
+	return StateView{Configured: s.config.Configured, Config: configView(s.config), Runtime: s.runtime, Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), EmployeeAvailability: s.employeeAvailabilitiesLocked(), Departments: departments, Positions: positions, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
 }
 func (s *Store) Subscribe() (<-chan StateView, func()) {
 	ch := make(chan StateView, 4)
@@ -625,6 +850,13 @@ func (s *Store) broadcastLocked() {
 func (s *Store) changedLocked() { s.updatedAt = time.Now(); s.broadcastLocked() }
 
 func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
+	// Every visible root Issue belongs to a reusable Task. Keep the lower-level
+	// Issue API backward compatible by promoting unsourced roots instead of
+	// allowing a second, task-less root concept to leak into the product model.
+	if strings.TrimSpace(input.ParentID) == "" && strings.TrimSpace(input.TaskSourceID) == "" {
+		_, issue, err := s.CreateTask(input)
+		return issue, err
+	}
 	var err error
 	input.Title, err = normalizeIssueTitle(input.Title)
 	if err != nil {
@@ -644,7 +876,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, errors.New("invalid work mode")
 	}
 	if input.AssigneeAgentID != "" {
-		if _, err := s.executionAgent(input.AssigneeAgentID); err != nil {
+		if _, err := s.assignableEmployee(input.AssigneeAgentID); err != nil {
 			return Issue{}, err
 		}
 	}
@@ -652,6 +884,18 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	defer s.mu.Unlock()
 	if !s.config.Configured {
 		return Issue{}, errors.New("请先完成初始化配置")
+	}
+	if input.ParentID == "" && strings.TrimSpace(input.ContainerProfileID) == "" && s.config.Provider != "test" {
+		profile, profileErr := s.DefaultContainerProfile()
+		if profileErr != nil {
+			return Issue{}, profileErr
+		}
+		input.ContainerProfileID = profile.ID
+	}
+	if input.AssigneeAgentID != "" {
+		if err := s.validateEmployeeAssignmentLocked(input.AssigneeAgentID, input.ParentID); err != nil {
+			return Issue{}, err
+		}
 	}
 	if input.ParentID != "" {
 		var parent Issue
@@ -696,10 +940,10 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		}
 		workspace = parent.Workspace
 	} else if workspace == "" {
-		base := project.Workspace
-		if base == "" {
-			base = s.config.Workspace
-		}
+		// A directly-created root Issue starts in the currently configured
+		// workspace. Project.Workspace may refer to an old checkout and is not a
+		// host-path mapping for new Board work.
+		base := s.config.Workspace
 		workspace = filepath.Join(base, ".aegis", "workspaces", nextID("workspace"))
 		if err := os.MkdirAll(workspace, 0o700); err != nil {
 			return Issue{}, err
@@ -735,7 +979,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: "operator", CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: nextID("issue"), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -753,10 +997,8 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
 		}
-		if issue.AssigneeAgentID != "" {
-			if _, err := ensureIssueAgentSessionOnDB(tx, issue, issue.AssigneeAgentID, ""); err != nil {
-				return err
-			}
+		if err := s.bindInputAttachmentsTx(tx, issue, input); err != nil {
+			return err
 		}
 		for _, blocker := range uniqueStrings(input.BlockedBy) {
 			if blocker == issue.ID {
@@ -780,6 +1022,13 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	if input.ParentID != "" {
 		return Task{}, Issue{}, errors.New("任务定义不能包含父 Issue")
 	}
+	if strings.TrimSpace(input.ContainerProfileID) == "" {
+		profile, err := s.DefaultContainerProfile()
+		if err != nil {
+			return Task{}, Issue{}, err
+		}
+		input.ContainerProfileID = profile.ID
+	}
 	now := time.Now()
 	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Context: strings.TrimSpace(input.Context), Constraints: strings.TrimSpace(input.Constraints), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedAt: now, UpdatedAt: now}
 	if err := s.db.Create(&task).Error; err != nil {
@@ -800,6 +1049,12 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	if err = s.db.Save(&task).Error; err != nil {
 		return Task{}, Issue{}, err
 	}
+	container, err := s.createTaskContainerBinding(task)
+	if err != nil {
+		return Task{}, Issue{}, err
+	}
+	task.ContainerID = container.ID
+	issue.ContainerID = container.ID
 	s.notify()
 	return task, issue, nil
 }
@@ -867,7 +1122,7 @@ func (s *Store) TaskWorkspace(id string) (TaskWorkspace, error) {
 		}
 		return containerTaskWorkspace(container)
 	}
-	if containerProfileID != "" {
+	if containerID == "" && containerProfileID != "" {
 		if profile, err := s.GetContainerProfile(containerProfileID); err == nil {
 			return TaskWorkspace{Root: profile.WorkspacePath, Entries: []WorkspaceEntry{}}, nil
 		}
@@ -937,6 +1192,12 @@ func containerTaskWorkspace(container ContainerInstance) (TaskWorkspace, error) 
 		if name == "" || name == "." || name == ".." || strings.HasPrefix(name, "../") || filepath.IsAbs(name) {
 			continue
 		}
+		// .aegis contains control-plane bookkeeping and per-Issue runtime
+		// directories. It is not user output and must not make a fresh task
+		// workspace look pre-populated.
+		if name == ".aegis" || strings.HasPrefix(name, ".aegis/") {
+			continue
+		}
 		kind := "file"
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -959,7 +1220,7 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, AgentSessions: []IssueAgentSession{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Broadcasts: []TaskBroadcast{}, Watermark: time.Now()}
+	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Watermark: time.Now()}
 	d.Decompositions = []IssueDecomposition{}
 	s.db.Where("parent_id = ?", issue.ID).Order("number asc").Find(&d.Children)
 	var incoming, outgoing []IssueRelation
@@ -982,7 +1243,6 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 		return IssueDetail{}, err
 	}
 	d.Executions, d.ExecutionsPage = executions.Items, executions.Page
-	s.db.Where("issue_id = ?", issue.ID).Order("created_at asc").Find(&d.AgentSessions)
 	comments, err := s.IssueCommentsPage(issue.ID, "", detailPageSize)
 	if err != nil {
 		return IssueDetail{}, err
@@ -993,51 +1253,14 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 		return IssueDetail{}, err
 	}
 	d.Events, d.EventsPage = events.Items, events.Page
+	if err := s.db.Where("issue_id = ?", issue.ID).Order("created_at desc, id desc").Limit(detailPageSize).Find(&d.Messages).Error; err != nil {
+		return IssueDetail{}, err
+	}
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Approvals)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Wakeups)
 	s.db.Where("parent_issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Decompositions)
 	s.db.Where("issue_id = ?", issue.ID).Order("attempt desc").Find(&d.Validations)
-	for index := range d.Validations {
-		d.Validations[index].Objective = ""
-		d.Validations[index].CandidateResult = ""
-	}
-	root, err := s.taskRoot(issue)
-	if err != nil {
-		return IssueDetail{}, err
-	}
-	d.Broadcasts, err = s.taskBroadcasts(root.ID, 100)
-	if err != nil {
-		return IssueDetail{}, err
-	}
 	return d, nil
-}
-
-func (s *Store) IssueAgentTimeline(issueID, agentID string) (IssueAgentTimeline, error) {
-	if _, err := s.GetIssue(issueID); err != nil {
-		return IssueAgentTimeline{}, err
-	}
-	var session IssueAgentSession
-	if err := s.db.Where("issue_id = ? AND agent_id = ?", issueID, strings.TrimSpace(agentID)).Order("updated_at desc").First(&session).Error; err != nil {
-		return IssueAgentTimeline{}, errors.New("该 Agent 尚未关联当前 Issue 的 Session")
-	}
-	result := IssueAgentTimeline{Session: session, Executions: []Execution{}, Messages: []Message{}, Events: []ExecutionEvent{}}
-	if err := s.db.Where("issue_id = ? AND session_id = ?", issueID, session.SessionID).Order("started_at asc").Find(&result.Executions).Error; err != nil {
-		return IssueAgentTimeline{}, err
-	}
-	if len(result.Executions) == 0 {
-		return result, nil
-	}
-	ids := make([]string, len(result.Executions))
-	for index := range result.Executions {
-		ids[index] = result.Executions[index].ID
-	}
-	if err := s.db.Where("execution_id IN ?", ids).Order("created_at asc").Find(&result.Messages).Error; err != nil {
-		return IssueAgentTimeline{}, err
-	}
-	if err := s.db.Where("execution_id IN ?", ids).Order("created_at asc").Find(&result.Events).Error; err != nil {
-		return IssueAgentTimeline{}, err
-	}
-	return result, nil
 }
 
 func (s *Store) GetExecutionEvent(id string) (ExecutionEvent, error) {
@@ -1050,7 +1273,7 @@ func (s *Store) GetExecutionEvent(id string) (ExecutionEvent, error) {
 
 func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if input.AssigneeAgentID != nil && *input.AssigneeAgentID != "" {
-		if _, e := s.executionAgent(*input.AssigneeAgentID); e != nil {
+		if _, e := s.assignableEmployee(*input.AssigneeAgentID); e != nil {
 			return Issue{}, e
 		}
 	}
@@ -1062,6 +1285,20 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	}
 	if input.Status != nil && *input.Status != "cancelled" && s.belongsToCancelledTask(issue) {
 		return Issue{}, errors.New("所属任务已取消，不能重新打开 Issue")
+	}
+	if input.AssigneeAgentID != nil && *input.AssigneeAgentID != issue.AssigneeAgentID {
+		var active int64
+		if err := s.db.Model(&Execution{}).Where("issue_id = ? AND status IN ?", issue.ID, activeExecutionStatuses).Count(&active).Error; err != nil {
+			return Issue{}, err
+		}
+		if active > 0 {
+			return Issue{}, errors.New("Issue 正在执行，不能更换负责人")
+		}
+		if *input.AssigneeAgentID != "" {
+			if err := s.validateEmployeeAssignmentLocked(*input.AssigneeAgentID, issue.ID); err != nil {
+				return Issue{}, err
+			}
+		}
 	}
 	updates := map[string]any{"updated_at": time.Now()}
 	if input.Title != nil {
@@ -1143,11 +1380,6 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		return Issue{}, err
 	}
 	s.db.First(&issue, "id = ?", issue.ID)
-	if issue.AssigneeAgentID != "" {
-		if _, err := s.ensureIssueAgentSession(issue, issue.AssigneeAgentID, ""); err != nil {
-			return Issue{}, err
-		}
-	}
 	s.changedLocked()
 	return issue, nil
 }
@@ -1191,13 +1423,6 @@ func (s *Store) CheckoutIssue(id string, input CheckoutIssueInput) (Issue, error
 	}
 	if s.belongsToCancelledTask(issue) {
 		return Issue{}, errors.New("所属任务已取消，不能 checkout")
-	}
-	blockers, err := s.unresolvedBlockers(issue.ID)
-	if err != nil {
-		return Issue{}, err
-	}
-	if blockers > 0 {
-		return Issue{}, errors.New("issue has unresolved blockers")
 	}
 	now := time.Now()
 	result := s.db.Model(&Issue{}).Where("id = ? AND status IN ? AND (assignee_agent_id = '' OR assignee_agent_id = ?) AND (checkout_execution_id = '' OR checkout_execution_id = ?)", issue.ID, input.ExpectedStatuses, input.AgentID, input.ExecutionID).Updates(map[string]any{"status": "in_progress", "execution_phase": "active", "assignee_agent_id": input.AgentID, "checkout_execution_id": input.ExecutionID, "current_execution_id": input.ExecutionID, "started_at": now, "updated_at": now})
@@ -1462,12 +1687,28 @@ func (s *Store) createExecutionRecord(issue Issue, agent AgentDefinition, kind, 
 		runtimeType = "container"
 		containerImage = profile.Image
 	}
-	binding, err := s.ensureIssueAgentSession(issue, agent.ID, sessionID)
-	if err != nil {
-		return Execution{}, err
+	employeeSessionID := ""
+	if agent.Internal || agent.ID == conciergeAgentID || agent.Category == "concierge" {
+		sessionID = fallback(strings.TrimSpace(sessionID), nextID("pi-session"))
+	} else {
+		var employeeSession EmployeeSession
+		var sessionErr error
+		if issue.Hidden {
+			employeeSession, sessionErr = s.ensureEmployeeWorkspace(agent)
+		} else {
+			employeeSession, sessionErr = s.ensureEmployeeIssueSession(agent, issue.ID)
+		}
+		if sessionErr != nil {
+			return Execution{}, sessionErr
+		}
+		if strings.TrimSpace(sessionID) != "" && sessionID != employeeSession.SessionID {
+			return Execution{}, errors.New("Employee Pi Session 固定，不能绑定其他 Session")
+		}
+		sessionID = employeeSession.SessionID
+		employeeSessionID = employeeSession.ID
 	}
-	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agent.ID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: binding.SessionID, IssueAgentSessionID: binding.ID, RuntimeType: runtimeType, RuntimeID: issue.ContainerID, ContainerProfileID: issue.ContainerProfileID, ContainerImage: containerImage, SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
-	err = s.db.Create(&e).Error
+	e := Execution{ID: nextID("execution"), IssueID: issue.ID, AgentID: agent.ID, Kind: kind, Status: "queued", Provider: cfg.Provider, Model: cfg.Model, Pricing: cfg.Pricing, Thinking: cfg.Thinking, SessionID: sessionID, EmployeeSessionID: employeeSessionID, RuntimeType: runtimeType, RuntimeID: issue.ContainerID, ContainerProfileID: issue.ContainerProfileID, ContainerImage: containerImage, SystemPrompt: agent.SystemPrompt, ToolsSnapshot: snapshotTools(agent.Tools), StartedAt: now, UpdatedAt: now}
+	err := s.db.Create(&e).Error
 	return e, err
 }
 func (s *Store) updateExecution(id string, updates map[string]any) error {

@@ -1,9 +1,19 @@
 import * as React from "react"
-import { ArrowLeft, Bot, Copy, Route, Send, ShieldCheck } from "lucide-react"
+import {
+  ArrowLeft,
+  Bot,
+  Copy,
+  Plus,
+  Route,
+  Send,
+  ShieldCheck,
+} from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
+import { InputAttachmentList } from "@/components/input-attachments"
+import { useInputAttachments } from "@/hooks/use-input-attachments"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -29,6 +39,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -62,6 +73,7 @@ const categoryLabels: Record<string, string> = {
   orchestrator: "调度",
   backend: "后端",
   frontend: "前端",
+  design: "设计",
   security: "安全",
   general: "通用",
 }
@@ -73,6 +85,8 @@ export function TaskNewPage() {
   const clone = (location.state as { clone?: Partial<CreateIssueInput> } | null)
     ?.clone
   const [busy, setBusy] = React.useState(false)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const attachments = useInputAttachments("task")
   const [form, setForm] = React.useState<CreateIssueInput>({
     projectId: clone?.projectId ?? state?.projects[0]?.id,
     title: clone?.title ?? "",
@@ -91,18 +105,35 @@ export function TaskNewPage() {
     humanValidationFallback: clone?.humanValidationFallback,
   })
 
-  const enabledAgents = (state?.agents ?? []).filter(
-    (agent) => agent.enabled && !agent.internal
+  const enabledEmployees = (state?.agents ?? []).filter(
+    (agent) =>
+      agent.enabled && !agent.internal && agent.category !== "concierge"
   )
+  const availability = new Map(
+    (state?.employeeAvailability ?? []).map((item) => [item.agentId, item])
+  )
+  const isAvailable = (agentId: string) =>
+    availability.get(agentId)?.available ?? true
+  const enabledContainerProfiles = (state?.containerProfiles ?? []).filter(
+    (profile) => profile.enabled
+  )
+  const defaultContainerProfile =
+    enabledContainerProfiles.find(
+      (profile) => profile.name.toLowerCase() === "default"
+    ) ?? enabledContainerProfiles[0]
   const defaultAgent =
-    enabledAgents.find((agent) => agent.id === "aegis-orchestrator") ??
-    enabledAgents[0]
+    enabledEmployees.find((agent) => agent.id === "aegis-orchestrator") ??
+    enabledEmployees[0]
   const selectedAgentId = form.assigneeAgentId || defaultAgent?.id || ""
-  const selectedAgent = enabledAgents.find(
+  const selectedAgent = enabledEmployees.find(
     (agent) => agent.id === selectedAgentId
   )
-  const agentItems = enabledAgents.map((agent) => ({
-    label: `${agent.name} · ${categoryLabels[agent.category] ?? agent.category}`,
+  const selectedAvailability = availability.get(selectedAgentId)
+  const positions = (state?.positions ?? []).filter(
+    (position) => position.enabled
+  )
+  const agentItems = enabledEmployees.map((agent) => ({
+    label: `${agent.name} · ${positions.find((position) => position.id === agent.positionId)?.name ?? categoryLabels[agent.category] ?? agent.category}${isAvailable(agent.id) ? "" : " · 其他任务工作中（将新建会话）"}`,
     value: agent.id,
   }))
   const priorityItems = priorities.map((priority) => ({
@@ -118,7 +149,11 @@ export function TaskNewPage() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!selectedAgentId) {
-      toast.error("请选择一个可用 Agent")
+      toast.error("请选择一名可用员工")
+      return
+    }
+    if (!defaultContainerProfile) {
+      toast.error("没有可用的 Docker 容器配置，请先在容器管理中启用一个配置")
       return
     }
     setBusy(true)
@@ -126,7 +161,10 @@ export function TaskNewPage() {
       const { issue } = await createTask({
         ...form,
         assigneeAgentId: selectedAgentId,
+        containerProfileId: defaultContainerProfile.id,
+        attachmentIds: attachments.attachmentIds,
       })
+      attachments.clearBound()
       toast.success(`任务已交给 ${selectedAgent?.name ?? selectedAgentId}`, {
         description: issue.identifier,
       })
@@ -143,7 +181,7 @@ export function TaskNewPage() {
       <PageHeader
         eyebrow="New task"
         title="发布任务"
-        description="选择负责顶层 Issue 的 Agent；任何 Agent 都可以在执行中拆分并调度子 Issues。"
+        description="把顶层任务指派给一名具体员工；岗位仅用于分类，不能作为负责人。"
         actions={
           <Button
             variant="ghost"
@@ -161,7 +199,8 @@ export function TaskNewPage() {
           <Copy />
           <AlertTitle>已复制旧任务配置</AlertTitle>
           <AlertDescription>
-            标题、目标、Agent、执行方式和容器配置已带入；修改后发布会创建一个全新的任务，不会影响原任务。
+            标题、目标和负责人等信息已带入；修改后发布会创建一个全新的 Docker
+            任务，不会影响原任务。
           </AlertDescription>
         </Alert>
       ) : null}
@@ -237,34 +276,61 @@ export function TaskNewPage() {
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="task-runtime">容器环境配置</FieldLabel>
-                <Select
-                  value={form.containerProfileId || "host"}
-                  onValueChange={(value) => {
-                    update(
-                      "containerProfileId",
-                      !value || value === "host" ? undefined : value
-                    )
-                  }}
-                >
-                  <SelectTrigger id="task-runtime" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <SelectGroup>
-                      <SelectItem value="host">宿主机（默认）</SelectItem>
-                      {(state?.containerProfiles ?? [])
-                        .filter((profile) => profile.enabled)
-                        .map((profile) => (
-                          <SelectItem key={profile.id} value={profile.id}>
-                            {profile.name} · {profile.image}
-                          </SelectItem>
-                        ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                <FieldLabel>审计附件</FieldLabel>
                 <FieldDescription>
-                  这里选择的是创建模板，不会立即创建容器。任务真正开始前系统会按配置创建独立容器并与任务绑定；再次执行会复用该容器。
+                  文件会直接流式上传到 Aegis
+                  服务端。任务启动前，系统会把它放入任务的独立容器工作区，并通过系统提示告知准确路径；单个文件最大
+                  20 GiB。
+                </FieldDescription>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    if (event.target.files) {
+                      attachments.addFiles(event.target.files)
+                    }
+                    event.target.value = ""
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-fit"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Plus data-icon="inline-start" />
+                  添加附件
+                </Button>
+                <InputAttachmentList
+                  items={attachments.items}
+                  onRemove={(clientId) => void attachments.remove(clientId)}
+                  className="flex-wrap overflow-visible"
+                />
+                {attachments.hasErrors ? (
+                  <FieldDescription className="text-destructive">
+                    请移除上传失败的附件后再发布任务。
+                  </FieldDescription>
+                ) : null}
+              </Field>
+              <Field>
+                <FieldLabel>执行环境</FieldLabel>
+                <div className="flex items-center gap-3 rounded-xl border bg-muted/25 px-4 py-3">
+                  <Bot className="size-5 shrink-0 text-primary" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Docker 隔离执行</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {defaultContainerProfile
+                        ? `${defaultContainerProfile.name} · ${defaultContainerProfile.image}`
+                        : "尚未配置可用容器环境"}
+                    </p>
+                  </div>
+                </div>
+                <FieldDescription>
+                  发布任务不再允许使用
+                  Host。发布时会立即为任务创建并绑定唯一容器，首次执行时自动启动；每个
+                  Issue 在该容器中使用独立工作目录。
                 </FieldDescription>
               </Field>
               <Field>
@@ -284,7 +350,14 @@ export function TaskNewPage() {
             <Button
               type="submit"
               size="lg"
-              disabled={busy || !selectedAgentId || !form.title.trim()}
+              disabled={
+                busy ||
+                attachments.uploading ||
+                attachments.hasErrors ||
+                !selectedAgentId ||
+                !defaultContainerProfile ||
+                !form.title.trim()
+              }
             >
               {busy ? (
                 <Spinner data-icon="inline-start" />
@@ -299,15 +372,17 @@ export function TaskNewPage() {
         <div className="flex flex-col gap-5 xl:sticky xl:top-20">
           <Card>
             <CardHeader>
-              <CardTitle>执行 Agent</CardTitle>
+              <CardTitle>任务负责人</CardTitle>
               <CardDescription>
-                选择最适合负责整个顶层任务的 Agent。
+                新任务可选择任意已启用员工；正在工作的员工会使用新的任务会话。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
-                <Field data-invalid={enabledAgents.length === 0 || undefined}>
-                  <FieldLabel htmlFor="task-agent">Agent</FieldLabel>
+                <Field
+                  data-invalid={enabledEmployees.length === 0 || undefined}
+                >
+                  <FieldLabel htmlFor="task-agent">负责人</FieldLabel>
                   <Select
                     items={agentItems}
                     value={selectedAgentId}
@@ -318,26 +393,58 @@ export function TaskNewPage() {
                     <SelectTrigger
                       id="task-agent"
                       className="w-full"
-                      aria-invalid={enabledAgents.length === 0 || undefined}
+                      aria-invalid={enabledEmployees.length === 0 || undefined}
                     >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {enabledAgents.map((agent) => (
-                          <SelectItem key={agent.id} value={agent.id}>
-                            {agent.name} ·{" "}
-                            {categoryLabels[agent.category] ?? agent.category}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
+                      {positions.map((position) => {
+                        const people = enabledEmployees.filter(
+                          (agent) => agent.positionId === position.id
+                        )
+                        if (people.length === 0) return null
+                        return (
+                          <SelectGroup key={position.id}>
+                            <SelectLabel>
+                              {position.name} · {people.length} 人
+                            </SelectLabel>
+                            {people.map((agent) => {
+                              const status = availability.get(agent.id)
+                              return (
+                                <SelectItem key={agent.id} value={agent.id}>
+                                  {agent.name} · {agent.englishName}
+                                  {!isAvailable(agent.id)
+                                    ? ` · 其他任务工作中${status?.currentIssueIdentifier ? `（${status.currentIssueIdentifier}）` : ""}，将新建会话`
+                                    : ""}
+                                </SelectItem>
+                              )
+                            })}
+                          </SelectGroup>
+                        )
+                      })}
+                      {enabledEmployees.some((agent) => !agent.positionId) ? (
+                        <SelectGroup>
+                          <SelectLabel>未分配岗位</SelectLabel>
+                          {enabledEmployees
+                            .filter((agent) => !agent.positionId)
+                            .map((agent) => (
+                              <SelectItem key={agent.id} value={agent.id}>
+                                {agent.name} ·{" "}
+                                {categoryLabels[agent.category] ??
+                                  agent.category}
+                              </SelectItem>
+                            ))}
+                        </SelectGroup>
+                      ) : null}
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    {enabledAgents.length === 0
-                      ? "当前没有已启用的 Agent，请先到 Agents 页面启用。"
-                      : selectedAgent?.description ||
-                        "该 Agent 会直接执行任务，并可按复杂度拆分子 Issues。"}
+                    {enabledEmployees.length === 0
+                      ? "当前没有已启用员工。"
+                      : selectedAvailability && !selectedAvailability.available
+                        ? `${selectedAgent?.name ?? "该员工"}正在处理 ${selectedAvailability.currentIssueIdentifier ?? "其他任务"}；发布后会为本任务创建独立会话。`
+                        : selectedAgent?.description ||
+                          "该员工会直接执行任务，并可按组织关系委派直属下属。"}
                   </FieldDescription>
                 </Field>
                 <Field orientation="horizontal">

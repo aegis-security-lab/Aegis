@@ -1,6 +1,9 @@
 package control
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestWaitForChildIssuesPersistsSelectionAndReleasesParent(t *testing.T) {
 	store := configuredStore(t)
@@ -27,7 +30,7 @@ func TestWaitForChildIssuesPersistsSelectionAndReleasesParent(t *testing.T) {
 	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
 	manager.sessions[execution.ID] = &PiSession{key: execution.ID, executionID: execution.ID, issueID: parent.ID, agentID: "backend-engineer", controlToken: "secret"}
 
-	wait, err := manager.WaitForChildIssues(execution.ID, "secret", WaitForChildIssuesInput{ChildIssueIDs: []string{first.ID}})
+	wait, err := manager.WaitForChildIssues(execution.ID, "secret", WaitForChildIssuesInput{ChildIssueIDs: []string{first.ID}, EstimatedWaitMinutes: 15})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,20 +45,22 @@ func TestWaitForChildIssuesPersistsSelectionAndReleasesParent(t *testing.T) {
 		t.Fatalf("parent was not released into waiting_children: %+v", updated)
 	}
 
-	children := []Issue{{ID: first.ID, Status: "done"}, {ID: second.ID, Status: "in_progress"}}
+	completedAt := wait.CreatedAt.Add(time.Second)
+	children := []Issue{{ID: first.ID, Status: "done", UpdatedAt: completedAt}, {ID: second.ID, Status: "in_progress", UpdatedAt: completedAt}}
 	if !childWaitConditionSatisfied(wait, children) {
 		t.Fatal("selected-child wait was not satisfied when its selected child completed")
 	}
-	if childWaitConditionSatisfied(IssueChildWait{WaitForAll: true}, children) {
-		t.Fatal("wait-for-all was satisfied while another child was active")
+	allWait := IssueChildWait{WaitForAll: true, CreatedAt: wait.CreatedAt}
+	if !childWaitConditionSatisfied(allWait, children) {
+		t.Fatal("monitor-all was not satisfied when one child newly completed")
 	}
-	children[1].Status = "cancelled"
-	if !childWaitConditionSatisfied(IssueChildWait{WaitForAll: true}, children) {
-		t.Fatal("wait-for-all was not satisfied after every child became terminal")
+	if childWaitConditionSatisfied(IssueChildWait{WaitForAll: true, CreatedAt: completedAt.Add(time.Second)}, children) {
+		t.Fatal("an old completion triggered a later wait again")
 	}
 	children[1].Status = "failed"
-	if !childWaitConditionSatisfied(IssueChildWait{WaitForAll: true}, children) {
-		t.Fatal("wait-for-all was not satisfied after a child failed terminally")
+	children[1].UpdatedAt = completedAt.Add(2 * time.Second)
+	if !childWaitConditionSatisfied(IssueChildWait{WaitForAll: true, CreatedAt: completedAt.Add(time.Second)}, children) {
+		t.Fatal("a subsequent child completion did not trigger the next wait")
 	}
 }
 
@@ -68,8 +73,8 @@ func TestWaitForChildIssuesRejectsInvalidSelection(t *testing.T) {
 	manager := &Manager{store: store, sessions: map[string]*PiSession{execution.ID: {key: execution.ID, executionID: execution.ID, issueID: parent.ID, agentID: "backend-engineer", controlToken: "secret"}}}
 	for _, input := range []WaitForChildIssuesInput{
 		{},
-		{WaitForAll: true, ChildIssueIDs: []string{"issue-x"}},
-		{ChildIssueIDs: []string{"issue-x"}},
+		{WaitForAll: true, ChildIssueIDs: []string{"issue-x"}, EstimatedWaitMinutes: 5},
+		{ChildIssueIDs: []string{"issue-x"}, EstimatedWaitMinutes: 5},
 	} {
 		if _, err := manager.WaitForChildIssues(execution.ID, "secret", input); err == nil {
 			t.Fatalf("invalid wait input was accepted: %+v", input)
@@ -93,7 +98,7 @@ func TestWaitForChildIssuesCanWaitForExactCommentWakeup(t *testing.T) {
 	}
 	manager := &Manager{store: store, sessions: map[string]*PiSession{execution.ID: {key: execution.ID, executionID: execution.ID, issueID: parent.ID, agentID: "backend-engineer", controlToken: "secret"}}}
 
-	wait, err := manager.WaitForChildIssues(execution.ID, "secret", WaitForChildIssuesInput{WakeupIDs: []string{wakeup.ID}})
+	wait, err := manager.WaitForChildIssues(execution.ID, "secret", WaitForChildIssuesInput{WakeupIDs: []string{wakeup.ID}, EstimatedWaitMinutes: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

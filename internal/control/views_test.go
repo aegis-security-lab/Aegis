@@ -131,8 +131,8 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 	if len(detail.Events) != detailPageSize || !detail.EventsPage.HasMore || detail.EventsPage.Total != int64(detailPageSize+25) {
 		t.Fatalf("unexpected initial event page: events=%d page=%+v", len(detail.Events), detail.EventsPage)
 	}
-	if len(detail.Messages) != 0 {
-		t.Fatalf("issue detail should not duplicate session messages, got %d", len(detail.Messages))
+	if len(detail.Messages) != 1 || detail.Messages[0].ID != "message-heavy" {
+		t.Fatalf("issue detail should include recent AI conversation messages, got %+v", detail.Messages)
 	}
 	latest := detail.Events[0]
 	if latest.ID != fullEvent.ID {

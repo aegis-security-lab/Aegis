@@ -1,6 +1,8 @@
 package control
 
 import (
+	"archive/zip"
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +15,7 @@ func TestUploadedAttachmentIsStoredAndBoundToCompletionComment(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Generate report", Objective: "A verified report is generated.", Priority: "medium", WorkMode: "autonomous",
-		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
+		AssigneeAgentID: "backend-engineer-002", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +74,9 @@ func TestFinalResultUsesAnAlreadyUploadedAttachment(t *testing.T) {
 		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Update("validation_disabled", true).Error; err != nil {
 		t.Fatal(err)
 	}
 	execution, err := store.createExecution(issue, "backend-engineer", "work")
@@ -143,14 +148,14 @@ func TestValidationAgentCanReadOnlySourceExecutionAttachmentsInChunks(t *testing
 	if len(attachments) != 1 || attachments[0].ID != attachment.ID || !attachments[0].Readable || !strings.Contains(attachments[0].DownloadURL, attachment.ID) {
 		t.Fatalf("unexpected validation attachments: %+v", attachments)
 	}
-	first, err := manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", attachment.ID, 0, 12)
+	first, err := manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", attachment.ID, "", 0, 12)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.EOF || first.NextOffset != 12 || first.Content != report[:12] {
 		t.Fatalf("unexpected first attachment chunk: %+v", first)
 	}
-	second, err := manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", attachment.ID, first.NextOffset, 32768)
+	second, err := manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", attachment.ID, "", first.NextOffset, 32768)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,9 +163,47 @@ func TestValidationAgentCanReadOnlySourceExecutionAttachmentsInChunks(t *testing
 		t.Fatalf("unexpected complete attachment content: first=%+v second=%+v", first, second)
 	}
 
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	readme, err := zipWriter.Create("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = readme.Write([]byte("# Usage\n\npython bt_panel_rce.py --help\n")); err != nil {
+		t.Fatal(err)
+	}
+	script, err := zipWriter.Create("tools/bt_panel_rce.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = script.Write([]byte("import argparse\nargparse.ArgumentParser().parse_args()\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err = zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zipAttachment, err := store.captureUploadedAttachment(issue, source.ID, PublishAttachmentInput{Path: "bt_panel_exploit_tools.zip"}, bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipInfo := manager.validationAttachmentInfo(zipAttachment)
+	if zipInfo.Readable || len(zipInfo.ArchiveEntries) != 2 || !zipInfo.ArchiveEntries[0].Readable {
+		t.Fatalf("unexpected ZIP validation manifest: %+v", zipInfo)
+	}
+	zipChunk, err := manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", zipAttachment.ID, "tools/bt_panel_rce.py", 0, 32768)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !zipChunk.EOF || !strings.Contains(zipChunk.Content, "ArgumentParser") || zipChunk.ArchivePath != "tools/bt_panel_rce.py" {
+		t.Fatalf("unexpected ZIP entry chunk: %+v", zipChunk)
+	}
+	if _, err = manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", zipAttachment.ID, "../README.md", 0, 100); err == nil {
+		t.Fatal("expected unsafe ZIP path to be rejected")
+	}
+
 	otherIssue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Other report", Objective: "Keep unrelated evidence isolated.", Priority: "low", WorkMode: "autonomous",
-		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
+		AssigneeAgentID: "backend-engineer-002", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +212,7 @@ func TestValidationAgentCanReadOnlySourceExecutionAttachmentsInChunks(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", other.ID, 0, 100); err == nil {
+	if _, err = manager.ReadValidationAttachment(validationExecution.ID, "validation-secret", other.ID, "", 0, 100); err == nil {
 		t.Fatal("validator should not read an attachment from another source Execution")
 	}
 }

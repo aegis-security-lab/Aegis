@@ -441,7 +441,7 @@ export function ContainersPage() {
                 </EmptyMedia>
                 <EmptyTitle>还没有任务容器</EmptyTitle>
                 <EmptyDescription>
-                  新建任务选择环境配置后，系统会在任务真正执行前创建容器。
+                  发布任务时，系统会立即创建并绑定唯一容器；真正执行时再启动 Docker Runtime。
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>

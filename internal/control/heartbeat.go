@@ -3,7 +3,6 @@ package control
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -61,6 +60,14 @@ func (m *Manager) queueDueIssueHeartbeats(now time.Time) []string {
 		if _, err := m.store.executionAgent(issue.AssigneeAgentID); err != nil {
 			continue
 		}
+		var childWait IssueChildWait
+		estimatedCheckDue := false
+		if err := m.store.db.Where("parent_issue_id = ? AND status = ?", issue.ID, "waiting").Order("created_at desc").First(&childWait).Error; err == nil && childWait.NextCheckAt != nil {
+			if now.Before(*childWait.NextCheckAt) {
+				continue
+			}
+			estimatedCheckDue = true
+		}
 
 		var live AgentWakeup
 		err := m.store.db.Where("issue_id = ? AND reason = ? AND status IN ?", issue.ID, issueHeartbeatReason, []string{"queued", "delivered"}).Order("created_at desc").First(&live).Error
@@ -92,7 +99,7 @@ func (m *Manager) queueDueIssueHeartbeats(now time.Time) []string {
 			anchor = issue.CreatedAt
 		}
 		elapsed := now.Sub(anchor)
-		if elapsed < interval {
+		if !estimatedCheckDue && elapsed < interval {
 			continue
 		}
 		if elapsed < 0 {
@@ -104,6 +111,9 @@ func (m *Manager) queueDueIssueHeartbeats(now time.Time) []string {
 		}
 		if err = m.store.db.Create(&wakeup).Error; err != nil {
 			continue
+		}
+		if estimatedCheckDue {
+			_ = m.store.db.Model(&IssueChildWait{}).Where("id = ?", childWait.ID).Update("next_check_at", nil).Error
 		}
 		queued = append(queued, wakeup.ID)
 	}
@@ -117,17 +127,11 @@ func (m *Manager) issueHeartbeatEligibility(issue Issue) (bool, string) {
 	if issue.Status == "in_progress" && issue.ExecutionPhase == "waiting_children" && issue.CheckoutExecutionID == "" {
 		return true, "waiting_children"
 	}
-	if slices.Contains([]string{"todo", "backlog"}, issue.Status) {
-		blockers, err := m.store.unresolvedBlockers(issue.ID)
-		if err == nil && blockers > 0 {
-			return true, "waiting_dependencies"
-		}
-	}
 	return false, ""
 }
 
 func (m *Manager) heartbeatPrompt(issue Issue, wakeup AgentWakeup) (string, error) {
-	eligible, waitReason := m.issueHeartbeatEligibility(issue)
+	eligible, _ := m.issueHeartbeatEligibility(issue)
 	if !eligible {
 		return "", errors.New("Issue 已不再等待子树或依赖")
 	}
@@ -136,18 +140,7 @@ func (m *Manager) heartbeatPrompt(issue Issue, wakeup AgentWakeup) (string, erro
 	if err := m.store.db.Where("parent_id = ?", issue.ID).Order("number asc").Find(&children).Error; err != nil {
 		return "", err
 	}
-	var blockers []Issue
-	if err := m.store.db.Table("issues i").
-		Joins("join issue_relations r on r.issue_id = i.id").
-		Where("r.related_issue_id = ? AND r.type = ? AND i.status NOT IN ?", issue.ID, "blocks", terminalIssueStatuses).
-		Order("i.number asc").Find(&blockers).Error; err != nil {
-		return "", err
-	}
-
 	waitLabel := "直属子 Issues 尚未结束"
-	if waitReason == "waiting_dependencies" {
-		waitLabel = "前置依赖 Issues 尚未结束"
-	}
 	budgetSummary := "此 Issue 不是根 Issue，不受全局 Issue 执行预算限制"
 	if issue.ParentID == "" {
 		budget := budgetForIssue(m.store.Config(), issue)
@@ -179,20 +172,17 @@ Issue %s：%s
 本次唤醒用于协调而不是空等：
 1. 可以继续对当前任务有价值的工作。
 2. 使用 aegis_list_child_issues 查看直属子 Issue，用 aegis_get_issue_progress 根据 currentExecutionId 查看子 Agent 的进度或最近消息。
-3. 对运行中或等待中的直属子 Issue，可使用 aegis_comment_issue 在它的固定 Pi Session 中发送具体纠正意见或催促信息，不会丢弃现有工作。如果当前方向不安全、完全无关或无法就地纠正，则先使用 aegis_cancel_issue 停止子 Issue，再在它结束后发评论。
-4. 如果本次产生了需要等待的子 Issue 评论 Wakeup，用 aegis_wait_for_child_issues 等待对应 wakeupIds。
-5. 如果子树或依赖仍未满足，完成本轮协调后结束回合；Aegis 会恢复等待状态并在下一次心跳再次唤醒你。
+3. 对运行中或等待中的直属子 Issue，用 aegis_board 记录可见的纠正意见，并用 aegis_relay 异步通知负责人。如果当前方向不安全、完全无关或无法就地纠正，则使用 aegis_cancel_issue 停止子 Issue。
+4. 需要等待子 Issue 结果时，使用 aegis_wait_for_child_issues 等待相应 childIssueIds；Relay 消息本身不会阻塞工作。
+5. 如果子树仍未满足，完成本轮协调后结束回合；Aegis 会恢复等待状态并在下一次心跳再次唤醒你。
 
 当前直属子 Issues：
-%s
-
-当前未完成依赖：
 %s
 
 请先评估状态，再执行最有价值的协调动作，最后给出简短心跳总结。`,
 		formatHeartbeatDuration(time.Duration(wakeup.HeartbeatElapsedSeconds)*time.Second), issue.Identifier, issue.Title,
 		waitLabel, fallback(issue.Description, "未填写"), fallback(issue.Objective, "未设置"), issue.Workspace, budgetSummary,
-		formatHeartbeatIssues(children), formatHeartbeatIssues(blockers)), nil
+		formatHeartbeatIssues(children)), nil
 }
 
 func formatHeartbeatIssues(issues []Issue) string {

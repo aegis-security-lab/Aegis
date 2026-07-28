@@ -12,10 +12,15 @@ func TestContinuationPromptRequiresCompletionReassessmentAndFollowupDelegation(t
 	)
 	for _, expected := range []string{
 		"Call aegis_list_child_issues to refresh the complete direct-child state",
-		"Reassess the parent objective and overall task completion",
-		"new facts that were unavailable during the original decomposition",
-		"missing coverage, insufficient detail, an untested path",
-		"call aegis_create_subissues again and dispatch a new bounded wave",
+		"acceptance owner for the parent objective",
+		"classify it as PASS, FAIL, or UNPROVEN",
+		"proves only that child's objective",
+		"post a concrete Board comment describing the failed acceptance criterion and notify that owner to continue",
+		"dispatch the next small dependency-free wave",
+		"estimatedWaitMinutes",
+		"MUST continue implementation",
+		"Do not reinterpret, weaken, or replace the parent objective",
+		"Only then run parent-level verification",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("continuation prompt is missing %q:\n%s", expected, prompt)

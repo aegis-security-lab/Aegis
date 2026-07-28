@@ -40,6 +40,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
+import { isSendMessageKey } from "@/lib/keyboard"
 import {
   createConciergeConversation,
   deleteConciergeConversation,
@@ -434,11 +435,7 @@ export function WorkspaceChatPage() {
                 placeholder="告诉管家你的需求…"
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (
-                    event.key === "Enter" &&
-                    !event.shiftKey &&
-                    !event.nativeEvent.isComposing
-                  ) {
+                  if (isSendMessageKey(event)) {
                     event.preventDefault()
                     void send()
                   }

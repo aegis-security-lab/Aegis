@@ -3,7 +3,6 @@ package control
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 )
 
@@ -38,7 +37,7 @@ func TestRestartTaskCreatesNewRootIssueWithOriginalSource(t *testing.T) {
 	}
 }
 
-func TestTaskWorkspaceListsNestedFiles(t *testing.T) {
+func TestFreshTaskWorkspaceDoesNotExposeHostFiles(t *testing.T) {
 	store := configuredStore(t)
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "nested"), 0o700); err != nil {
@@ -58,14 +57,8 @@ func TestTaskWorkspaceListsNestedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	paths := make([]string, 0, len(workspace.Entries))
-	for _, entry := range workspace.Entries {
-		paths = append(paths, entry.Path)
-	}
-	for _, expected := range []string{"README.md", "nested", "nested/report.txt"} {
-		if !slices.Contains(paths, expected) {
-			t.Fatalf("workspace entries %v missing %q", paths, expected)
-		}
+	if workspace.Root != "/workspace" || len(workspace.Entries) != 0 {
+		t.Fatalf("fresh task exposed host workspace files: %+v", workspace)
 	}
 }
 
@@ -77,8 +70,21 @@ func TestStartupMigratesLegacyRootIssueToReusableTaskOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.TaskSourceID != "" {
-		t.Fatalf("test fixture unexpectedly has a Task source: %+v", legacy)
+	// Current writes enforce the invariant, so deliberately downgrade the row
+	// to the shape persisted by releases before Tasks and task containers.
+	if legacy.TaskSourceID == "" || legacy.ContainerID == "" {
+		t.Fatalf("current root invariant missing before downgrade: %+v", legacy)
+	}
+	if err = store.db.Delete(&ContainerInstance{}, "id = ?", legacy.ContainerID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Delete(&Task{}, "id = ?", legacy.TaskSourceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", legacy.ID).Updates(map[string]any{
+		"task_source_id": "", "container_id": "", "container_profile_id": "",
+	}).Error; err != nil {
+		t.Fatal(err)
 	}
 
 	reopened, err := NewStore(store.DataDir())
@@ -90,6 +96,9 @@ func TestStartupMigratesLegacyRootIssueToReusableTaskOnce(t *testing.T) {
 	}
 	if legacy.TaskSourceID == "" {
 		t.Fatal("legacy root Issue was not assigned a reusable Task")
+	}
+	if legacy.ContainerID == "" {
+		t.Fatal("legacy root Issue was not assigned the Task container")
 	}
 	var count int64
 	if err = reopened.db.Model(&Task{}).Where("id = ?", legacy.TaskSourceID).Count(&count).Error; err != nil || count != 1 {

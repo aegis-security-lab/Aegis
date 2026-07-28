@@ -95,6 +95,44 @@ func TestContainerWorkspaceIsListedDirectlyFromDockerArchive(t *testing.T) {
 	}
 }
 
+func TestContainerWorkspaceHidesAegisRuntimeFiles(t *testing.T) {
+	_, statePath := installFakeDocker(t)
+	if err := os.WriteFile(statePath, []byte("running\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	for _, header := range []*tar.Header{
+		{Name: "./.aegis/", Typeflag: tar.TypeDir, Mode: 0o700},
+		{Name: "./.aegis/issues/issue-1/", Typeflag: tar.TypeDir, Mode: 0o700},
+		{Name: "./report.md", Typeflag: tar.TypeReg, Mode: 0o600, Size: 6},
+	} {
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Typeflag == tar.TypeReg {
+			_, _ = writer.Write([]byte("report"))
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "workspace.tar")
+	if err := os.WriteFile(archivePath, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_DOCKER_TAR", archivePath)
+	workspace, err := containerTaskWorkspace(ContainerInstance{
+		Name: "aegis-task-clean", WorkspacePath: "/workspace", RuntimeStatus: "running",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workspace.Entries) != 1 || workspace.Entries[0].Path != "report.md" {
+		t.Fatalf("runtime files leaked into task workspace: %+v", workspace.Entries)
+	}
+}
+
 func TestSavingContainerProfileOnlyPersistsConfiguration(t *testing.T) {
 	logPath, _ := installFakeDocker(t)
 	store := configuredStore(t)
@@ -113,7 +151,7 @@ func TestSavingContainerProfileOnlyPersistsConfiguration(t *testing.T) {
 	}
 }
 
-func TestTaskExecutionCreatesAndBindsPersistentContainer(t *testing.T) {
+func TestTaskCreationBindsPersistentContainerAndExecutionStartsIt(t *testing.T) {
 	logPath, _ := installFakeDocker(t)
 	store := configuredStore(t)
 	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{
@@ -131,8 +169,12 @@ func TestTaskExecutionCreatesAndBindsPersistentContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.ContainerID != "" || issue.ContainerID != "" {
-		t.Fatalf("container was created before execution: task=%+v issue=%+v", task, issue)
+	if task.ContainerID == "" || issue.ContainerID != task.ContainerID {
+		t.Fatalf("task creation did not bind one container: task=%+v issue=%+v", task, issue)
+	}
+	containers := store.Containers()
+	if len(containers) != 1 || containers[0].TaskID != task.ID || containers[0].RuntimeStatus != "missing" {
+		t.Fatalf("unexpected container allocation before execution: %+v", containers)
 	}
 	container, err := store.ensureTaskContainer(issue)
 	if err != nil {
@@ -186,6 +228,73 @@ func TestTaskExecutionCreatesAndBindsPersistentContainer(t *testing.T) {
 	}
 	if stopped.RuntimeStatus != "exited" {
 		t.Fatalf("runtime status after stop = %q", stopped.RuntimeStatus)
+	}
+}
+
+func TestUnsourcedRootIssueIsPromotedToTaskWithContainer(t *testing.T) {
+	installFakeDocker(t)
+	store := configuredStore(t)
+	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{
+		Name: "root task worker", WorkspacePath: "/workspace",
+		NetworkMode: "bridge", MemoryMB: 1024, CPUs: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := store.CreateIssue(CreateIssueInput{
+		Title: "promote this root", Objective: "bind task and container",
+		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.TaskSourceID == "" || root.ContainerID == "" {
+		t.Fatalf("root Issue is not fully bound: %+v", root)
+	}
+	task, err := store.GetTask(root.TaskSourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ContainerID != root.ContainerID {
+		t.Fatalf("task/root container mismatch: task=%q root=%q", task.ContainerID, root.ContainerID)
+	}
+}
+
+func TestRootIssueCreationAutomaticallyCreatesTask(t *testing.T) {
+	installFakeDocker(t)
+	store := configuredStore(t)
+	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{
+		Name: "standalone issue", WorkspacePath: "/workspace",
+		NetworkMode: "bridge", MemoryMB: 1024, CPUs: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := store.CreateIssue(CreateIssueInput{
+		Title: "standalone root", Objective: "run without a Task", Priority: "medium",
+		WorkMode: "autonomous", ContainerProfileID: profile.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := store.CreateIssue(CreateIssueInput{
+		ParentID: root.ID, Title: "standalone child", Objective: "reuse the Issue tree container",
+		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	container, err := store.ensureTaskContainer(child)
+	if err != nil {
+		t.Fatalf("standalone Issue required a Task definition: %v", err)
+	}
+	if root.TaskSourceID == "" || container.TaskID != root.TaskSourceID {
+		t.Fatalf("root Issue was not promoted to a container-backed Task: root=%+v container=%+v", root, container)
+	}
+	root, _ = store.GetIssue(root.ID)
+	child, _ = store.GetIssue(child.ID)
+	if root.ContainerID != container.ID || child.ContainerID != container.ID {
+		t.Fatalf("standalone container binding missing: root=%q child=%q container=%q", root.ContainerID, child.ContainerID, container.ID)
 	}
 }
 

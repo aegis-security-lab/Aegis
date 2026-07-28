@@ -10,13 +10,16 @@ import {
   ListTodo,
   LibraryBig,
   MessagesSquare,
+  MessageCircleMore,
   Moon,
   Plus,
   Radar,
+  Search,
   Settings,
   ShieldAlert,
   Sparkles,
   Sun,
+  UserRound,
   Users,
   Wrench,
 } from "lucide-react"
@@ -53,17 +56,65 @@ import {
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 
-const ManagementTalentLibrary = React.lazy(() => import("@/pages/talent-library").then((module) => ({ default: module.TalentLibraryPage })))
-const ManagementDepartments = React.lazy(() => import("@/pages/departments").then((module) => ({ default: module.DepartmentsPage })))
-const ManagementSkills = React.lazy(() => import("@/pages/skills").then((module) => ({ default: module.SkillsPage })))
-const ManagementKnowledgeBases = React.lazy(() => import("@/pages/knowledge-bases").then((module) => ({ default: module.KnowledgeBasesPage })))
-const ManagementSessions = React.lazy(() => import("@/pages/sessions").then((module) => ({ default: module.SessionsPage })))
-const ManagementApprovals = React.lazy(() => import("@/pages/approvals").then((module) => ({ default: module.ApprovalsPage })))
-const ManagementContainers = React.lazy(() => import("@/pages/containers").then((module) => ({ default: module.ContainersPage })))
-const ManagementSecurity = React.lazy(() => import("@/pages/security").then((module) => ({ default: module.SecurityPage })))
-const ManagementFindings = React.lazy(() => import("@/pages/findings").then((module) => ({ default: module.FindingsPage })))
-const ManagementUncover = React.lazy(() => import("@/pages/uncover").then((module) => ({ default: module.UncoverPage })))
-const ManagementSettings = React.lazy(() => import("@/pages/settings").then((module) => ({ default: module.SettingsPage })))
+const ManagementTalentLibrary = React.lazy(() =>
+  import("@/pages/talent-library").then((module) => ({
+    default: module.TalentLibraryPage,
+  }))
+)
+const ManagementAgents = React.lazy(() =>
+  import("@/pages/agents").then((module) => ({ default: module.AgentsPage }))
+)
+const ManagementDepartments = React.lazy(() =>
+  import("@/pages/departments").then((module) => ({
+    default: module.DepartmentsPage,
+  }))
+)
+const ManagementSkills = React.lazy(() =>
+  import("@/pages/skills").then((module) => ({ default: module.SkillsPage }))
+)
+const ManagementKnowledgeBases = React.lazy(() =>
+  import("@/pages/knowledge-bases").then((module) => ({
+    default: module.KnowledgeBasesPage,
+  }))
+)
+const ManagementSessions = React.lazy(() =>
+  import("@/pages/sessions").then((module) => ({
+    default: module.SessionsPage,
+  }))
+)
+const ManagementApprovals = React.lazy(() =>
+  import("@/pages/approvals").then((module) => ({
+    default: module.ApprovalsPage,
+  }))
+)
+const ManagementContainers = React.lazy(() =>
+  import("@/pages/containers").then((module) => ({
+    default: module.ContainersPage,
+  }))
+)
+const ManagementSecurity = React.lazy(() =>
+  import("@/pages/security").then((module) => ({
+    default: module.SecurityPage,
+  }))
+)
+const ManagementFindings = React.lazy(() =>
+  import("@/pages/findings").then((module) => ({
+    default: module.FindingsPage,
+  }))
+)
+const ManagementUncover = React.lazy(() =>
+  import("@/pages/uncover").then((module) => ({ default: module.UncoverPage }))
+)
+const ManagementWebSearch = React.lazy(() =>
+  import("@/pages/web-search-settings").then((module) => ({
+    default: module.WebSearchSettingsPage,
+  }))
+)
+const ManagementSettings = React.lazy(() =>
+  import("@/pages/settings").then((module) => ({
+    default: module.SettingsPage,
+  }))
+)
 
 const navigation = [
   {
@@ -73,31 +124,106 @@ const navigation = [
       { to: "/workspace", label: "管家", icon: Sparkles },
       { to: "/tasks", label: "任务", icon: ListTodo },
       { to: "/timeline", label: "时间线", icon: History },
-      { to: "/issues", label: "Issues", icon: CheckSquare2 },
+      { to: "/issues", label: "Board", icon: CheckSquare2 },
+      { to: "/relay", label: "Relay", icon: MessageCircleMore },
     ],
   },
 ]
 
 const managementGroups = [
-  { label: "Agent 系统", items: [
-    { id: "talent-library", label: "人才库", icon: Users, page: ManagementTalentLibrary },
-    { id: "departments", label: "组织架构", icon: Building2, page: ManagementDepartments },
-    { id: "skills", label: "Skills", icon: Wrench, page: ManagementSkills },
-    { id: "knowledge-bases", label: "知识库", icon: LibraryBig, page: ManagementKnowledgeBases },
-  ] },
-  { label: "运行时", items: [
-    { id: "sessions", label: "Sessions", icon: MessagesSquare, page: ManagementSessions },
-    { id: "approvals", label: "审批中心", icon: ClipboardCheck, page: ManagementApprovals },
-    { id: "containers", label: "容器管理", icon: Boxes, page: ManagementContainers },
-  ] },
-  { label: "安全", items: [
-    { id: "security", label: "安全态势", icon: ShieldAlert, page: ManagementSecurity },
-    { id: "findings", label: "发现详情", icon: FileSearch, page: ManagementFindings },
-    { id: "uncover", label: "空间搜索", icon: Radar, page: ManagementUncover },
-  ] },
-  { label: "设置", items: [
-    { id: "settings", label: "全局设置", icon: Settings, page: ManagementSettings },
-  ] },
+  {
+    label: "Agent 系统",
+    items: [
+      {
+        id: "agents",
+        label: "员工管理",
+        icon: UserRound,
+        page: ManagementAgents,
+      },
+      {
+        id: "talent-library",
+        label: "人才库",
+        icon: Users,
+        page: ManagementTalentLibrary,
+      },
+      {
+        id: "departments",
+        label: "组织架构",
+        icon: Building2,
+        page: ManagementDepartments,
+      },
+      { id: "skills", label: "Skills", icon: Wrench, page: ManagementSkills },
+      {
+        id: "knowledge-bases",
+        label: "知识库",
+        icon: LibraryBig,
+        page: ManagementKnowledgeBases,
+      },
+    ],
+  },
+  {
+    label: "运行时",
+    items: [
+      {
+        id: "sessions",
+        label: "Sessions",
+        icon: MessagesSquare,
+        page: ManagementSessions,
+      },
+      {
+        id: "approvals",
+        label: "审批中心",
+        icon: ClipboardCheck,
+        page: ManagementApprovals,
+      },
+      {
+        id: "containers",
+        label: "容器管理",
+        icon: Boxes,
+        page: ManagementContainers,
+      },
+    ],
+  },
+  {
+    label: "安全",
+    items: [
+      {
+        id: "security",
+        label: "安全态势",
+        icon: ShieldAlert,
+        page: ManagementSecurity,
+      },
+      {
+        id: "findings",
+        label: "发现详情",
+        icon: FileSearch,
+        page: ManagementFindings,
+      },
+      {
+        id: "uncover",
+        label: "空间搜索",
+        icon: Radar,
+        page: ManagementUncover,
+      },
+      {
+        id: "web-search",
+        label: "搜索服务",
+        icon: Search,
+        page: ManagementWebSearch,
+      },
+    ],
+  },
+  {
+    label: "设置",
+    items: [
+      {
+        id: "settings",
+        label: "全局设置",
+        icon: Settings,
+        page: ManagementSettings,
+      },
+    ],
+  },
 ]
 
 export function AppShell() {
@@ -105,10 +231,16 @@ export function AppShell() {
   const location = useLocation()
   const { resolvedTheme, setTheme } = useTheme()
   const [managementItem, setManagementItem] = React.useState("talent-library")
-  const selectedManagementItem = managementGroups.flatMap((group) => group.items).find((item) => item.id === managementItem) ?? managementGroups[0].items[0]
+  const selectedManagementItem =
+    managementGroups
+      .flatMap((group) => group.items)
+      .find((item) => item.id === managementItem) ??
+    managementGroups[0].items[0]
   const ManagementPage = selectedManagementItem.page
   const workspaceRoute =
     location.pathname.startsWith("/workspace") ||
+    location.pathname.startsWith("/employees") ||
+    location.pathname.startsWith("/relay") ||
     /^\/issues\/[^/]+$/.test(location.pathname)
 
   return (
@@ -199,7 +331,13 @@ export function AppShell() {
           </Button>
           <Dialog>
             <DialogTrigger
-              render={<Button variant="ghost" size="icon-sm" aria-label="打开系统管理" />}
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="打开系统管理"
+                />
+              }
             >
               <Settings />
             </DialogTrigger>
@@ -212,15 +350,26 @@ export function AppShell() {
             >
               <DialogHeader className="sr-only">
                 <DialogTitle>系统管理</DialogTitle>
-                <DialogDescription>在一个窗口中管理 Agent、运行环境、安全能力和全局设置。</DialogDescription>
+                <DialogDescription>
+                  在一个窗口中管理 Agent、运行环境、安全能力和全局设置。
+                </DialogDescription>
               </DialogHeader>
               <div className="grid size-full min-h-0 grid-cols-[240px_minmax(0,1fr)] overflow-hidden">
                 <nav className="min-h-0 overflow-y-auto border-r bg-muted/20 px-3 py-8">
                   {managementGroups.map((group) => (
                     <div key={group.label} className="mb-6 flex flex-col gap-1">
-                      <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">{group.label}</p>
+                      <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">
+                        {group.label}
+                      </p>
                       {group.items.map((item) => (
-                        <Button key={item.id} variant={managementItem === item.id ? "secondary" : "ghost"} className="w-full justify-start" onClick={() => setManagementItem(item.id)}>
+                        <Button
+                          key={item.id}
+                          variant={
+                            managementItem === item.id ? "secondary" : "ghost"
+                          }
+                          className="w-full justify-start"
+                          onClick={() => setManagementItem(item.id)}
+                        >
                           <item.icon data-icon="inline-start" />
                           {item.label}
                         </Button>
@@ -229,7 +378,13 @@ export function AppShell() {
                   ))}
                 </nav>
                 <div className="min-h-0 min-w-0 overflow-y-auto px-6 py-8 lg:px-10">
-                  <React.Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载…</div>}>
+                  <React.Suspense
+                    fallback={
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        正在加载…
+                      </div>
+                    }
+                  >
                     <ManagementPage />
                   </React.Suspense>
                 </div>

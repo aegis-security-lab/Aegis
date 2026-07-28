@@ -19,13 +19,7 @@ import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
@@ -182,6 +176,7 @@ function EventCard({
     : event
   const tool = toolData(resolvedEvent)
   const summary = tool ? summarizeTool(tool) : null
+  const errorSummary = tool?.isError ? oneLine(toolOutput(tool)) : ""
   const purpose = tool ? toolPurpose(tool) : ""
   const icon = summary?.icon ?? eventIcon(resolvedEvent)
   const status = tool?.status || resolvedEvent.status
@@ -211,9 +206,9 @@ function EventCard({
               <CardTitle className="truncate text-sm font-medium">
                 {purpose || summary?.title || event.title}
               </CardTitle>
-              {summary?.meta ? (
+              {errorSummary || summary?.meta ? (
                 <span className="shrink-0 text-xs text-muted-foreground">
-                  {summary.meta}
+                  {errorSummary || summary?.meta}
                 </span>
               ) : null}
             </div>
@@ -339,22 +334,6 @@ function summarizeTool(tool: ToolData) {
         meta: `${stringValue(tool.input.mode) || "progress"} · ${stringValue(tool.input.sessionId) || "Session"}`,
         icon: "info" as const,
       }
-    case "aegis_broadcast": {
-      const delivered = Number(asRecord(tool.output.details).deliveredCount)
-      return {
-        title: `广播 · ${stringValue(tool.input.subject) || "任务信息"}`,
-        meta: Number.isFinite(delivered) ? `投递 ${delivered}` : "",
-        icon: "info" as const,
-      }
-    }
-    case "aegis_list_broadcasts": {
-      const count = asArray(asRecord(tool.output.details).broadcasts).length
-      return {
-        title: "读取广播历史",
-        meta: count ? `${count} 条` : "",
-        icon: "info" as const,
-      }
-    }
     case "aegis_uncover_search":
       return {
         title: `空间搜索 · ${stringValue(tool.input.engine) || "引擎"}`,
@@ -442,10 +421,6 @@ function ToolDetails({ tool, issues }: { tool: ToolData; issues: Issue[] }) {
           </div>
         </div>
       )
-    case "aegis_broadcast":
-      return <BroadcastDetails tool={tool} />
-    case "aegis_list_broadcasts":
-      return <BroadcastHistoryDetails tool={tool} />
     case "aegis_uncover_search":
       return <UncoverSearchDetails tool={tool} />
     default:
@@ -528,58 +503,6 @@ function UncoverSearchDetails({ tool }: { tool: ToolData }) {
       {tool.isError ? (
         <CodeSection label="搜索错误" value={toolOutput(tool)} />
       ) : null}
-    </div>
-  )
-}
-
-function BroadcastDetails({ tool }: { tool: ToolData }) {
-  const details = asRecord(tool.output.details)
-  const delivered = Number(details.deliveredCount)
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2">
-        <Badge variant="secondary">
-          {stringValue(tool.input.importance) || "normal"}
-        </Badge>
-        {Number.isFinite(delivered) ? (
-          <Badge variant="outline">已投递 {delivered}</Badge>
-        ) : null}
-      </div>
-      <div className="flex flex-col gap-1">
-        <p className="text-xs font-medium text-muted-foreground">广播内容</p>
-        <MarkdownContent>
-          {stringValue(tool.input.message) || "没有广播内容"}
-        </MarkdownContent>
-      </div>
-    </div>
-  )
-}
-
-function BroadcastHistoryDetails({ tool }: { tool: ToolData }) {
-  const items = asArray(asRecord(tool.output.details).broadcasts).map(asRecord)
-  if (items.length === 0) {
-    return <p className="text-sm text-muted-foreground">没有历史广播。</p>
-  }
-  return (
-    <div className="flex flex-col gap-3">
-      {items.map((item, index) => (
-        <Card key={stringValue(item.id) || index} size="sm">
-          <CardHeader>
-            <div className="flex items-start justify-between gap-3">
-              <CardTitle>{stringValue(item.subject) || "任务广播"}</CardTitle>
-              <Badge variant="outline">
-                {stringValue(item.importance) || "normal"}
-              </Badge>
-            </div>
-            <CardDescription>
-              {stringValue(item.sourceAgentId)} · {stringValue(item.createdAt)}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <MarkdownContent>{stringValue(item.message)}</MarkdownContent>
-          </CardContent>
-        </Card>
-      ))}
     </div>
   )
 }

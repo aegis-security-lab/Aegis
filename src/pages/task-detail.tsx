@@ -360,7 +360,7 @@ function referenceName(id?: string, name?: string) {
 }
 
 function agentLabel(issue: Issue, agents: Array<{ id: string; name: string }>) {
-  if (!issue.assigneeAgentId) return "未指定 Agent"
+  if (!issue.assigneeAgentId) return "未指定负责人"
   return (
     agents.find((candidate) => candidate.id === issue.assigneeAgentId)?.name ??
     issue.assigneeAgentId

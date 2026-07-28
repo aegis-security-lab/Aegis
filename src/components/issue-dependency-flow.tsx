@@ -273,7 +273,7 @@ function buildDependencyGraph(
       data: {
         issue,
         agentName:
-          agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent",
+          agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配负责人",
         incoming: dependencies.length,
         unresolved: dependencies.filter((id) => {
           const blocker = issueMap.get(id)

@@ -21,6 +21,7 @@ export interface ConfigView {
   maxDirectChildren: number
   issueBudget: IssueBudgetConfig
   issueHeartbeat: IssueHeartbeatConfig
+  webSearch: WebSearchConfigView
   updatedAt: string
 }
 export interface IssueBudgetConfig {
@@ -31,6 +32,38 @@ export interface IssueBudgetConfig {
 }
 export interface IssueHeartbeatConfig {
   intervalSeconds: number
+}
+export interface WebSearchConfigView {
+  engine: "tavily"
+  baseUrl: string
+  hasApiKey: boolean
+  enabled: boolean
+}
+export interface WebSearchConfig {
+  engine: "tavily"
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+}
+export interface WebSearchInput {
+  query: string
+  topic: "general" | "news" | "finance"
+  searchDepth: "basic" | "advanced"
+  includeAnswer: boolean
+  maxResults: number
+}
+export interface WebSearchItem {
+  title: string
+  url: string
+  content: string
+  score?: number
+}
+export interface WebSearchResult {
+  engine: string
+  query: string
+  answer?: string
+  results: WebSearchItem[]
+  responseTime?: number
 }
 export interface RuntimeProbe {
   ready: boolean
@@ -149,6 +182,7 @@ export type IssueStatus =
   | "in_review"
   | "done"
   | "blocked"
+  | "failed"
   | "cancelled"
 export type IssueExecutionPhase =
   | "active"
@@ -227,14 +261,24 @@ export interface Execution {
   issueId: string
   agentId: string
   kind:
-    "planning" | "work" | "continuation" | "validation" | "rework" | "wakeup"
+    | "planning"
+    | "work"
+    | "continuation"
+    | "validation"
+    | "rework"
+    | "wakeup"
+    | "heartbeat"
+    | "recovery"
+    | "employee_chat"
+    | "concierge"
+    | "chat"
   status: ExecutionStatus
   provider: string
   model: string
   pricing: ModelPricing
   thinking: string
   sessionId: string
-  issueAgentSessionId?: string
+  employeeSessionId?: string
   pid?: number
   runtimeType: "host" | "container"
   runtimeId?: string
@@ -261,18 +305,64 @@ export interface Execution {
   updatedAt: string
   finishedAt?: string
 }
-export interface IssueAgentSession {
+export interface EmployeeSession {
   id: string
-  issueId: string
   agentId: string
+  issueId?: string
   sessionId: string
-  status: "active" | "broken" | "superseded" | "archived"
-  generation: number
-  runtimeType: "host" | "container"
-  containerProfileId?: string
-  workspace: string
+  homeIssueId?: string
+  status: "active" | "archived"
   createdAt: string
   updatedAt: string
+}
+export interface RelayThread {
+  id: string
+  kind: "direct" | "group" | "system"
+  title: string
+  participantIds: string[]
+  lastMessageAt: string
+  createdAt: string
+  updatedAt: string
+}
+export interface RelayMessage {
+  id: string
+  threadId: string
+  senderType: "agent" | "operator" | "app"
+  senderId: string
+  recipientIds: string[]
+  body: string
+  issueId?: string
+  createdAt: string
+}
+export interface RelayThreadSummary {
+  thread: RelayThread
+  lastMessage?: RelayMessage
+  unreadCount: number
+}
+export interface RelayConversation {
+  thread: RelayThread
+  messages: RelayMessage[]
+  unreadCount: number
+}
+export interface EmployeeWorkspace {
+  agent: AgentDefinition
+  session: EmployeeSession
+  sessions: EmployeeSession[]
+  executions: Execution[]
+  messages: Message[]
+  events: ExecutionEvent[]
+  attachments: IssueAttachment[]
+  issues: Issue[]
+  relay: RelayThreadSummary[]
+  watermark: string
+}
+export interface EmployeeActivity {
+  executions: Execution[]
+  messages: Message[]
+  events: ExecutionEvent[]
+  attachments: IssueAttachment[]
+  issues: Issue[]
+  watermark: string
 }
 export interface ToolSnapshot {
   name: string
@@ -314,22 +404,6 @@ export interface ExecutionProgress {
   currentActivity: string
   createdAt: string
 }
-export interface TaskBroadcast {
-  id: string
-  taskId: string
-  sourceIssueId: string
-  sourceIssueIdentifier: string
-  sourceIssueTitle: string
-  sourceExecutionId: string
-  sourceAgentId: string
-  sourceAgentName: string
-  subject: string
-  message: string
-  importance: "normal" | "important" | "critical"
-  deliveredCount: number
-  recipientExecutionIds: string[]
-  createdAt: string
-}
 export interface Message {
   id: string
   executionId: string
@@ -344,6 +418,19 @@ export interface OperatorAttachment {
   name: string
   path: string
   size: number
+}
+export interface InputAttachment {
+  id: string
+  scope: "task" | "employee"
+  ownerId?: string
+  taskId?: string
+  issueId?: string
+  executionId?: string
+  name: string
+  mimeType: string
+  size: number
+  createdAt: string
+  boundAt?: string
 }
 export interface ConciergeConversation {
   id: string
@@ -449,7 +536,6 @@ export interface IssueDetail {
   blockedBy: Issue[]
   blocks: Issue[]
   executions: Execution[]
-  agentSessions: IssueAgentSession[]
   comments: IssueComment[]
   messages: Message[]
   events: ExecutionEvent[]
@@ -457,17 +543,10 @@ export interface IssueDetail {
   wakeups: AgentWakeup[]
   decompositions: IssueDecomposition[]
   validations: IssueValidation[]
-  broadcasts: TaskBroadcast[]
   commentsPage: PageInfo
   eventsPage: PageInfo
   executionsPage: PageInfo
   watermark: string
-}
-export interface IssueAgentTimeline {
-  session: IssueAgentSession
-  executions: Execution[]
-  messages: Message[]
-  events: ExecutionEvent[]
 }
 export interface PageInfo {
   nextCursor?: string
@@ -556,6 +635,7 @@ export interface AgentDefinition {
   id: string
   templateId: string
   name: string
+  englishName: string
   description: string
   avatar: string
   category: string
@@ -570,8 +650,18 @@ export interface AgentDefinition {
   knowledgeBaseIds: string[]
   permissions: PermissionBoundary
   departmentId?: string
+  positionId?: string
+  managerAgentId?: string
   createdAt: string
   updatedAt: string
+}
+export interface EmployeeAvailability {
+  agentId: string
+  available: boolean
+  currentIssueId?: string
+  currentIssueIdentifier?: string
+  currentIssueTitle?: string
+  activity?: "issue" | "session" | "unknown"
 }
 export interface Department {
   id: string
@@ -580,6 +670,26 @@ export interface Department {
   code: string
   description: string
   leaderAgentId?: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface Position {
+  id: string
+  departmentId: string
+  templateId: string
+  name: string
+  englishName: string
+  code: string
+  description: string
+  avatar: string
+  category: string
+  model: AgentModelConfig
+  systemPrompt: string
+  tools: string[]
+  skillIds: string[]
+  knowledgeBaseIds: string[]
+  permissions: PermissionBoundary
   enabled: boolean
   createdAt: string
   updatedAt: string
@@ -672,7 +782,9 @@ export interface AppState {
   executions: Execution[]
   approvals: Approval[]
   agents: AgentDefinition[]
+  employeeAvailability: EmployeeAvailability[]
   departments: Department[]
+  positions: Position[]
   skills: SkillDefinition[]
   knowledgeBases: KnowledgeBase[]
   sessions: SessionSummary[]
@@ -700,6 +812,7 @@ export interface SaveConfigInput {
   maxDirectChildren: number
   issueBudget: IssueBudgetConfig
   issueHeartbeat: IssueHeartbeatConfig
+  webSearch: WebSearchConfig
 }
 export interface CreateIssueInput {
   projectId?: string
@@ -717,6 +830,7 @@ export interface CreateIssueInput {
   timeBudgetMinutes?: number
   humanValidationFallback?: boolean
   blockedBy?: string[]
+  attachmentIds?: string[]
 }
 export interface ConnectionTestResult {
   ok: boolean

@@ -245,7 +245,6 @@ func (m *Manager) finalizeManualAbandon(issue Issue, executionID, agentID, resul
 	result = strings.TrimSpace(result)
 	if executionID != "" {
 		_ = m.store.updateExecution(executionID, map[string]any{"status": "completed", "result": result, "current_tool": "", "finished_at": now, "pid": 0})
-		m.addAgentComment(issue.ID, agentID, fallback(result, "已按操作员要求停止工作并完成最终总结。"), executionID)
 	}
 	if result == "" {
 		result = "操作员已放弃目标；当前没有可继续使用的负责人会话，因此未生成额外总结。"

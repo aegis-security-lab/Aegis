@@ -1,6 +1,7 @@
 package control
 
 import (
+	"archive/zip"
 	"bytes"
 	"errors"
 	"fmt"
@@ -62,6 +63,8 @@ func (m *Manager) UploadOperatorAttachment(issueID, executionID, name string, so
 
 const MaxAttachmentSize = 100 << 20
 const maxValidationAttachmentChunk = 32 << 10
+const maxValidationArchiveEntries = 1000
+const maxValidationArchiveEntrySize = 10 << 20
 
 func (m *Manager) SubmitFinalResult(executionID, token string, input SubmitFinalResultInput) (Execution, error) {
 	session := m.getSession(executionID)
@@ -82,13 +85,39 @@ func (m *Manager) SubmitFinalResult(executionID, token string, input SubmitFinal
 	if strings.TrimSpace(input.Path) != "" {
 		return Execution{}, errors.New("附件必须先通过附件工具直传服务端，再提交最终结果")
 	}
+	var unfinishedChildren int64
+	if err := m.store.db.Model(&Issue{}).Where("parent_id = ? AND status NOT IN ?", issue.ID, terminalIssueStatuses).Count(&unfinishedChildren).Error; err != nil {
+		return Execution{}, err
+	}
+	if unfinishedChildren > 0 {
+		return Execution{}, fmt.Errorf("仍有 %d 个直属子 Issue 未结束，不能提交最终结果", unfinishedChildren)
+	}
 	if err := m.store.db.Model(&Execution{}).Where("id = ?", executionID).Updates(map[string]any{"final_result": input.Body, "final_result_submitted": true, "result": input.Body}).Error; err != nil {
 		return Execution{}, err
 	}
-	m.store.addEvent(executionID, issue.ID, "delivery", "Agent 已提交最终结果", "最终结果将作为独立交付内容进入验收，不再使用验收回复作为交付正文。")
-	m.store.notify()
 	var execution Execution
-	err = m.store.db.First(&execution, "id = ?", executionID).Error
+	if err = m.store.db.First(&execution, "id = ?", executionID).Error; err != nil {
+		return Execution{}, err
+	}
+	var existing int64
+	_ = m.store.db.Model(&IssueComment{}).Where("issue_id = ? AND execution_id = ? AND type = ?", issue.ID, execution.ID, "delivery").Count(&existing).Error
+	if existing == 0 {
+		if issue.Status == "todo" || issue.Status == "backlog" {
+			_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+				"status": "in_progress", "execution_phase": "active", "current_execution_id": execution.ID,
+				"checkout_execution_id": execution.ID, "started_at": time.Now(), "updated_at": time.Now(),
+			}).Error
+			issue, _ = m.store.GetIssue(issue.ID)
+		}
+		if issue.ValidationDisabled || strings.TrimSpace(issue.Objective) == "" {
+			m.addTypedAgentComment(issue.ID, execution.AgentID, "delivery", input.Body, execution.ID, []commentWakeupTarget{})
+			m.completeIssueWithoutValidation(issue, execution.ID, input.Body, time.Now())
+		} else if err = m.publishDeliveryForValidation(issue, execution, execution.AgentID, input.Body); err != nil {
+			return Execution{}, err
+		}
+	}
+	m.store.addEvent(executionID, issue.ID, "delivery", "Agent 通过 Board 提交最终结果", "Agent 主动调用交付工具，结果已立即发布到 Issue 并进入后续验收。")
+	m.store.notify()
 	return execution, err
 }
 
@@ -121,7 +150,7 @@ func (m *Manager) ValidationAttachments(executionID, token string) ([]Validation
 	return m.validationAttachmentInfos(validation.SourceExecutionID)
 }
 
-func (m *Manager) ReadValidationAttachment(executionID, token, attachmentID string, offset int64, limit int) (ValidationAttachmentChunk, error) {
+func (m *Manager) ReadValidationAttachment(executionID, token, attachmentID, archivePath string, offset int64, limit int) (ValidationAttachmentChunk, error) {
 	validation, err := m.validationAttachmentContext(executionID, token)
 	if err != nil {
 		return ValidationAttachmentChunk{}, err
@@ -132,11 +161,9 @@ func (m *Manager) ReadValidationAttachment(executionID, token, attachmentID stri
 		return ValidationAttachmentChunk{}, errors.New("validation attachment not found")
 	}
 	info := m.validationAttachmentInfo(attachment)
-	if !info.Readable {
+	archivePath = strings.TrimSpace(filepath.ToSlash(archivePath))
+	if !info.Readable && archivePath == "" {
 		return ValidationAttachmentChunk{}, errors.New("该附件不是可按文本读取的格式，请根据附件元信息判断或要求 Worker 提供可读取版本")
-	}
-	if offset < 0 || offset > attachment.Size {
-		return ValidationAttachmentChunk{}, errors.New("附件读取 offset 超出范围")
 	}
 	if limit <= 0 {
 		limit = 16 << 10
@@ -149,6 +176,12 @@ func (m *Manager) ReadValidationAttachment(executionID, token, attachmentID stri
 		return ValidationAttachmentChunk{}, err
 	}
 	defer file.Close()
+	if archivePath != "" {
+		return readValidationArchiveEntry(file, attachment.Size, info, archivePath, offset, limit)
+	}
+	if offset < 0 || offset > attachment.Size {
+		return ValidationAttachmentChunk{}, errors.New("附件读取 offset 超出范围")
+	}
 	if _, err = file.Seek(offset, io.SeekStart); err != nil {
 		return ValidationAttachmentChunk{}, err
 	}
@@ -188,12 +221,84 @@ func (m *Manager) validationAttachmentInfos(sourceExecutionID string) ([]Validat
 }
 
 func (m *Manager) validationAttachmentInfo(attachment IssueAttachment) ValidationAttachmentInfo {
-	return ValidationAttachmentInfo{
+	info := ValidationAttachmentInfo{
 		ID: attachment.ID, Name: attachment.Name, Description: attachment.Description,
 		MimeType: attachment.MimeType, Size: attachment.Size,
 		DownloadURL: strings.TrimRight(m.controlURL, "/") + "/api/attachments/" + attachment.ID,
 		Readable:    validationAttachmentReadable(attachment),
 	}
+	if strings.EqualFold(filepath.Ext(attachment.Name), ".zip") {
+		info.ArchiveEntries = m.validationArchiveEntries(attachment)
+	}
+	return info
+}
+
+func (m *Manager) validationArchiveEntries(attachment IssueAttachment) []ValidationArchiveEntry {
+	_, file, err := m.store.AttachmentFile(attachment.ID)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	reader, err := zip.NewReader(file, attachment.Size)
+	if err != nil || len(reader.File) > maxValidationArchiveEntries {
+		return nil
+	}
+	entries := make([]ValidationArchiveEntry, 0, len(reader.File))
+	for _, item := range reader.File {
+		if item.FileInfo().IsDir() || !safeValidationArchivePath(item.Name) {
+			continue
+		}
+		entries = append(entries, ValidationArchiveEntry{Path: item.Name, Size: int64(item.UncompressedSize64), Readable: validationArchiveEntryReadable(item.Name, item.UncompressedSize64)})
+	}
+	return entries
+}
+
+func readValidationArchiveEntry(file *os.File, archiveSize int64, info ValidationAttachmentInfo, archivePath string, offset int64, limit int) (ValidationAttachmentChunk, error) {
+	if !strings.EqualFold(filepath.Ext(info.Name), ".zip") || !safeValidationArchivePath(archivePath) {
+		return ValidationAttachmentChunk{}, errors.New("无效的 ZIP 内文件路径")
+	}
+	reader, err := zip.NewReader(file, archiveSize)
+	if err != nil || len(reader.File) > maxValidationArchiveEntries {
+		return ValidationAttachmentChunk{}, errors.New("ZIP 附件无效或文件数量超过限制")
+	}
+	for _, item := range reader.File {
+		if item.Name != archivePath {
+			continue
+		}
+		if !validationArchiveEntryReadable(item.Name, item.UncompressedSize64) {
+			return ValidationAttachmentChunk{}, errors.New("ZIP 内文件不是受支持的文本格式或解压后过大")
+		}
+		if offset < 0 || uint64(offset) > item.UncompressedSize64 {
+			return ValidationAttachmentChunk{}, errors.New("ZIP 内文件读取 offset 超出范围")
+		}
+		entry, openErr := item.Open()
+		if openErr != nil {
+			return ValidationAttachmentChunk{}, openErr
+		}
+		defer entry.Close()
+		if _, err = io.CopyN(io.Discard, entry, offset); err != nil && !errors.Is(err, io.EOF) {
+			return ValidationAttachmentChunk{}, err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(entry, int64(limit)))
+		if readErr != nil {
+			return ValidationAttachmentChunk{}, readErr
+		}
+		next := offset + int64(len(data))
+		return ValidationAttachmentChunk{Attachment: info, ArchivePath: archivePath, Offset: offset, NextOffset: next, Content: strings.ToValidUTF8(string(data), "�"), EOF: uint64(next) >= item.UncompressedSize64}, nil
+	}
+	return ValidationAttachmentChunk{}, errors.New("ZIP 内文件不存在")
+}
+
+func safeValidationArchivePath(name string) bool {
+	clean := filepath.ToSlash(filepath.Clean(name))
+	return name != "" && clean == filepath.ToSlash(name) && clean != "." && !strings.HasPrefix(clean, "../") && !strings.HasPrefix(clean, "/")
+}
+
+func validationArchiveEntryReadable(name string, size uint64) bool {
+	if size > maxValidationArchiveEntrySize {
+		return false
+	}
+	return validationAttachmentReadable(IssueAttachment{Name: name})
 }
 
 func validationAttachmentReadable(attachment IssueAttachment) bool {
@@ -201,7 +306,8 @@ func validationAttachmentReadable(attachment IssueAttachment) bool {
 		return true
 	}
 	switch strings.ToLower(filepath.Ext(attachment.Name)) {
-	case ".md", ".markdown", ".txt", ".json", ".jsonl", ".csv", ".tsv", ".xml", ".html", ".yaml", ".yml", ".log", ".sql":
+	case ".md", ".markdown", ".txt", ".json", ".jsonl", ".csv", ".tsv", ".xml", ".html", ".yaml", ".yml", ".log", ".sql",
+		".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".kts", ".c", ".h", ".cc", ".cpp", ".cs", ".php", ".rb", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".toml", ".ini", ".conf", ".env":
 		return true
 	default:
 		return false

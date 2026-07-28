@@ -73,7 +73,7 @@ func TestQueueDueIssueHeartbeatPersistsClockAndDeduplicates(t *testing.T) {
 	}
 }
 
-func TestQueueHeartbeatForIssueWaitingOnDependency(t *testing.T) {
+func TestDependencyRelationDoesNotCreateWaitingHeartbeat(t *testing.T) {
 	store := configuredStore(t)
 	blocker, _ := store.CreateIssue(CreateIssueInput{Title: "Prerequisite", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	blocked, _ := store.CreateIssue(CreateIssueInput{Title: "Dependent work", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
@@ -86,21 +86,11 @@ func TestQueueHeartbeatForIssueWaitingOnDependency(t *testing.T) {
 	}
 	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
 	queued := manager.queueDueIssueHeartbeats(now)
-	if len(queued) != 1 {
-		t.Fatalf("queued dependency heartbeats = %v, want one", queued)
-	}
-	var wakeup AgentWakeup
-	if err := store.db.First(&wakeup, "id = ?", queued[0]).Error; err != nil {
-		t.Fatal(err)
-	}
-	if wakeup.IssueID != blocked.ID {
-		t.Fatalf("heartbeat issue = %s, want %s", wakeup.IssueID, blocked.ID)
-	}
-	if err := store.db.Model(&Issue{}).Where("id = ?", blocker.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "completed_at": now}).Error; err != nil {
-		t.Fatal(err)
+	if len(queued) != 0 {
+		t.Fatalf("informational dependency queued waiting heartbeats: %v", queued)
 	}
 	if eligible, reason := manager.issueHeartbeatEligibility(blocked); eligible || reason != "" {
-		t.Fatalf("failed dependency still produced a waiting heartbeat: eligible=%t reason=%q", eligible, reason)
+		t.Fatalf("dependency relation still produced a waiting state: eligible=%t reason=%q", eligible, reason)
 	}
 }
 

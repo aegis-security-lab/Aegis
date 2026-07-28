@@ -14,7 +14,11 @@ import { useAppState } from "@/lib/state"
 const AgentsPage = React.lazy(() =>
   import("@/pages/agents").then((module) => ({ default: module.AgentsPage }))
 )
-const DepartmentsPage = React.lazy(() => import("@/pages/departments").then((module) => ({ default: module.DepartmentsPage })))
+const DepartmentsPage = React.lazy(() =>
+  import("@/pages/departments").then((module) => ({
+    default: module.DepartmentsPage,
+  }))
+)
 const TalentLibraryPage = React.lazy(() =>
   import("@/pages/talent-library").then((module) => ({
     default: module.TalentLibraryPage,
@@ -39,9 +43,17 @@ const IssuesPage = React.lazy(() =>
   import("@/pages/issues").then((module) => ({ default: module.IssuesPage }))
 )
 const IssueDetailPage = React.lazy(() =>
-  import("@/pages/issue-detail").then((module) => ({
-    default: module.IssueDetailPage,
+  import("@/pages/board-issue-detail").then((module) => ({
+    default: module.BoardIssueDetailPage,
   }))
+)
+const EmployeeWorkspacePage = React.lazy(() =>
+  import("@/pages/employee-workspace").then((module) => ({
+    default: module.EmployeeWorkspacePage,
+  }))
+)
+const RelayPage = React.lazy(() =>
+  import("@/pages/relay").then((module) => ({ default: module.RelayPage }))
 )
 const SettingsPage = React.lazy(() =>
   import("@/pages/settings").then((module) => ({
@@ -155,6 +167,12 @@ export function App() {
           <Route path="timeline" element={<TimelinePage />} />
           <Route path="issues" element={<IssuesPage />} />
           <Route path="issues/:issueId" element={<IssueDetailPage />} />
+          <Route path="employees" element={<EmployeeWorkspacePage />} />
+          <Route
+            path="employees/:agentId"
+            element={<EmployeeWorkspacePage />}
+          />
+          <Route path="relay" element={<RelayPage />} />
           <Route path="agents" element={<AgentsPage />} />
           <Route path="departments" element={<DepartmentsPage />} />
           <Route path="talent-library" element={<TalentLibraryPage />} />

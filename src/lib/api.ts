@@ -20,16 +20,20 @@ import type {
   FindingList,
   ExecutionEvent,
   ExecutionProgress,
+  EmployeeWorkspace,
+  EmployeeActivity,
   Issue,
   IssueComment,
   IssueDetail,
-  IssueAgentTimeline,
+  InputAttachment,
   KnowledgeBase,
   KnowledgeBaseDetail,
   KnowledgeDocument,
   Message,
-  OperatorAttachment,
   RuntimeProbe,
+  RelayConversation,
+  RelayMessage,
+  RelayThreadSummary,
   SaveConfigInput,
   SaveUncoverProviderInput,
   SessionDetail,
@@ -41,10 +45,14 @@ import type {
   TaskTimeline,
   TaskWorkspace,
   Department,
+  Position,
   UncoverEngine,
   UncoverSearchInput,
   UncoverSearchResult,
   UncoverStatus,
+  WebSearchConfig,
+  WebSearchInput,
+  WebSearchResult,
 } from "@/types"
 export type SaveContainerProfileInput = Omit<
   ContainerProfile,
@@ -54,6 +62,7 @@ export type SaveAgentInput = Omit<
   AgentDefinition,
   "builtin" | "createdAt" | "updatedAt"
 >
+export type SavePositionInput = Omit<Position, "id" | "createdAt" | "updatedAt">
 export interface SaveAgentTemplateInput {
   provider: string
   model: string
@@ -136,10 +145,9 @@ export const startContainer = (id: string) =>
     { method: "POST" }
   )
 export const stopContainer = (id: string) =>
-  request<ContainerInstance>(
-    `/api/containers/${encodeURIComponent(id)}/stop`,
-    { method: "POST" }
-  )
+  request<ContainerInstance>(`/api/containers/${encodeURIComponent(id)}/stop`, {
+    method: "POST",
+  })
 export const fetchConciergeConversations = () =>
   request<{ conversations: ConciergeConversation[] }>(
     "/api/concierge/conversations"
@@ -181,10 +189,122 @@ export const saveSettings = (input: SaveConfigInput) =>
     method: "PUT",
     body: JSON.stringify(input),
   })
+export const testWebSearch = (
+  config: WebSearchConfig,
+  search: WebSearchInput
+) =>
+  request<WebSearchResult>("/api/settings/web-search/test", {
+    method: "POST",
+    body: JSON.stringify({ config, search }),
+  })
+export const saveWebSearch = (config: WebSearchConfig) =>
+  request<AppState>("/api/settings/web-search", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  })
 export const fetchIssue = (id: string) =>
   request<IssueDetail>(`/api/issues/${encodeURIComponent(id)}`)
-export const fetchIssueAgentTimeline = (id: string, agentId: string) =>
-  request<IssueAgentTimeline>(`/api/issues/${encodeURIComponent(id)}/agents/${encodeURIComponent(agentId)}/timeline`)
+export const fetchEmployeeWorkspace = (id: string, taskId = "") =>
+  request<EmployeeWorkspace>(
+    `/api/employees/${encodeURIComponent(id)}/workspace${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`
+  )
+export const fetchEmployeeActivity = (id: string, after: string) =>
+  request<EmployeeActivity>(
+    `/api/employees/${encodeURIComponent(id)}/activity?after=${encodeURIComponent(after)}`
+  )
+export const sendEmployeeMessage = (
+  id: string,
+  message: string,
+  attachmentIds: string[] = [],
+  taskId = ""
+) =>
+  request<Message>(`/api/employees/${encodeURIComponent(id)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ message, attachmentIds, taskId }),
+  })
+
+function uploadInputAttachment(
+  path: string,
+  file: File,
+  onProgress?: (progress: number) => void
+) {
+  return new Promise<InputAttachment>((resolve, reject) => {
+    const body = new FormData()
+    body.append("file", file, file.name)
+    const request = new XMLHttpRequest()
+    request.open("POST", path)
+    request.responseType = "json"
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        onProgress?.(
+          Math.min(100, Math.round((event.loaded / event.total) * 100))
+        )
+      }
+    })
+    request.addEventListener("load", () => {
+      const response = request.response as
+        InputAttachment | { error?: string } | null
+      if (request.status >= 200 && request.status < 300 && response) {
+        onProgress?.(100)
+        resolve(response as InputAttachment)
+        return
+      }
+      reject(
+        new Error(
+          (response as { error?: string } | null)?.error ??
+            `附件上传失败 (${request.status})`
+        )
+      )
+    })
+    request.addEventListener("error", () =>
+      reject(new Error("附件上传连接失败"))
+    )
+    request.addEventListener("abort", () => reject(new Error("附件上传已取消")))
+    request.send(body)
+  })
+}
+
+export const uploadTaskAttachment = (
+  file: File,
+  onProgress?: (progress: number) => void
+) => uploadInputAttachment("/api/tasks/attachments", file, onProgress)
+
+export const uploadEmployeeAttachment = (
+  employeeId: string,
+  file: File,
+  onProgress?: (progress: number) => void
+) =>
+  uploadInputAttachment(
+    `/api/employees/${encodeURIComponent(employeeId)}/attachments`,
+    file,
+    onProgress
+  )
+
+export const deleteInputAttachment = (id: string) =>
+  request<void>(`/api/input-attachments/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
+export const fetchRelayInbox = (agentId: string) =>
+  request<{ threads: RelayThreadSummary[] }>(
+    `/api/relay/agents/${encodeURIComponent(agentId)}/inbox`
+  )
+export const fetchRelayConversation = (agentId: string, threadId: string) =>
+  request<RelayConversation>(
+    `/api/relay/agents/${encodeURIComponent(agentId)}/threads/${encodeURIComponent(threadId)}`
+  )
+export const sendRelayMessage = (
+  senderId: string,
+  recipientId: string,
+  body: string,
+  issueId = ""
+) =>
+  request<RelayMessage>(
+    `/api/relay/agents/${encodeURIComponent(senderId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({ recipientId, body, issueId }),
+    }
+  )
 const pageQuery = (before?: string, limit = 50) => {
   const query = new URLSearchParams({ limit: String(limit) })
   if (before) query.set("before", before)
@@ -216,6 +336,13 @@ export const updateIssue = (id: string, input: Partial<Issue>) =>
     method: "PATCH",
     body: JSON.stringify(input),
   })
+export const deleteIssue = (id: string) =>
+  request<{
+    issueId: string
+    deletedIssues: number
+    deletedExecutions: number
+    deletedTasks: number
+  }>(`/api/issues/${encodeURIComponent(id)}`, { method: "DELETE" })
 export const dispatchIssue = (id: string) =>
   request<{ accepted: boolean }>(
     `/api/issues/${encodeURIComponent(id)}/dispatch`,
@@ -259,22 +386,11 @@ export const createIssueComment = (id: string, body: string) =>
     method: "POST",
     body: JSON.stringify({ body }),
   })
-export const sendChat = (id: string, message: string, executionId?: string, agentId?: string) =>
-  request<Message>(`/api/issues/${encodeURIComponent(id)}/chat`, {
-    method: "POST",
-    body: JSON.stringify({ message, executionId, agentId }),
-  })
-export const sendChatWithAttachments = (id: string, message: string, executionId: string, files: File[]) => {
-  const body = new FormData()
-  body.set("message", message)
-  body.set("executionId", executionId)
-  files.forEach((file) => body.append("attachments", file))
-  return request<{ message: Message; attachments: OperatorAttachment[] }>(
-    `/api/issues/${encodeURIComponent(id)}/chat-with-attachments`,
-    { method: "POST", body }
-  )
-}
-export const resolveApproval = (id: string, approved: boolean, reviewContent = "") =>
+export const resolveApproval = (
+  id: string,
+  approved: boolean,
+  reviewContent = ""
+) =>
   request<Approval>(`/api/approvals/${encodeURIComponent(id)}`, {
     method: "POST",
     body: JSON.stringify({ approved, reviewContent }),
@@ -321,9 +437,48 @@ export const deleteAgent = (id: string) =>
 export const fetchAgentTemplates = () =>
   request<AgentTemplate[]>("/api/agent-templates")
 export const fetchDepartments = () => request<Department[]>("/api/departments")
-export const createDepartment = (input: Omit<Department,"id"|"createdAt"|"updatedAt">) => request<Department>("/api/departments", { method:"POST", body:JSON.stringify(input) })
-export const updateDepartment = (id:string,input: Omit<Department,"id"|"createdAt"|"updatedAt">) => request<Department>(`/api/departments/${encodeURIComponent(id)}`, { method:"PUT", body:JSON.stringify(input) })
-export const deleteDepartment = (id:string) => request<void>(`/api/departments/${encodeURIComponent(id)}`, { method:"DELETE" })
+export const fetchPositions = () => request<Position[]>("/api/positions")
+export const createPosition = (input: SavePositionInput) =>
+  request<Position>("/api/positions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+export const updatePosition = (id: string, input: SavePositionInput) =>
+  request<Position>(`/api/positions/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })
+export const deletePosition = (id: string) =>
+  request<void>(`/api/positions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
+export const hireEmployee = (
+  positionId: string,
+  input: { name: string; englishName: string; managerAgentId: string }
+) =>
+  request<AgentDefinition>(
+    `/api/positions/${encodeURIComponent(positionId)}/employees`,
+    { method: "POST", body: JSON.stringify(input) }
+  )
+export const createDepartment = (
+  input: Omit<Department, "id" | "createdAt" | "updatedAt">
+) =>
+  request<Department>("/api/departments", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+export const updateDepartment = (
+  id: string,
+  input: Omit<Department, "id" | "createdAt" | "updatedAt">
+) =>
+  request<Department>(`/api/departments/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })
+export const deleteDepartment = (id: string) =>
+  request<void>(`/api/departments/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
 export const createAgentTemplate = (input: SaveAgentTemplateInput) =>
   request<AgentTemplate>("/api/agent-templates", {
     method: "POST",

@@ -58,24 +58,16 @@ func TestGetIssueProgressToolSnapshotHasModesAndSeparateLimits(t *testing.T) {
 	}
 }
 
-func TestIssueCommentToolSnapshotDescribesLiveSessionSteering(t *testing.T) {
-	tools := snapshotTools([]string{"aegis_comment_issue"})
-	if len(tools) != 1 || tools[0].Source != "aegis_extension" || !strings.Contains(tools[0].Description, "固定 Pi Session") {
-		t.Fatalf("unexpected Issue comment tool snapshot: %+v", tools)
+func TestOfficeAppToolSnapshotsHaveStructuredActions(t *testing.T) {
+	tools := snapshotTools([]string{"aegis_board", "aegis_relay"})
+	if len(tools) != 2 || len(tools[0].Parameters) != 7 || len(tools[1].Parameters) != 6 {
+		t.Fatalf("office app tool snapshots=%+v", tools)
 	}
-	if len(tools[0].Parameters) != 4 || tools[0].Parameters[2].Name != "issueId" || tools[0].Parameters[3].Name != "body" {
-		t.Fatalf("unexpected Issue comment parameters: %+v", tools[0].Parameters)
+	if action := tools[0].Parameters[2]; action.Name != "action" || len(action.Enum) != 10 {
+		t.Fatalf("Board action parameter=%+v", action)
 	}
-}
-
-func TestBroadcastToolSnapshotsHaveStructuredParameters(t *testing.T) {
-	tools := snapshotTools([]string{"aegis_broadcast", "aegis_list_broadcasts"})
-	if len(tools) != 2 || len(tools[0].Parameters) != 5 || len(tools[1].Parameters) != 3 {
-		t.Fatalf("broadcast tool snapshots=%+v", tools)
-	}
-	importance := tools[0].Parameters[4]
-	if importance.Name != "importance" || len(importance.Enum) != 3 {
-		t.Fatalf("broadcast importance parameter=%+v", importance)
+	if action := tools[1].Parameters[2]; action.Name != "action" || len(action.Enum) != 4 {
+		t.Fatalf("Relay action parameter=%+v", action)
 	}
 }
 

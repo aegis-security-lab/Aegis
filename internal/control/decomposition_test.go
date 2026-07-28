@@ -1,13 +1,14 @@
 package control
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
+func TestCreateSubIssuesIsAtomicIdempotentAndDependencyFree(t *testing.T) {
 	s := configuredStore(t)
 	parent, err := s.CreateIssue(CreateIssueInput{
 		Title: "Implement a broad feature", Priority: "high", WorkMode: "autonomous",
@@ -33,8 +34,8 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 		RequestKey: "feature-v1",
 		Summary:    "Backend and UI have separate acceptance criteria.",
 		Children: []SubIssueSpec{
-			{Title: "Implement API", Description: "Add the API contract.", Objective: "API tests pass.", Priority: "high", AgentID: "backend-engineer", DependsOn: []int{}},
-			{Title: "Integrate UI", Description: "Consume the API.", Objective: "UI build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
+			{Title: "Implement API", Description: "Add the API contract.", Objective: "API tests pass.", Priority: "high", AgentID: "backend-engineer-002", DependsOn: []int{}},
+			{Title: "Integrate UI", Description: "Consume the API.", Objective: "UI build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{}},
 		},
 	}
 	tooLong := input
@@ -67,13 +68,8 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 	if err = s.db.Order("created_at asc").Find(&relations).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(relations) != 3 {
-		t.Fatalf("relations=%d, want child dependency plus two parent blockers", len(relations))
-	}
-	if !slices.ContainsFunc(relations, func(relation IssueRelation) bool {
-		return relation.IssueID == result.Children[0].ID && relation.RelatedIssueID == result.Children[1].ID
-	}) {
-		t.Fatal("child dependency edge is missing")
+	if len(relations) != 0 {
+		t.Fatalf("sub-Issues unexpectedly created dependency relations: %+v", relations)
 	}
 
 	reused, err := s.CreateSubIssues(parent.ID, execution.ID, "backend-engineer", input)
@@ -84,7 +80,7 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 		t.Fatalf("retry was not idempotent: %+v", reused)
 	}
 	var issueCount int64
-	s.db.Model(&Issue{}).Count(&issueCount)
+	s.db.Model(&Issue{}).Where("hidden = ?", false).Count(&issueCount)
 	if issueCount != 3 {
 		t.Fatalf("idempotent retry created duplicates: %d issues", issueCount)
 	}
@@ -93,7 +89,7 @@ func TestCreateSubIssuesIsAtomicIdempotentAndBuildsDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Decompositions) != 1 || len(detail.Children) != 2 || len(detail.BlockedBy) != 2 {
+	if len(detail.Decompositions) != 1 || len(detail.Children) != 2 || len(detail.BlockedBy) != 0 {
 		t.Fatalf("incomplete issue detail: %+v", detail)
 	}
 }
@@ -129,8 +125,8 @@ func TestCreateSubIssuesReopensCompletedIssueFromActiveSession(t *testing.T) {
 	result, err := s.CreateSubIssues(parent.ID, execution.ID, execution.AgentID, DecomposeIssueInput{
 		RequestKey: "comment-follow-up", Summary: "The operator requested two new workstreams.",
 		Children: []SubIssueSpec{
-			{Title: "Investigate the follow-up", Objective: "Investigation evidence is recorded.", Priority: "high", AgentID: "backend-engineer"},
-			{Title: "Deliver the follow-up", Objective: "The requested follow-up is delivered.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
+			{Title: "Investigate the follow-up", Objective: "Investigation evidence is recorded.", Priority: "high", AgentID: "backend-engineer-002"},
+			{Title: "Deliver the follow-up", Objective: "The requested follow-up is delivered.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{}},
 		},
 	})
 	if err != nil {
@@ -148,6 +144,58 @@ func TestCreateSubIssuesReopensCompletedIssueFromActiveSession(t *testing.T) {
 	}
 }
 
+func TestCreateSubIssuesReopensAcceptanceAbandonedIssueFromActiveSession(t *testing.T) {
+	s := configuredStore(t)
+	parent, err := s.CreateIssue(CreateIssueInput{
+		Title: "Abandoned task with a report follow-up", Objective: "Deliver the original task.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := s.createExecution(parent, "backend-engineer", "employee_chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.updateExecution(execution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	if err = s.db.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{
+		"status":                "cancelled",
+		"execution_phase":       "completed",
+		"objective_abandoned":   true,
+		"abandoned_at":          now,
+		"cancelled_at":          now,
+		"checkout_execution_id": "",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.CreateSubIssues(parent.ID, execution.ID, execution.AgentID, DecomposeIssueInput{
+		RequestKey: "post-abandonment-report",
+		Summary:    "Generate follow-up report from completed evidence",
+		Children: []SubIssueSpec{
+			{Title: "Write report", Objective: "Publish the complete report", AgentID: "backend-engineer-002"},
+			{Title: "Review report", Objective: "Verify report evidence", AgentID: "frontend-engineer"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Children) != 2 {
+		t.Fatalf("expected 2 children, got %d", len(result.Children))
+	}
+	reopened, err := s.GetIssue(parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Status != "in_progress" || reopened.ExecutionPhase != "waiting_children" || reopened.ObjectiveAbandoned {
+		t.Fatalf("acceptance-abandoned issue was not cleanly reopened: %+v", reopened)
+	}
+}
+
 func TestChildIssuesSkipValidationWhenParentHasNoObjective(t *testing.T) {
 	s := configuredStore(t)
 	parent, err := s.CreateIssue(CreateIssueInput{
@@ -158,7 +206,7 @@ func TestChildIssuesSkipValidationWhenParentHasNoObjective(t *testing.T) {
 	}
 	manualChild, err := s.CreateIssue(CreateIssueInput{
 		ParentID: parent.ID, Title: "Manually added work item", Objective: "Record the manual outcome.",
-		Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer-002",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +229,7 @@ func TestChildIssuesSkipValidationWhenParentHasNoObjective(t *testing.T) {
 	result, err := s.CreateSubIssues(parent.ID, execution.ID, execution.AgentID, DecomposeIssueInput{
 		RequestKey: "no-validation-tree", Summary: "Split the work without enabling acceptance validation.",
 		Children: []SubIssueSpec{
-			{Title: "First work item", Objective: "Record the first outcome.", Priority: "medium", AgentID: "backend-engineer"},
+			{Title: "First work item", Objective: "Record the first outcome.", Priority: "medium", AgentID: "backend-engineer-003"},
 			{Title: "Second work item", Objective: "Record the second outcome.", Priority: "medium", AgentID: "frontend-engineer"},
 		},
 	})
@@ -203,7 +251,8 @@ func TestIssueDepthAndHierarchyCycleBoundaries(t *testing.T) {
 	}
 	root := parent
 	for depth := 1; depth <= maxIssueDepth; depth++ {
-		parent, err = s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Nested", Objective: "Complete nested level.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+		employeeID := fmt.Sprintf("backend-engineer-%03d", depth+1)
+		parent, err = s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Nested", Objective: "Complete nested level.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: employeeID})
 		if err != nil {
 			t.Fatalf("create depth %d: %v", depth, err)
 		}

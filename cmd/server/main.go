@@ -33,7 +33,9 @@ func main() {
 	cfg := store.Config()
 	store.SetRuntimeProbe(control.DetectRuntime(cfg.NodePath, cfg.PiPath))
 	router := buildRouter(store, manager, envOr("AEGIS_DIST", "dist"))
-	server := &http.Server{Addr: ":" + envOr("PORT", "8080"), Handler: router, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second}
+	// Input attachments can be multi-gigabyte audit images. Keep the header
+	// timeout, but do not terminate a healthy streaming request after 30 seconds.
+	server := &http.Server{Addr: ":" + envOr("PORT", "8080"), Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -154,6 +156,74 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		c.JSON(http.StatusOK, gin.H{"ready": true})
 	})
 	api.GET("/state", func(c *gin.Context) { c.JSON(200, store.State()) })
+	api.GET("/employees/:id/workspace", func(c *gin.Context) {
+		workspace, err := store.EmployeeWorkspace(c.Param("id"), c.Query("taskId"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, workspace)
+	})
+	api.GET("/employees/:id/activity", func(c *gin.Context) {
+		after, err := time.Parse(time.RFC3339Nano, c.Query("after"))
+		if err != nil {
+			writeError(c, http.StatusBadRequest, errors.New("invalid activity watermark"))
+			return
+		}
+		activity, err := store.EmployeeActivity(c.Param("id"), after)
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, activity)
+	})
+	api.POST("/employees/:id/messages", func(c *gin.Context) {
+		var in struct {
+			Message       string   `json:"message"`
+			AttachmentIDs []string `json:"attachmentIds"`
+			TaskID        string   `json:"taskId"`
+		}
+		if !bindJSON(c, &in) {
+			return
+		}
+		message, err := manager.SendEmployeeTaskMessage(c.Param("id"), in.TaskID, in.Message, in.AttachmentIDs...)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, message)
+	})
+	api.POST("/employees/:id/attachments", func(c *gin.Context) {
+		receiveInputAttachment(c, store, "employee", c.Param("id"))
+	})
+	api.GET("/relay/agents/:id/inbox", func(c *gin.Context) {
+		items, err := store.RelayInbox(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"threads": items})
+	})
+	api.GET("/relay/agents/:id/threads/:threadId", func(c *gin.Context) {
+		conversation, err := store.RelayConversation(c.Param("id"), c.Param("threadId"), c.Query("markRead") != "false")
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, conversation)
+	})
+	api.POST("/relay/agents/:id/messages", func(c *gin.Context) {
+		var in control.SendRelayMessageInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		message, err := manager.SendRelayFromOperator(c.Param("id"), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, message)
+	})
 	api.GET("/events", func(c *gin.Context) { streamState(c, store) })
 	api.GET("/tools/uncover/status", func(c *gin.Context) {
 		status, err := store.UncoverStatus()
@@ -260,14 +330,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(200, v)
 	})
-	api.GET("/issues/:id/agents/:agentId/timeline", func(c *gin.Context) {
-		result, err := store.IssueAgentTimeline(c.Param("id"), c.Param("agentId"))
-		if err != nil {
-			writeError(c, http.StatusNotFound, err)
-			return
-		}
-		c.JSON(http.StatusOK, result)
-	})
 	api.GET("/issues/:id/comments", func(c *gin.Context) {
 		v, err := store.IssueCommentsPage(c.Param("id"), c.Query("before"), detailLimit(c))
 		if err != nil {
@@ -350,6 +412,16 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusCreated, gin.H{"task": task, "issue": issue})
 	})
+	api.POST("/tasks/attachments", func(c *gin.Context) {
+		receiveInputAttachment(c, store, "task", "")
+	})
+	api.DELETE("/input-attachments/:id", func(c *gin.Context) {
+		if err := store.DeleteStagedInputAttachment(c.Param("id")); err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 	api.POST("/issues", func(c *gin.Context) {
 		var in control.CreateIssueInput
 		if !bindJSON(c, &in) {
@@ -367,13 +439,20 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		if !bindJSON(c, &in) {
 			return
 		}
-		v, err := store.UpdateIssue(c.Param("id"), in)
+		v, err := manager.UpdateBoardIssue(c.Param("id"), in)
 		if err != nil {
 			writeError(c, 422, err)
 			return
 		}
-		manager.ReconcileIssue(v)
 		c.JSON(200, v)
+	})
+	api.DELETE("/issues/:id", func(c *gin.Context) {
+		result, err := manager.DeleteBoardIssue(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
 	})
 	api.POST("/internal/executions/:id/decompose", func(c *gin.Context) {
 		var in control.DecomposeIssueInput
@@ -460,6 +539,57 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, result)
 	})
+	api.POST("/internal/executions/:id/board", func(c *gin.Context) {
+		var in control.BoardCommandInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.BoardCommandFromExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/relay", func(c *gin.Context) {
+		var in control.RelayCommandInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.RelayCommandFromExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/internal/executions/:id/web-search", func(c *gin.Context) {
+		var in control.WebSearchInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
+			return
+		}
+		result, err := manager.WebSearchFromExecution(c.Request.Context(), c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
 	api.POST("/internal/executions/:id/uncover", func(c *gin.Context) {
 		var in control.UncoverSearchInput
 		if !bindJSON(c, &in) {
@@ -493,41 +623,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.JSON(http.StatusCreated, result)
-	})
-	api.POST("/internal/executions/:id/broadcasts", func(c *gin.Context) {
-		var in control.BroadcastMessageInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
-		if !strings.HasPrefix(authorization, "Bearer ") {
-			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
-			return
-		}
-		result, err := manager.BroadcastExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusCreated, result)
-	})
-	api.GET("/internal/executions/:id/broadcasts", func(c *gin.Context) {
-		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
-		if !strings.HasPrefix(authorization, "Bearer ") {
-			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
-			return
-		}
-		limit, err := strconv.Atoi(fallbackQuery(c.Query("limit"), "20"))
-		if err != nil || limit < 1 || limit > 50 {
-			writeError(c, http.StatusBadRequest, errors.New("invalid broadcast history limit"))
-			return
-		}
-		result, err := manager.ExecutionBroadcastHistory(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), limit)
-		if err != nil {
-			writeError(c, http.StatusUnauthorized, err)
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"broadcasts": result})
 	})
 	api.GET("/internal/executions/:id/child-issues", func(c *gin.Context) {
 		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
@@ -611,23 +706,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, result)
 	})
-	api.POST("/internal/executions/:id/issue-comments", func(c *gin.Context) {
-		var in control.CommentIssueInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
-		if !strings.HasPrefix(authorization, "Bearer ") {
-			writeError(c, http.StatusUnauthorized, errors.New("missing execution control token"))
-			return
-		}
-		result, err := manager.CommentIssueFromExecution(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusCreated, result)
-	})
 	api.GET("/internal/executions/:id/validation/attachments", func(c *gin.Context) {
 		authorization := strings.TrimSpace(c.GetHeader("Authorization"))
 		if !strings.HasPrefix(authorization, "Bearer ") {
@@ -657,7 +735,7 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			writeError(c, http.StatusBadRequest, errors.New("invalid attachment limit"))
 			return
 		}
-		result, err := manager.ReadValidationAttachment(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), c.Param("attachmentId"), offset, limit)
+		result, err := manager.ReadValidationAttachment(c.Param("id"), strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")), c.Param("attachmentId"), c.Query("archivePath"), offset, limit)
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return
@@ -880,65 +958,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(201, v)
 	})
-	api.POST("/issues/:id/chat", func(c *gin.Context) {
-		var in struct {
-			ExecutionID string `json:"executionId"`
-			AgentID     string `json:"agentId"`
-			Message     string `json:"message"`
-		}
-		if !bindJSON(c, &in) {
-			return
-		}
-		v, err := manager.SendIssueChat(c.Param("id"), in.ExecutionID, in.AgentID, in.Message)
-		if err != nil {
-			writeError(c, 422, err)
-			return
-		}
-		c.JSON(201, v)
-	})
-	api.POST("/issues/:id/chat-with-attachments", func(c *gin.Context) {
-		executionID := strings.TrimSpace(c.PostForm("executionId"))
-		message := strings.TrimSpace(c.PostForm("message"))
-		form, err := c.MultipartForm()
-		if err != nil {
-			writeError(c, 422, err)
-			return
-		}
-		files := form.File["attachments"]
-		if len(files) > 10 {
-			writeError(c, 422, errors.New("每次最多上传 10 个附件"))
-			return
-		}
-		uploaded := make([]control.OperatorAttachment, 0, len(files))
-		for _, header := range files {
-			file, openErr := header.Open()
-			if openErr != nil {
-				writeError(c, 422, openErr)
-				return
-			}
-			item, uploadErr := manager.UploadOperatorAttachment(c.Param("id"), executionID, header.Filename, file, header.Size)
-			file.Close()
-			if uploadErr != nil {
-				writeError(c, 422, uploadErr)
-				return
-			}
-			uploaded = append(uploaded, item)
-		}
-		if len(uploaded) > 0 {
-			var manifest strings.Builder
-			manifest.WriteString("\n\n以下附件已由用户直接上传到你的任务容器，可按容器内绝对路径读取：\n")
-			for _, item := range uploaded {
-				fmt.Fprintf(&manifest, "- %s: %s (%d bytes)\n", item.Name, item.Path, item.Size)
-			}
-			message += manifest.String()
-		}
-		v, sendErr := manager.SendChat(c.Param("id"), executionID, message)
-		if sendErr != nil {
-			writeError(c, 422, sendErr)
-			return
-		}
-		c.JSON(201, gin.H{"message": v, "attachments": uploaded})
-	})
 	api.POST("/executions/:id/stop", func(c *gin.Context) {
 		if err := manager.StopExecution(c.Param("id")); err != nil {
 			writeError(c, 409, err)
@@ -1096,6 +1115,51 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.Status(http.StatusNoContent)
+	})
+	api.GET("/positions", func(c *gin.Context) { c.JSON(http.StatusOK, store.Positions()) })
+	api.POST("/positions", func(c *gin.Context) {
+		var in control.SavePositionInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		v, err := store.SavePosition(in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, v)
+	})
+	api.PUT("/positions/:id", func(c *gin.Context) {
+		var in control.SavePositionInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		in.ID = c.Param("id")
+		v, err := store.SavePosition(in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+	api.DELETE("/positions/:id", func(c *gin.Context) {
+		if err := store.DeletePosition(c.Param("id")); err != nil {
+			writeError(c, http.StatusConflict, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	api.POST("/positions/:id/employees", func(c *gin.Context) {
+		var in control.HireEmployeeInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		v, err := store.HireEmployee(c.Param("id"), in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusCreated, v)
 	})
 	api.GET("/agent-templates", func(c *gin.Context) { c.JSON(200, store.AgentTemplates()) })
 	api.POST("/agent-templates", func(c *gin.Context) {
@@ -1353,6 +1417,31 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		defer cancel()
 		c.JSON(200, manager.TestConnection(ctx, in))
 	})
+	api.POST("/settings/web-search/test", func(c *gin.Context) {
+		var in control.WebSearchTestInput
+		if !bindJSON(c, &in) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+		defer cancel()
+		result, err := store.TestWebSearch(ctx, in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.PUT("/settings/web-search", func(c *gin.Context) {
+		var in control.WebSearchConfig
+		if !bindJSON(c, &in) {
+			return
+		}
+		if _, err := store.SaveWebSearchConfig(in); err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, store.State())
+	})
 	saveConfig := func(c *gin.Context) {
 		var in control.SaveConfigInput
 		if !bindJSON(c, &in) {
@@ -1407,6 +1496,40 @@ func streamState(c *gin.Context, s *control.Store) {
 		}
 	})
 }
+
+func receiveInputAttachment(c *gin.Context, store *control.Store, scope, ownerID string) {
+	const multipartOverhead = int64(8 << 20)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, control.MaxInputAttachmentSize+multipartOverhead)
+	reader, err := c.Request.MultipartReader()
+	if err != nil {
+		writeError(c, http.StatusBadRequest, errors.New("附件请求必须使用 multipart/form-data"))
+		return
+	}
+	for {
+		part, partErr := reader.NextPart()
+		if errors.Is(partErr, io.EOF) {
+			break
+		}
+		if partErr != nil {
+			writeError(c, http.StatusBadRequest, errors.New("读取附件上传流失败或请求超过大小限制"))
+			return
+		}
+		if part.FormName() != "file" || strings.TrimSpace(part.FileName()) == "" {
+			_ = part.Close()
+			continue
+		}
+		attachment, uploadErr := store.StageInputAttachment(scope, ownerID, part.FileName(), part.Header.Get("Content-Type"), part)
+		_ = part.Close()
+		if uploadErr != nil {
+			writeError(c, http.StatusUnprocessableEntity, uploadErr)
+			return
+		}
+		c.JSON(http.StatusCreated, attachment)
+		return
+	}
+	writeError(c, http.StatusBadRequest, errors.New("请选择要上传的附件"))
+}
+
 func bindJSON(c *gin.Context, target any) bool {
 	if err := c.ShouldBindJSON(target); err != nil {
 		writeError(c, 400, fmt.Errorf("invalid JSON: %w", err))

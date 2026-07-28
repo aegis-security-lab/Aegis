@@ -35,7 +35,7 @@ func TestPlanningSessionAcceptsDurableToolPlanWithMarkdownFinalResponse(t *testi
 		t.Fatalf("parent did not remain in waiting_children: %+v", updated)
 	}
 	var issueCount int64
-	store.db.Model(&Issue{}).Count(&issueCount)
+	store.db.Model(&Issue{}).Where("hidden = ?", false).Count(&issueCount)
 	if issueCount != 3 || len(decomposition.ChildIDs) != 2 {
 		t.Fatalf("tool plan was duplicated: issues=%d decomposition=%+v", issueCount, decomposition)
 	}
@@ -150,7 +150,7 @@ func createPlanningToolResult(t *testing.T, store *Store) (Issue, Execution, Iss
 		RequestKey: "initial-plan", Summary: "Split backend and frontend work.",
 		Children: []SubIssueSpec{
 			{Title: "Implement backend", Objective: "Backend tests pass.", Priority: "high", AgentID: "backend-engineer"},
-			{Title: "Implement frontend", Objective: "Frontend build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{1}},
+			{Title: "Implement frontend", Objective: "Frontend build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{}},
 		},
 	})
 	if err != nil {

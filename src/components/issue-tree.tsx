@@ -8,7 +8,6 @@ import {
   CircleX,
   GitBranch,
   GitMerge,
-  LockKeyhole,
   TriangleAlert,
   Workflow,
 } from "lucide-react"
@@ -23,6 +22,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { formatTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { AgentDefinition, Execution, Issue, IssueRelation } from "@/types"
 
@@ -153,6 +153,23 @@ export function IssueTree({
         ).map((issue) => issue.id)
       )
   )
+  const knownIssueIDs = React.useRef(new Set<string>())
+  React.useEffect(() => {
+    const known = knownIssueIDs.current
+    const newlyExpandable =
+      defaultExpansion === "all"
+        ? issues.filter((issue) => !known.has(issue.id))
+        : defaultExpansion === "roots"
+          ? roots.filter((issue) => !known.has(issue.id))
+          : []
+    for (const issue of issues) known.add(issue.id)
+    if (newlyExpandable.length === 0) return
+    setExpanded((current) => {
+      const next = new Set(current)
+      for (const issue of newlyExpandable) next.add(issue.id)
+      return next
+    })
+  }, [defaultExpansion, issues, roots])
   const rows = React.useMemo(() => {
     const items: Array<{
       key: string
@@ -304,14 +321,18 @@ function TreeNode({
       const blocker = issueMap.get(relation.issueId)
       return blocker ? [blocker] : []
     })
-  const blockers = dependencies.filter(
-    (blocker) => !terminalStatuses.has(blocker.status)
-  )
   const progress = hierarchyChildren.length
     ? Math.round((completed / hierarchyChildren.length) * 100)
     : 0
   const execution = executionMap.get(issue.id)
-  const operationalState = issueOperationalState(issue, execution, blockers)
+  const operationalState = issueOperationalState(issue, execution)
+  const creatorName =
+    agentMap.get(issue.createdBy) ??
+    (issue.createdBy === "operator"
+      ? "操作员"
+      : issue.createdBy === "system"
+        ? "系统"
+        : issue.createdBy || "未知")
 
   return (
     <div
@@ -366,8 +387,10 @@ function TreeNode({
         <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="font-mono text-[11px]">{issue.identifier}</span>
           <span>
-            {agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent"}
+            {agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配负责人"}
           </span>
+          <span>创建者 {creatorName}</span>
+          <span>创建 {formatTime(issue.createdAt)}</span>
           {mode === "hierarchy" ? (
             <>
               <span>深度 {issue.requestDepth}</span>
@@ -382,17 +405,6 @@ function TreeNode({
               <span>{dependencies.length} 个前置依赖</span>
               <span>{branches.length} 个被阻塞项</span>
             </>
-          )}
-          {blockers.length > 0 && (
-            <Tooltip>
-              <TooltipTrigger className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
-                <LockKeyhole className="size-3" />
-                {blockers.length} 个未完成依赖
-              </TooltipTrigger>
-              <TooltipContent>
-                {blockers.map((blocker) => blocker.identifier).join("、")}
-              </TooltipContent>
-            </Tooltip>
           )}
         </div>
         {operationalState.detail && (
@@ -435,8 +447,7 @@ type OperationalState = {
 
 function issueOperationalState(
   issue: Issue,
-  execution: Execution | undefined,
-  blockers: Issue[]
+  execution: Execution | undefined
 ): OperationalState {
   if (issue.status === "done") {
     return { kind: "completed", label: "任务结束" }
@@ -492,9 +503,6 @@ function issueOperationalState(
   }
   if (issue.status === "in_review") {
     return { kind: "pending", label: "等待人工复核" }
-  }
-  if (blockers.length > 0) {
-    return { kind: "pending", label: "等待依赖" }
   }
   return { kind: "pending", label: "等待调度" }
 }

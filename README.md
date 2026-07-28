@@ -12,8 +12,8 @@ Aegis 是一个由真实 Pi Agent 驱动的本地任务控制台。它把可复�
 - Agent 是独立的模型覆盖、系统提示词、工具集、Skills 和权限边界组合；模型留空时继承全局配置
 - 首次启动自动创建 Orchestrator、后端工程师、前端工程师和红队攻防工程师，并为三个专业 Agent 分配不同 Skills
 - Skill 管理支持标准 `SKILL.md` 的新增、编辑、ZIP/Markdown 导入、ZIP 导出与本地路径安装
-- Task 是顶层 Issue；Orchestrator 将其拆成子 Issues，父子层级与 `blocks` 依赖图相互独立
-- 任意工作 Agent 都能通过真实 Pi 扩展工具递归拆分 2–8 个子 Issues；支持最多 4 层、每层依赖与幂等重试
+- Task 是顶层 Issue；Orchestrator 将其拆成彼此独立的子 Issues，子树调度不创建 `blocks` 依赖
+- 任意工作 Agent 都能通过真实 Pi 扩展工具递归拆分 2–8 个彼此独立的子 Issues；支持最多 4 层与幂等重试
 - 父 Issue 拆分后进入 `waiting_children` 并释放 checkout；直属子项全部结束后创建 `continuation` Execution 汇总、验证并决定完成或再次拆分
 - 顶层任务支持树级取消：在调度临界区内取消所有未完成后代与活跃/排队 Execution，终止 Pi Sessions，并关闭待审批和 Agent Wakeup；已完成历史保持不变
 - Issues 页面提供可折叠层级树、直属子项进度、未完成 blocker、等待子树与汇总中状态
@@ -119,7 +119,7 @@ Agent 是可复用定义，Issue 是工作对象，Execution 是一次执行尝�
 - `/skills` 管理 `SKILL.md` 能力包以及它们与 Agent 的引用关系。
 - `/sessions` 查看 Pi session ID、Execution、PID、模型快照、阶段进度、消息、事件和 token/cost 统计。
 
-全局设置只提供默认模型；Agent 的模型字段留空时继承全局 Provider、Model、Base URL 和 Thinking。工具集不会从全局共享，每个 Agent 都保存自己的独立列表；`aegis_create_subissues`、`aegis_report_progress`、`aegis_broadcast`、`aegis_list_broadcasts` 等 Aegis 控制面工具是所有普通 Agent 的固有能力，不能移除。Agent 在完成调查、设计、实现或验证等实质阶段后会被要求调用 `aegis_report_progress`；发现可能影响其他 Issues 的接口、约束、证据、风险或阻塞时则使用任务广播。
+全局设置只提供默认模型；Agent 的模型字段留空时继承全局 Provider、Model、Base URL 和 Thinking。工具集不会从全局共享，每个 Agent 都保存自己的独立列表；`aegis_board`、`aegis_relay`、`aegis_create_subissues`、`aegis_report_progress` 等控制面工具是所有普通员工 Agent 的固有能力，不能移除。Agent 的普通输出只保留在员工长期会话中；需要修改 Issue 或发表评论时必须主动调用 Board，员工间异步协作统一使用 Relay。
 
 ### Issue 评论与 Agent-to-Agent 调用
 
@@ -140,7 +140,7 @@ Mention 不会改变 Issue 所有权，也不会重新打开已经完成的 Issu
 任意 Agent 判断当前 Issue 过大时，都可以调用 Pi 中真实注册的 `aegis_create_subissues` 工具。该工具不是文本约定或模拟结果：它通过当前 Execution 独有的随机令牌调用 Gin 控制面，并在一个 SQLite 事务里完成：
 
 1. 创建带 `parentId` 和 `requestDepth` 的子 Issues；
-2. 创建子项间的 `blocks` 依赖，并让每个子项阻塞父 Issue；
+2. 不创建子项间或子项到父项的 `blocks` 依赖，由持久化等待与唤醒流程协调父子完成；
 3. 写入带 `requestKey` 的 `IssueDecomposition`，保证工具重试不重复创建；
 4. 将父 Issue 切换到 `waiting_children`、释放 checkout，并交还调度器。
 

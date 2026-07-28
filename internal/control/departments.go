@@ -134,6 +134,11 @@ func (s *Store) DeleteDepartment(id string) error {
 		}
 	}
 	var count int64
+	s.db.Model(&Position{}).Where("department_id = ?", id).Count(&count)
+	if count > 0 {
+		return errors.New("部门仍有岗位，不能删除")
+	}
+	count = 0
 	s.db.Model(&Department{}).Where("parent_id = ?", id).Count(&count)
 	if count > 0 {
 		return errors.New("部门仍有下级部门，不能删除")

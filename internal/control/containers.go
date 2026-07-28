@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -31,6 +32,17 @@ func (s *Store) GetContainerProfile(id string) (ContainerProfile, error) {
 	var profile ContainerProfile
 	if err := s.db.First(&profile, "id = ?", id).Error; err != nil {
 		return ContainerProfile{}, errors.New("container profile not found")
+	}
+	return profile, nil
+}
+
+func (s *Store) DefaultContainerProfile() (ContainerProfile, error) {
+	var profile ContainerProfile
+	err := s.db.Where("enabled = ?", true).
+		Order("case when lower(name) = 'default' then 0 else 1 end").
+		Order("created_at asc").First(&profile).Error
+	if err != nil {
+		return ContainerProfile{}, errors.New("没有可用的 Docker 容器配置，请先在容器管理中创建并启用一个配置")
 	}
 	return profile, nil
 }
@@ -117,23 +129,91 @@ func (s *Store) GetContainer(id string) (ContainerInstance, error) {
 	return containerRuntimeState(container), nil
 }
 
+// createTaskContainerBinding snapshots one enabled profile into the Task's
+// durable, one-to-one container record. It intentionally does not start
+// Docker; task publication owns allocation, while execution owns runtime
+// startup.
+func (s *Store) createTaskContainerBinding(task Task) (ContainerInstance, error) {
+	if strings.TrimSpace(task.ContainerProfileID) == "" {
+		return ContainerInstance{}, errors.New("任务未配置容器环境")
+	}
+	var existing ContainerInstance
+	if err := s.db.First(&existing, "task_id = ?", task.ID).Error; err == nil {
+		if existing.ContainerProfileID != task.ContainerProfileID {
+			return ContainerInstance{}, errors.New("任务绑定的容器与当前环境配置不一致")
+		}
+		if err = s.bindTaskContainer(task.ID, existing.ID); err != nil {
+			return ContainerInstance{}, err
+		}
+		existing.RuntimeStatus = "missing"
+		return existing, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ContainerInstance{}, err
+	}
+	profile, err := s.GetContainerProfile(task.ContainerProfileID)
+	if err != nil || !profile.Enabled {
+		return ContainerInstance{}, errors.New("容器执行环境不存在或已停用")
+	}
+	now := time.Now()
+	container := ContainerInstance{
+		ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: task.ID,
+		Image: profile.Image, NodePath: profile.NodePath, PiPath: profile.PiPath,
+		WorkspacePath: profile.WorkspacePath, NetworkMode: profile.NetworkMode,
+		MemoryMB: profile.MemoryMB, CPUs: profile.CPUs, CreatedAt: now, UpdatedAt: now,
+	}
+	container.Name = taskContainerName(container.ID)
+	if err = s.db.Create(&container).Error; err != nil {
+		return ContainerInstance{}, err
+	}
+	if err = s.bindTaskContainer(task.ID, container.ID); err != nil {
+		_ = s.db.Delete(&ContainerInstance{}, "id = ?", container.ID).Error
+		return ContainerInstance{}, err
+	}
+	container.RuntimeStatus = "missing"
+	return container, nil
+}
+
 func (s *Store) ensureTaskContainer(issue Issue) (ContainerInstance, error) {
 	if strings.TrimSpace(issue.ContainerProfileID) == "" {
 		return ContainerInstance{}, errors.New("Issue 未配置容器环境")
 	}
 	taskID, err := s.taskIDForIssue(issue)
+	standaloneIssue := false
+	containerOwner := issue
 	if err != nil {
-		return ContainerInstance{}, err
+		containerOwner, err = s.rootIssue(issue)
+		if err != nil {
+			return ContainerInstance{}, err
+		}
+		standaloneIssue = true
+		if containerOwner.Hidden && strings.HasPrefix(containerOwner.ID, "employee-home-") {
+			taskID = "employee-session-" + containerOwner.AssigneeAgentID
+		} else {
+			taskID = "issue-tree-" + containerOwner.ID
+		}
 	}
 	var task Task
-	if err = s.db.First(&task, "id = ?", taskID).Error; err != nil {
+	if !standaloneIssue {
+		err = s.db.First(&task, "id = ?", taskID).Error
+	}
+	if err != nil {
 		return ContainerInstance{}, errors.New("task not found")
 	}
 	var container ContainerInstance
-	if task.ContainerID != "" {
-		container, err = s.GetContainer(task.ContainerID)
-	} else {
-		err = s.db.First(&container, "task_id = ?", task.ID).Error
+	containerID := task.ContainerID
+	if standaloneIssue {
+		containerID = containerOwner.ContainerID
+	}
+	if containerID != "" {
+		container, err = s.GetContainer(containerID)
+		if err != nil {
+			containerID = ""
+		}
+	}
+	if containerID == "" {
+		err = s.db.First(&container, "task_id = ?", taskID).Error
+	}
+	if containerID == "" {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			profile, profileErr := s.GetContainerProfile(issue.ContainerProfileID)
 			if profileErr != nil || !profile.Enabled {
@@ -141,7 +221,7 @@ func (s *Store) ensureTaskContainer(issue Issue) (ContainerInstance, error) {
 			}
 			now := time.Now()
 			container = ContainerInstance{
-				ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: task.ID,
+				ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: taskID,
 				Image: profile.Image, NodePath: profile.NodePath, PiPath: profile.PiPath,
 				WorkspacePath: profile.WorkspacePath, NetworkMode: profile.NetworkMode,
 				MemoryMB: profile.MemoryMB, CPUs: profile.CPUs, CreatedAt: now, UpdatedAt: now,
@@ -157,7 +237,11 @@ func (s *Store) ensureTaskContainer(issue Issue) (ContainerInstance, error) {
 	if container.ContainerProfileID != issue.ContainerProfileID {
 		return ContainerInstance{}, errors.New("任务绑定的容器与当前环境配置不一致")
 	}
-	if err = s.bindTaskContainer(task.ID, container.ID); err != nil {
+	if standaloneIssue {
+		if err = s.db.Model(&Issue{}).Where("id IN ?", uniqueStrings([]string{containerOwner.ID, issue.ID})).Updates(map[string]any{"container_id": container.ID, "updated_at": time.Now()}).Error; err != nil {
+			return ContainerInstance{}, err
+		}
+	} else if err = s.bindTaskContainer(task.ID, container.ID); err != nil {
 		return ContainerInstance{}, err
 	}
 	container, err = s.StartContainer(container.ID)
@@ -165,6 +249,27 @@ func (s *Store) ensureTaskContainer(issue Issue) (ContainerInstance, error) {
 		return ContainerInstance{}, err
 	}
 	s.notify()
+	return container, nil
+}
+
+func (s *Store) rootIssue(issue Issue) (Issue, error) {
+	current := issue
+	for strings.TrimSpace(current.ParentID) != "" {
+		var parent Issue
+		if err := s.db.First(&parent, "id = ?", current.ParentID).Error; err != nil {
+			return Issue{}, errors.New("Issue 根节点不存在")
+		}
+		current = parent
+	}
+	return current, nil
+}
+
+func prepareContainerIssueWorkspace(container ContainerInstance, issueID string) (ContainerInstance, error) {
+	workspace := path.Join(container.WorkspacePath, ".aegis", "issues", issueID)
+	if output, err := exec.Command("docker", "exec", container.Name, "mkdir", "-p", workspace).CombinedOutput(); err != nil {
+		return ContainerInstance{}, fmt.Errorf("创建 Issue 独立工作目录失败: %s", strings.TrimSpace(string(output)))
+	}
+	container.WorkspacePath = workspace
 	return container, nil
 }
 
@@ -566,13 +671,10 @@ func (s *Store) DeleteContainer(id string, cascadeIssues bool) (ContainerDeleteR
 			if err := tx.Where("issue_id IN ? OR related_issue_id IN ?", plan.IssueIDs, plan.IssueIDs).Delete(&IssueRelation{}).Error; err != nil {
 				return err
 			}
-			for _, model := range []any{&ConciergeConversation{}, &IssueAgentSession{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}} {
+			for _, model := range []any{&ConciergeConversation{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}} {
 				if err := tx.Where("issue_id IN ?", plan.IssueIDs).Delete(model).Error; err != nil {
 					return err
 				}
-			}
-			if err := tx.Where("source_issue_id IN ? OR task_id = ?", plan.IssueIDs, plan.Container.TaskID).Delete(&TaskBroadcast{}).Error; err != nil {
-				return err
 			}
 			if err := tx.Where("parent_issue_id IN ?", plan.IssueIDs).Delete(&IssueDecomposition{}).Error; err != nil {
 				return err
@@ -594,9 +696,6 @@ func (s *Store) DeleteContainer(id string, cascadeIssues bool) (ContainerDeleteR
 				return err
 			}
 			if err := tx.Where("source_execution_id IN ?", plan.ExecutionIDs).Delete(&IssueChildWait{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("source_execution_id IN ?", plan.ExecutionIDs).Delete(&TaskBroadcast{}).Error; err != nil {
 				return err
 			}
 			executions := tx.Delete(&Execution{}, "id IN ?", plan.ExecutionIDs)

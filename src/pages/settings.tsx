@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Bot, Database, Gauge, Languages, HeartPulse, KeyRound, Radar, Save, ShieldCheck } from "lucide-react"
+import { Bot, Database, ExternalLink, Gauge, Languages, HeartPulse, KeyRound, Radar, Save, Search, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
@@ -29,10 +29,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { Badge } from "@/components/ui/badge"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { probeRuntime, saveSettings, testConnection } from "@/lib/api"
+import { probeRuntime, saveSettings, testConnection, testWebSearch } from "@/lib/api"
 import { useAppState } from "@/lib/state"
-import type { SaveConfigInput } from "@/types"
+import type { SaveConfigInput, WebSearchInput, WebSearchResult } from "@/types"
 
 const providers = [
   "opencode-go",
@@ -46,11 +48,14 @@ export function SettingsPage() {
   const { state, setState } = useAppState()
   const config = state!.config
   const [busy, setBusy] = React.useState<"save" | "probe" | "test" | null>(null)
+  const [searchBusy, setSearchBusy] = React.useState(false)
+  const [searchResult, setSearchResult] = React.useState<WebSearchResult | null>(null)
+  const [searchInput, setSearchInput] = React.useState<WebSearchInput>({ query: "latest AI agent news", topic: "general", searchDepth: "basic", includeAnswer: true, maxResults: 5 })
   const [form, setForm] = React.useState<SaveConfigInput>(() =>
     fromConfig(config)
   )
   const [section, setSection] = React.useState<
-    "general" | "runtime" | "model" | "workspace" | "budget" | "policy"
+    "general" | "search" | "runtime" | "model" | "workspace" | "budget" | "policy"
   >("general")
   const update = <K extends keyof SaveConfigInput>(
     key: K,
@@ -97,6 +102,17 @@ export function SettingsPage() {
       toast.error(reason instanceof Error ? reason.message : "连接失败")
     } finally {
       setBusy(null)
+    }
+  }
+  const runSearch = async () => {
+    if (!searchInput.query.trim()) return
+    setSearchBusy(true)
+    try {
+      setSearchResult(await testWebSearch(form.webSearch, searchInput))
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "检索失败")
+    } finally {
+      setSearchBusy(false)
     }
   }
   return (
@@ -211,6 +227,79 @@ export function SettingsPage() {
                 </Button>
               </CardFooter>
             </Card>
+            <div className={section === "search" ? "grid min-h-[560px] gap-5 xl:grid-cols-[180px_minmax(320px,0.9fr)_minmax(360px,1.1fr)]" : "hidden"}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>搜索引擎</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Button type="button" variant="secondary" className="w-full justify-start">
+                    <Search data-icon="inline-start" />Tavily
+                  </Button>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Tavily 配置</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <FieldGroup>
+                    <Field>
+                      <FieldLabel>启用搜索工具</FieldLabel>
+                      <ToggleGroup value={form.webSearch.enabled ? ["enabled"] : []} onValueChange={(value) => update("webSearch", { ...form.webSearch, enabled: value.includes("enabled") })} variant="outline">
+                        <ToggleGroupItem value="enabled">启用</ToggleGroupItem>
+                      </ToggleGroup>
+                      <FieldDescription>启用后，所有 Agent 都可以调用 aegis_web_search。</FieldDescription>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="search-base-url">API 地址</FieldLabel>
+                      <Input id="search-base-url" value={form.webSearch.baseUrl} onChange={(event) => update("webSearch", { ...form.webSearch, baseUrl: event.target.value })} placeholder="https://example.com/api/tavily/search" />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="search-api-key">API Key</FieldLabel>
+                      <Input id="search-api-key" type="password" autoComplete="off" value={form.webSearch.apiKey} onChange={(event) => update("webSearch", { ...form.webSearch, apiKey: event.target.value })} placeholder={config.webSearch?.hasApiKey ? "已保存；留空保持不变" : "th-..."} />
+                      <FieldDescription>密钥只保存在服务端，不会返回前端或暴露给 Agent。</FieldDescription>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="search-query">测试关键词</FieldLabel>
+                      <Input id="search-query" value={searchInput.query} onChange={(event) => setSearchInput((current) => ({ ...current, query: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runSearch() } }} />
+                    </Field>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field>
+                        <FieldLabel>主题</FieldLabel>
+                        <Select value={searchInput.topic} onValueChange={(value) => setSearchInput((current) => ({ ...current, topic: value as WebSearchInput["topic"] }))}>
+                          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectGroup><SelectItem value="general">通用</SelectItem><SelectItem value="news">新闻</SelectItem><SelectItem value="finance">金融</SelectItem></SelectGroup></SelectContent>
+                        </Select>
+                      </Field>
+                      <Field>
+                        <FieldLabel>深度</FieldLabel>
+                        <Select value={searchInput.searchDepth} onValueChange={(value) => setSearchInput((current) => ({ ...current, searchDepth: value as WebSearchInput["searchDepth"] }))}>
+                          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectGroup><SelectItem value="basic">Basic</SelectItem><SelectItem value="advanced">Advanced</SelectItem></SelectGroup></SelectContent>
+                        </Select>
+                      </Field>
+                    </div>
+                    <Button type="button" onClick={() => void runSearch()} disabled={searchBusy || !searchInput.query.trim()}>
+                      {searchBusy ? <Spinner /> : <Search data-icon="inline-start" />}检索
+                    </Button>
+                  </FieldGroup>
+                </CardContent>
+              </Card>
+              <Card className="min-w-0">
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-3"><CardTitle>搜索结果</CardTitle>{searchResult ? <Badge variant="secondary">{searchResult.results.length} 条</Badge> : null}</div>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-[470px] pr-4">
+                    {searchResult ? <div className="flex flex-col gap-4">
+                      {searchResult.answer ? <Alert><Search /><AlertTitle>综合答案</AlertTitle><AlertDescription>{searchResult.answer}</AlertDescription></Alert> : null}
+                      {searchResult.results.map((item, index) => <Card key={`${item.url}-${index}`} size="sm"><CardHeader><CardTitle className="text-sm leading-snug"><a href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-start gap-1 hover:underline">{item.title || item.url}<ExternalLink /></a></CardTitle></CardHeader><CardContent><p className="text-sm leading-relaxed text-muted-foreground">{item.content}</p></CardContent></Card>)}
+                    </div> : <div className="flex h-[430px] flex-col items-center justify-center gap-2 text-center text-muted-foreground"><Search /><p>配置引擎并执行一次测试检索</p></div>}
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            </div>
             <Card className={section === "model" ? undefined : "hidden"}>
               <CardHeader>
                 <div className="flex items-center gap-3">
@@ -493,7 +582,7 @@ export function SettingsPage() {
                   <div>
                     <CardTitle>等待 Issue 心跳</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      定期唤醒等待子树或未完成依赖的 Issue 负责人
+                      定期唤醒正在等待子树完成的 Issue 负责人
                     </p>
                   </div>
                 </div>
@@ -762,6 +851,12 @@ function fromConfig(
     },
     issueHeartbeat: config.issueHeartbeat ?? {
       intervalSeconds: 60,
+    },
+    webSearch: {
+      engine: "tavily",
+      baseUrl: config.webSearch?.baseUrl || "https://api.tavily.com/search",
+      apiKey: "",
+      enabled: config.webSearch?.enabled ?? false,
     },
   }
 }

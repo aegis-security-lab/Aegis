@@ -41,10 +41,8 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		if !slices.Contains([]string{"critical", "high", "medium", "low"}, item.Priority) {
 			item.Priority = "medium"
 		}
-		for _, dependency := range item.DependsOn {
-			if dependency < 1 || dependency >= index+1 {
-				return DecompositionResult{}, fmt.Errorf("子 Issue %d 的 dependsOn 只能引用更早的 1-based 索引", index+1)
-			}
+		if len(item.DependsOn) > 0 {
+			return DecompositionResult{}, fmt.Errorf("子 Issue %d 不能设置 dependsOn；子 Issues 必须彼此独立并可立即调度", index+1)
 		}
 		agent, err := s.chooseAgent(Issue{Title: item.Title, Description: item.Description, Objective: item.Objective, AssigneeAgentID: item.AgentID})
 		if err != nil {
@@ -88,7 +86,13 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 			return errors.New("execution is no longer active")
 		}
 		ownsCheckout := parent.Status == "in_progress" && parent.AssigneeAgentID == actorAgentID && parent.CheckoutExecutionID == executionID
-		canReopenCompleted := slices.Contains([]string{"done", "in_review"}, parent.Status) && parent.AssigneeAgentID == actorAgentID
+		// An acceptance "abandoned" decision records the Issue as cancelled, but
+		// it is still a completed workflow outcome rather than an operator/task
+		// cancellation. A later operator comment may add follow-up deliverables
+		// (for example, generating a report from the collected evidence), so the
+		// original owner must be able to reopen it from that active continuation.
+		canReopenCompleted := (slices.Contains([]string{"done", "in_review"}, parent.Status) ||
+			(parent.Status == "cancelled" && parent.ObjectiveAbandoned)) && parent.AssigneeAgentID == actorAgentID
 		if !ownsCheckout && !canReopenCompleted {
 			return errors.New("当前 Execution 既不持有 Issue checkout，也不能重新打开这个已完成 Issue")
 		}
@@ -106,6 +110,16 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		var maxNumber int64
 		if err := tx.Model(&Issue{}).Select("coalesce(max(number),0)").Scan(&maxNumber).Error; err != nil {
 			return err
+		}
+		reservedEmployees := make(map[string]bool, len(input.Children))
+		for index, item := range input.Children {
+			if reservedEmployees[item.AgentID] {
+				return fmt.Errorf("子 Issue %d 重复指派给员工 %s；每名员工同一时间只能负责一个任务", index+1, item.AgentID)
+			}
+			if err := s.validateEmployeeAssignmentWithDBLocked(tx, item.AgentID, parent.ID); err != nil {
+				return err
+			}
+			reservedEmployees[item.AgentID] = true
 		}
 		now := time.Now()
 		validationMode, maxValidationAttempts := normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
@@ -125,24 +139,11 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 			if err := tx.Create(&child).Error; err != nil {
 				return err
 			}
-			if _, err := ensureIssueAgentSessionOnDB(tx, child, child.AssigneeAgentID, ""); err != nil {
-				return err
-			}
 			children = append(children, child)
 		}
-		for index, item := range input.Children {
-			for _, dependency := range item.DependsOn {
-				relation := IssueRelation{ID: nextID("relation"), IssueID: children[dependency-1].ID, RelatedIssueID: children[index].ID, Type: "blocks", CreatedAt: now, UpdatedAt: now}
-				if err := tx.Create(&relation).Error; err != nil {
-					return err
-				}
-			}
-			// Every child blocks its parent. This is independent from the hierarchy edge.
-			parentBlocker := IssueRelation{ID: nextID("relation"), IssueID: children[index].ID, RelatedIssueID: parent.ID, Type: "blocks", CreatedAt: now, UpdatedAt: now}
-			if err := tx.Create(&parentBlocker).Error; err != nil {
-				return err
-			}
-		}
+		// Parent/child completion is coordinated by IssueChildWait. Child Issues
+		// deliberately have no dependency or blocks edges, so every child can be
+		// dispatched independently as soon as a worker is available.
 		childIDs := make([]string, len(children))
 		for index := range children {
 			childIDs[index] = children[index].ID
@@ -154,6 +155,7 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		if err := tx.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{
 			"status": "in_progress", "execution_phase": "waiting_children", "checkout_execution_id": "",
 			"current_execution_id": executionID, "completed_at": nil, "cancelled_at": nil,
+			"objective_abandoned": false, "abandonment_reason": "", "abandoned_at": nil,
 			"error": "", "updated_at": now,
 		}).Error; err != nil {
 			return err

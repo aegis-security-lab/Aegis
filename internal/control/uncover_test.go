@@ -135,7 +135,7 @@ func TestGeneratedAttachmentIsDurableAndIdempotent(t *testing.T) {
 
 func TestRedTeamAgentsIncludeUncoverToolAndSkill(t *testing.T) {
 	store := configuredStore(t)
-	for _, agentID := range []string{"red-team-lead", "red-team-engineer"} {
+	for _, agentID := range []string{"red-team-lead", "recon-engineer", "red-team-engineer"} {
 		agent, err := store.GetAgent(agentID)
 		if err != nil {
 			t.Fatal(err)
@@ -143,13 +143,6 @@ func TestRedTeamAgentsIncludeUncoverToolAndSkill(t *testing.T) {
 		if !slices.Contains(agent.Tools, uncoverToolID) || !slices.Contains(agent.SkillIDs, uncoverSkillID) {
 			t.Fatalf("%s capabilities not connected: tools=%v skills=%v", agentID, agent.Tools, agent.SkillIDs)
 		}
-	}
-	recon, err := store.GetAgent("recon-engineer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slices.Contains(recon.Tools, uncoverToolID) || slices.Contains(recon.SkillIDs, uncoverSkillID) {
-		t.Fatalf("recon Agent retained red-team-only uncover capability: tools=%v skills=%v", recon.Tools, recon.SkillIDs)
 	}
 	var skill SkillDefinition
 	for _, candidate := range store.Skills() {
@@ -285,13 +278,8 @@ func TestUncoverCapabilitySeedMigrationIsAppliedOnce(t *testing.T) {
 		if err := store.db.First(&record, "id = ?", agentID).Error; err != nil {
 			t.Fatal(err)
 		}
-		if agentID == "recon-engineer" {
-			record.Definition.Tools = uniqueStrings(append(record.Definition.Tools, uncoverToolID))
-			record.Definition.SkillIDs = uniqueStrings(append(record.Definition.SkillIDs, uncoverSkillID))
-		} else {
-			record.Definition.Tools = stringsWithout(record.Definition.Tools, uncoverToolID)
-			record.Definition.SkillIDs = stringsWithout(record.Definition.SkillIDs, uncoverSkillID)
-		}
+		record.Definition.Tools = stringsWithout(record.Definition.Tools, uncoverToolID)
+		record.Definition.SkillIDs = stringsWithout(record.Definition.SkillIDs, uncoverSkillID)
 		if err := store.db.Save(&record).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -303,7 +291,7 @@ func TestUncoverCapabilitySeedMigrationIsAppliedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, agentID := range []string{"red-team-lead", "red-team-engineer"} {
+	for _, agentID := range []string{"red-team-lead", "recon-engineer", "red-team-engineer"} {
 		agent, getErr := reopened.GetAgent(agentID)
 		if getErr != nil {
 			t.Fatal(getErr)
@@ -312,14 +300,6 @@ func TestUncoverCapabilitySeedMigrationIsAppliedOnce(t *testing.T) {
 			t.Fatalf("migration did not add uncover capability to %s: %+v", agentID, agent)
 		}
 	}
-	recon, err := reopened.GetAgent("recon-engineer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slices.Contains(recon.Tools, uncoverToolID) || slices.Contains(recon.SkillIDs, uncoverSkillID) {
-		t.Fatalf("migration did not remove uncover capability from recon Agent: %+v", recon)
-	}
-
 	var leadRecord agentRecord
 	if err := reopened.db.First(&leadRecord, "id = ?", "red-team-lead").Error; err != nil {
 		t.Fatal(err)

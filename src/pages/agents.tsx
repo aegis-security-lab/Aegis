@@ -5,6 +5,7 @@ import {
   Code2,
   Database,
   LibraryBig,
+  Palette,
   Pencil,
   Plus,
   Route,
@@ -85,6 +86,7 @@ import type {
   AgentTemplate,
   ModelPricing,
   PermissionBoundary,
+  Position,
 } from "@/types"
 
 const zeroPricing: ModelPricing = {
@@ -104,10 +106,10 @@ const allTools = [
   "write",
   "aegis_create_task",
   "aegis_create_subissues",
+  "aegis_board",
+  "aegis_relay",
   "aegis_publish_attachment",
   "aegis_report_progress",
-  "aegis_broadcast",
-  "aegis_list_broadcasts",
   "aegis_get_memo",
   "aegis_update_memo",
   "aegis_request_rework",
@@ -115,10 +117,10 @@ const allTools = [
 ]
 const requiredAgentTools = new Set([
   "aegis_create_subissues",
+  "aegis_board",
+  "aegis_relay",
   "aegis_publish_attachment",
   "aegis_report_progress",
-  "aegis_broadcast",
-  "aegis_list_broadcasts",
   "aegis_get_memo",
   "aegis_update_memo",
   "aegis_request_rework",
@@ -128,6 +130,7 @@ const categoryLabels: Record<string, string> = {
   orchestrator: "调度",
   backend: "后端",
   frontend: "前端",
+  design: "设计",
   security: "安全",
   knowledge: "检索",
   concierge: "管家",
@@ -141,7 +144,7 @@ export function AgentsPage() {
   const [editing, setEditing] = React.useState<AgentDefinition | "new" | null>(
     null
   )
-  const agents = state?.agents ?? []
+  const agents = React.useMemo(() => state?.agents ?? [], [state?.agents])
   const skills = state?.skills ?? []
   const knowledgeBases = state?.knowledgeBases ?? []
   const enabled = agents.filter((agent) => agent.enabled).length
@@ -151,7 +154,11 @@ export function AgentsPage() {
   const requestedTemplate = templates.find(
     (item) => item.id === searchParams.get("template")
   )
-  const effectiveEditing = editing ?? (requestedTemplate ? "new" : null)
+  const requestedAgent = agents.find(
+    (item) => item.id === searchParams.get("agent")
+  )
+  const effectiveEditing =
+    editing ?? requestedAgent ?? (requestedTemplate ? "new" : null)
   const editingAgent =
     effectiveEditing === "new"
       ? "new"
@@ -162,14 +169,6 @@ export function AgentsPage() {
   React.useEffect(() => {
     void fetchAgentTemplates().then(setTemplates)
   }, [])
-  React.useEffect(() => {
-    const requestedAgent = searchParams.get("agent")
-    if (requestedAgent) {
-      const agent = agents.find((item) => item.id === requestedAgent)
-      if (agent) setEditing(agent)
-    }
-  }, [agents, searchParams])
-
   return (
     <div className="flex flex-col gap-7">
       <PageHeader
@@ -226,7 +225,16 @@ export function AgentsPage() {
               )}
               globalProvider={state?.config.provider ?? "—"}
               globalModel={state?.config.model ?? "—"}
-              departmentName={state?.departments?.find((department) => department.id === agent.departmentId)?.name}
+              departmentName={
+                state?.departments?.find(
+                  (department) => department.id === agent.departmentId
+                )?.name
+              }
+              positionName={
+                state?.positions?.find(
+                  (position) => position.id === agent.positionId
+                )?.name
+              }
               onEdit={() => setEditing(agent)}
             />
           ))}
@@ -240,6 +248,11 @@ export function AgentsPage() {
           skills={skills}
           knowledgeBases={knowledgeBases}
           departments={state?.departments ?? []}
+          positions={state?.positions ?? []}
+          employees={agents.filter(
+            (candidate) =>
+              !candidate.internal && candidate.category !== "concierge"
+          )}
           globalProvider={state?.config.provider ?? ""}
           globalModel={state?.config.model ?? ""}
           globalPricing={state?.config.pricing ?? zeroPricing}
@@ -249,11 +262,16 @@ export function AgentsPage() {
           }
           onOpenChange={(open) => {
             if (!open) setEditing(null)
-            if (!open && (searchParams.has("template") || searchParams.has("agent"))) setSearchParams({})
+            if (
+              !open &&
+              (searchParams.has("template") || searchParams.has("agent"))
+            )
+              setSearchParams({})
           }}
           onSaved={async () => {
             setEditing(null)
-            if (searchParams.has("template") || searchParams.has("agent")) setSearchParams({})
+            if (searchParams.has("template") || searchParams.has("agent"))
+              setSearchParams({})
             await refresh()
           }}
         />
@@ -269,6 +287,7 @@ function AgentCard({
   globalProvider,
   globalModel,
   departmentName,
+  positionName,
   onEdit,
 }: {
   agent: AgentDefinition
@@ -277,6 +296,7 @@ function AgentCard({
   globalProvider: string
   globalModel: string
   departmentName?: string
+  positionName?: string
   onEdit: () => void
 }) {
   const provider = agent.model.provider || globalProvider
@@ -290,6 +310,9 @@ function AgentCard({
           </span>
           <div className="min-w-0">
             <CardTitle className="truncate">{agent.name}</CardTitle>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {agent.englishName || agent.id} · {positionName ?? "未分配岗位"}
+            </p>
             <CardDescription className="mt-1 line-clamp-2">
               {agent.description}
             </CardDescription>
@@ -329,13 +352,14 @@ function AgentCard({
             {categoryLabels[agent.category] ?? agent.category}
           </Badge>
           <Badge variant="outline">{departmentName ?? "未分配部门"}</Badge>
+          <Badge variant="outline">{positionName ?? "未分配岗位"}</Badge>
           <BoundaryBadge allowed={agent.permissions.allowWrite} label="写入" />
           <BoundaryBadge allowed={agent.permissions.allowShell} label="Shell" />
           <BoundaryBadge
             allowed={agent.permissions.allowNetwork}
             label="网络"
           />
-          <Badge variant="outline">仅任务工作区</Badge>
+          <Badge variant="outline">容器内全路径</Badge>
         </div>
         {skillNames.length > 0 ? (
           <div className="flex flex-wrap gap-2">
@@ -375,6 +399,8 @@ function AgentDialog({
   skills,
   knowledgeBases,
   departments,
+  positions,
+  employees,
   globalProvider,
   globalModel,
   globalPricing,
@@ -387,6 +413,8 @@ function AgentDialog({
   skills: { id: string; displayName: string; description: string }[]
   knowledgeBases: { id: string; name: string; description: string }[]
   departments: { id: string; name: string }[]
+  positions: Position[]
+  employees: AgentDefinition[]
   globalProvider: string
   globalModel: string
   globalPricing: ModelPricing
@@ -405,6 +433,9 @@ function AgentDialog({
   const [saving, setSaving] = React.useState(false)
   const [removing, setRemoving] = React.useState(false)
   const previousMemo = React.useRef(agent === "new" ? "" : agent.memo)
+  const selectedPosition = positions.find(
+    (position) => position.id === form.positionId
+  )
 
   React.useEffect(() => {
     if (agent === "new") return
@@ -424,10 +455,16 @@ function AgentDialog({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!form.name.trim() || !form.systemPrompt.trim() || saving) return
+    if (
+      !form.name.trim() ||
+      !form.englishName.trim() ||
+      !form.systemPrompt.trim() ||
+      saving
+    )
+      return
     if (agent === "new" || !agent.internal) {
-      if (!form.departmentId?.trim()) {
-        toast.error("员工必须先选择所属部门")
+      if (!form.positionId?.trim()) {
+        toast.error("员工必须先选择岗位")
         return
       }
     }
@@ -435,11 +472,9 @@ function AgentDialog({
     try {
       const provider = form.model.provider || globalProvider
       const model = form.model.model || globalModel
-      const templateId = await agentTemplateId(
-        provider,
-        model,
-        form.systemPrompt
-      )
+      const templateId = form.positionId
+        ? form.templateId
+        : await agentTemplateId(provider, model, form.systemPrompt)
       let template = templates.find((item) => item.id === templateId)
       if (!template) {
         const chineseName = window
@@ -525,6 +560,29 @@ function AgentDialog({
     value: PermissionBoundary[K]
   ) => set("permissions", { ...form.permissions, [key]: value })
 
+  const applyPosition = (positionId: string) => {
+    const position = positions.find((item) => item.id === positionId)
+    if (!position) return
+    setForm((current) => ({
+      ...current,
+      positionId: position.id,
+      departmentId: position.departmentId,
+      templateId: position.templateId,
+      description: position.description,
+      avatar: position.avatar,
+      category: position.category,
+      model: {
+        ...position.model,
+        pricing: position.model.pricing ? { ...position.model.pricing } : null,
+      },
+      systemPrompt: position.systemPrompt,
+      tools: [...position.tools],
+      skillIds: [...position.skillIds],
+      knowledgeBaseIds: [...position.knowledgeBaseIds],
+      permissions: { ...position.permissions },
+    }))
+  }
+
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-4xl">
@@ -563,19 +621,50 @@ function AgentDialog({
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="agent-name">名称</FieldLabel>
+                    <FieldLabel htmlFor="agent-name">中文姓名</FieldLabel>
                     <Input
                       id="agent-name"
                       value={form.name}
-                      disabled={agent !== "new" || Boolean(lockedTemplate)}
                       onChange={(event) => set("name", event.target.value)}
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="agent-category">类别</FieldLabel>
+                    <FieldLabel htmlFor="agent-english-name">
+                      英文姓名
+                    </FieldLabel>
+                    <Input
+                      id="agent-english-name"
+                      value={form.englishName}
+                      placeholder="例如：Michael Chen"
+                      onChange={(event) =>
+                        set("englishName", event.target.value)
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="agent-position">岗位</FieldLabel>
+                    <Select
+                      value={form.positionId ?? "none"}
+                      onValueChange={(value) => applyPosition(String(value))}
+                    >
+                      <SelectTrigger id="agent-position" className="w-full">
+                        <SelectValue placeholder="选择岗位" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {positions
+                          .filter((position) => position.enabled)
+                          .map((position) => (
+                            <SelectItem key={position.id} value={position.id}>
+                              {position.name} · {position.englishName}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="agent-category">能力类别</FieldLabel>
                     <Select
                       value={form.category}
-                      disabled={agent !== "new" || Boolean(lockedTemplate)}
                       onValueChange={(value) => set("category", String(value))}
                     >
                       <SelectTrigger id="agent-category" className="w-full">
@@ -588,6 +677,7 @@ function AgentDialog({
                           <SelectItem value="orchestrator">调度</SelectItem>
                           <SelectItem value="backend">后端</SelectItem>
                           <SelectItem value="frontend">前端</SelectItem>
+                          <SelectItem value="design">设计</SelectItem>
                           <SelectItem value="security">安全</SelectItem>
                         </SelectGroup>
                       </SelectContent>
@@ -595,9 +685,48 @@ function AgentDialog({
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="agent-department">所属部门</FieldLabel>
-                    <Select value={form.departmentId ?? "none"} onValueChange={(value) => set("departmentId", value === "none" ? "" : (value ?? ""))}>
-                      <SelectTrigger id="agent-department" className="w-full"><SelectValue placeholder="未分配部门" /></SelectTrigger>
-                      <SelectContent><SelectItem value="none">未分配部门</SelectItem>{departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}</SelectContent>
+                    <Input
+                      id="agent-department"
+                      value={
+                        departments.find(
+                          (department) =>
+                            department.id === selectedPosition?.departmentId
+                        )?.name ?? "请先选择岗位"
+                      }
+                      disabled
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="agent-manager">直属上级</FieldLabel>
+                    <Select
+                      value={form.managerAgentId || "none"}
+                      onValueChange={(value) =>
+                        set(
+                          "managerAgentId",
+                          value === "none" ? "" : String(value)
+                        )
+                      }
+                    >
+                      <SelectTrigger id="agent-manager" className="w-full">
+                        <SelectValue placeholder="选择直属上级" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">无直属上级</SelectItem>
+                        {employees
+                          .filter(
+                            (candidate) =>
+                              agent === "new" || candidate.id !== agent.id
+                          )
+                          .map((candidate) => (
+                            <SelectItem key={candidate.id} value={candidate.id}>
+                              {candidate.name} ·{" "}
+                              {positions.find(
+                                (position) =>
+                                  position.id === candidate.positionId
+                              )?.name ?? candidate.category}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
                     </Select>
                   </Field>
                   <Field
@@ -624,7 +753,6 @@ function AgentDialog({
                     id="agent-description"
                     rows={3}
                     value={form.description}
-                    disabled={agent !== "new" || Boolean(lockedTemplate)}
                     onChange={(event) => set("description", event.target.value)}
                   />
                 </Field>
@@ -961,9 +1089,9 @@ function AgentDialog({
                 <FieldGroup>
                   <Field>
                     <FieldTitle>工作区范围</FieldTitle>
-                    <Input value="仅当前任务工作区（run_workspace）" disabled />
+                    <Input value="任务 Docker 容器内全部路径" disabled />
                     <FieldDescription>
-                      文件工具访问会校验路径；Pi 进程工作目录固定为任务工作区。
+                      任务工作区仅作为 Pi 默认目录，不限制容器内其他文件路径。
                     </FieldDescription>
                   </Field>
                   <PermissionSwitch
@@ -1186,6 +1314,7 @@ function categoryGlyph(category: string) {
   if (category === "orchestrator") return <Route className={className} />
   if (category === "backend") return <Server className={className} />
   if (category === "frontend") return <Code2 className={className} />
+  if (category === "design") return <Palette className={className} />
   if (category === "security") return <Shield className={className} />
   if (category === "knowledge") return <Database className={className} />
   if (category === "concierge") return <Sparkles className={className} />
@@ -1198,6 +1327,7 @@ function blankAgent(): SaveAgentInput {
     id: "",
     templateId: "",
     name: "",
+    englishName: "",
     description: "",
     avatar: "bot",
     category: "general",
@@ -1223,6 +1353,9 @@ function blankAgent(): SaveAgentInput {
       approvalMode: "none",
       reworkApprovalMode: "none",
     },
+    departmentId: "",
+    positionId: "",
+    managerAgentId: "",
   }
 }
 
@@ -1231,6 +1364,7 @@ function agentInput(agent: AgentDefinition): SaveAgentInput {
     id: agent.id,
     templateId: agent.templateId,
     name: agent.name,
+    englishName: agent.englishName,
     description: agent.description,
     avatar: agent.avatar,
     category: agent.category,
@@ -1243,6 +1377,9 @@ function agentInput(agent: AgentDefinition): SaveAgentInput {
     skillIds: [...agent.skillIds],
     knowledgeBaseIds: [...agent.knowledgeBaseIds],
     permissions: { ...agent.permissions },
+    departmentId: agent.departmentId ?? "",
+    positionId: agent.positionId ?? "",
+    managerAgentId: agent.managerAgentId ?? "",
   }
 }
 
@@ -1253,6 +1390,7 @@ function templateAgentInput(template: AgentTemplate): SaveAgentInput {
     templateId: template.id,
     id: template.metadata.englishName,
     name: template.metadata.chineseName,
+    englishName: template.metadata.englishName,
     description: template.metadata.introduction,
     category: template.metadata.positions[0] || "general",
     model: {

@@ -79,7 +79,7 @@ func TestTaskTimelineAggregatesWholeIssueTree(t *testing.T) {
 		return event.Kind == "comment" && event.ActorName == "操作员" && event.Detail == "Please include the test evidence."
 	})
 	resultFound := slices.ContainsFunc(timeline.Events, func(event TaskTimelineEvent) bool {
-		return event.Kind == "result" && event.ActorName == "前端工程师" && event.Detail == "UI build and tests passed."
+		return event.Kind == "result" && event.ActorName == "苏晴" && event.Detail == "UI build and tests passed."
 	})
 	if !commentFound || !resultFound {
 		t.Fatalf("missing actor or result details: %+v", timeline.Events)

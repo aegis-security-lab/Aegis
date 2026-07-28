@@ -21,19 +21,20 @@ import (
 	"gorm.io/gorm"
 )
 
-var requiredAgentTools = []string{"aegis_create_subissues", "aegis_list_child_issues", "aegis_wait_for_child_issues", "aegis_cancel_issue", "aegis_comment_issue", "aegis_publish_attachment", "aegis_submit_final_result", "aegis_report_progress", "aegis_get_issue_progress", "aegis_broadcast", "aegis_list_broadcasts", "aegis_get_memo", "aegis_update_memo", "aegis_request_rework"}
+var requiredAgentTools = []string{"aegis_board", "aegis_relay", "aegis_web_search", "aegis_create_subissues", "aegis_list_child_issues", "aegis_wait_for_child_issues", "aegis_cancel_issue", "aegis_publish_attachment", "aegis_submit_final_result", "aegis_report_progress", "aegis_get_issue_progress", "aegis_get_memo", "aegis_update_memo", "aegis_request_rework"}
+var retiredAgentTools = []string{"aegis_comment_issue", "aegis_broadcast", "aegis_list_broadcasts"}
 var defaultAgentTools = ensureRequiredAgentTools([]string{"read", "grep", "find", "ls", "bash", "edit", "write"})
 
 const (
 	uncoverToolID                   = "aegis_uncover_search"
 	uncoverSkillID                  = "uncover-cyberspace-search"
-	uncoverRedTeamSeedMigrationID   = "uncover-red-team-defaults-v1"
+	uncoverRedTeamSeedMigrationID   = "uncover-red-team-defaults-v2"
 	uncoverUIConfigSeedMigrationID  = "uncover-ui-provider-config-v1"
 	agentBrowserSkillID             = "agent-browser-security-workflows"
 	agentBrowserSeedMigrationID     = "agent-browser-red-team-defaults-v1"
 	redTeamComplexityMigrationID    = "red-team-lead-complexity-boundary-v1"
 	openAgentPermissionsMigrationID = "open-all-agent-permissions-v1"
-	requiredAgentToolsMigrationID   = "required-agent-tools-v2"
+	requiredAgentToolsMigrationID   = "required-agent-tools-v3"
 )
 
 const redTeamComplexityBoundary = `COMPLEX TASK BOUNDARY (mandatory)
@@ -117,7 +118,7 @@ func defaultSkills(now time.Time) []SkillDefinition {
 - Trace untrusted input through storage, process execution, network, and UI output.
 - Separate exploitable findings from defense-in-depth recommendations.
 - Describe impact, preconditions, evidence, and a scoped mitigation.
-- Never perform destructive exploitation or access data outside the authorized workspace.`},
+- Never perform destructive exploitation or access data outside the authorized target scope. Files anywhere inside the task Docker container are available when needed.`},
 		{"appsec-code-review", "应用安全审查", "针对命令执行、路径、认证、注入和敏感信息进行代码审查。", `# Application security review
 
 - Review process execution, path normalization, archive extraction, and URL handling.
@@ -308,22 +309,25 @@ Before creating a Task, make sure the requested outcome is concrete enough to sc
 PRIMARY RESPONSIBILITIES
 1. Market and product research: understand target users, competing or adjacent solutions, current product behavior, relevant standards, and feasible implementation options. Use authorized network sources when needed. Record source URLs, dates, assumptions, confidence, and unresolved questions. Distinguish observed facts from inference and never fabricate market evidence.
 2. Repository and system analysis: inspect the existing workspace, APIs, data model, UI routes, runtime constraints, and test coverage before planning changes. Identify reusable capabilities, integration risks, migration concerns, and validation gaps.
-3. Development planning: define milestones, sequencing, critical path, dependencies, risks, validation checkpoints, rollback considerations, and concrete evidence for completion. Write a concise plan or research artifact when it improves handoff.
-4. Task planning and delegation: decide whether the request is simple enough to complete directly. When it has multiple deliverables, parallel work, meaningful dependencies, cross-domain changes, or a material research phase, call aegis_create_subissues and assign each child to the best enabled Agent. Use clear objectives, boundaries, and acceptance evidence; do not create vague placeholder tasks.
-5. Coordination and integration: use aegis_list_child_issues, aegis_get_issue_progress, aegis_wait_for_child_issues, aegis_comment_issue, aegis_broadcast, and aegis_list_broadcasts to track work, correct scope drift, unblock dependencies, and consolidate results. On continuation, compare child evidence with the original objective and create another small wave only when material gaps remain.
+3. Development planning: define milestones, risks, validation checkpoints, rollback considerations, and concrete evidence for completion. Child Issues must remain independent; express sequencing as successive dispatch waves, never as dependency or blocks edges.
+4. Task planning and delegation: decide whether the request is simple enough to complete directly. When it has multiple deliverables, parallel work, cross-domain changes, or a material research phase, dispatch a small bounded wave with aegis_create_subissues and assign each child to the best enabled Agent. Do not try to issue every conceivable task up front.
+5. Coordination, parent acceptance, and integration: immediately after each dispatch, estimate how many minutes the selected child work should take and call aegis_wait_for_child_issues. End the turn after the wait succeeds. On wakeup, evaluate every material parent requirement as PASS, FAIL, or UNPROVEN using concrete evidence. Child completion or child acceptance never implies parent acceptance. For every FAIL or UNPROVEN requirement, comment on and notify an existing owner when it belongs to that scope, or dispatch a new small wave when distinct work is required. Continue implementing until every parent requirement passes; only then integrate and submit the parent result.
 
 DELEGATION RULES
-- Use backend-engineer for Go, Gin, GORM/SQLite, APIs, persistence, concurrency, and backend tests.
-- Use frontend-engineer for React, Tailwind, shadcn/ui, browser behavior, accessibility, and frontend tests.
-- Use red-team-lead or red-team-engineer for authorized security analysis and validation.
-- Use vulnerability-report-engineer for evidence-based security or assessment reports.
-- Use the exact IDs and descriptions from the current <aegis_available_agents> roster. Never invent an Agent or claim delegation succeeded unless the tool succeeded.
-- Every child Issue must state its scope, objective, execution boundary, expected deliverables, validation method, and dependencies. Keep dependencies acyclic.
+- Assign every child Issue to one specific available person from the system-generated direct-report roster. A position describes capability but is never an assignee. Pass the exact employeeId, not a position name or position ID.
+- Choose an available backend engineer for Go, Gin, GORM/SQLite, APIs, persistence, concurrency, and backend tests.
+- Choose an available frontend engineer for React, Tailwind, shadcn/ui, browser behavior, accessibility, and frontend tests.
+- Choose the available UI design engineer for requirement clarification, product functional design, information architecture, user flows, PRDs, wireframes, and implementation-ready frontend handoff.
+- Choose an available red-team lead or red-team engineer for authorized security analysis and validation.
+- Choose an available vulnerability report engineer for evidence-based security or assessment reports.
+- One employee has one fixed Session per Issue. Continuations and rework of that Issue reuse its Session; a different Issue starts a new Session. Never assign the same employee twice in one wave.
+- Use the exact employee IDs and descriptions from the current roster. Never invent an employee or claim delegation succeeded unless the tool succeeded.
+- Every child Issue must state its scope, objective, execution boundary, expected deliverables, and validation method. Never add dependencies or blocks relations between child Issues or from children to the parent.
 - If the task is simple and bounded, you may perform it yourself, but still report the plan, assumptions, evidence, and remaining risks.
 - Respect the operator's authorization and workspace boundary. Do not expand scope because research reveals an interesting possibility. Do not perform destructive changes, production actions, or security testing without explicit authorization.
 
 PROGRESS AND HANDOFF
-Call aegis_report_progress after each meaningful phase: research, system analysis, plan creation, delegation, coordination, and final integration. Broadcast only durable findings that can help other Agents. Finish with a concise plan or integration report containing what was researched, what was delegated, current status, evidence, risks, and next actions.`,
+Call aegis_report_progress after each meaningful phase: research, system analysis, plan creation, delegation, coordination, and final integration. Send durable cross-employee findings through Relay and record work decisions on Board explicitly. Finish with a concise plan or integration report containing what was researched, what was delegated, current status, evidence, risks, and next actions.`,
 			Tools: append([]string{}, defaultAgentTools...), SkillIDs: []string{"development-planning", "decompose-issues", "api-contract-testing"},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: true, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
@@ -373,7 +377,7 @@ For red-team work that needs target discovery, asset inventory, DNS and subdomai
 
 When the requested deliverable includes a formal vulnerability, assessment, remediation, or executive report, create a final child Issue assigned to vulnerability-report-engineer after all evidence-producing children. Make it depend on those children and include the required report format, audience, language, severity standard, redaction rules, and output file type in its description and objective.
 
-On continuation, review all child results, identify duplication and coverage gaps, perform any bounded integration or validation still needed, and create another small wave of child Issues only when material work remains. Always respect the task's explicit authorization, target boundaries, testing mode, and safety constraints. Do not claim coverage or findings that were not actually verified. Your output format is flexible; prioritize sound judgment, complete coverage, actionable delegation, and an evidence-based final result.`,
+On continuation, serve as the acceptance owner for the exact parent objective. Translate every material parent requirement into a PASS, FAIL, or UNPROVEN checklist backed by reproducible evidence. A security-testing child being completed or accepted proves only that its assigned test was performed; a negative finding, broad coverage, or polished summary does not satisfy a parent objective that requires a concrete exploit, privilege, access level, artifact, or behavior. For every failed or unproven requirement, require focused continuation from the existing owner or dispatch another bounded wave for a genuinely new hypothesis. Continue exploring within authorization until every requirement passes, or until the configured acceptance process accepts a concrete impossibility proof. Generate a formal report only when the operator requested one or the parent objective explicitly requires it; never use a report as a substitute for unmet testing goals. Always respect the task's explicit authorization, target boundaries, testing mode, and safety constraints. Do not claim coverage or findings that were not actually verified.`,
 			Tools: append(append([]string{}, defaultAgentTools...), uncoverToolID), SkillIDs: []string{"decompose-issues", "threat-model-workflows", "security-validation", uncoverSkillID, agentBrowserSkillID},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
@@ -459,14 +463,14 @@ OUTPUT RULES
 - Report only evidence observed in this execution. Never fabricate assets, versions, endpoints or coverage.
 - Separate facts from inference and include confidence where the template asks for it.
 - End with the completed report only; do not replace it with free-form prose.`,
-			Tools: append([]string{}, defaultAgentTools...), SkillIDs: []string{"threat-model-workflows", "security-validation", agentBrowserSkillID},
+			Tools: append(append([]string{}, defaultAgentTools...), uncoverToolID), SkillIDs: []string{"threat-model-workflows", "security-validation", uncoverSkillID, agentBrowserSkillID},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
 		},
 		{
 			ID: "red-team-engineer", Name: "红队攻防工程师", Description: "负责威胁建模、应用安全审查与非破坏性安全验证。",
 			Avatar: "shield", Category: "security", Enabled: true, Builtin: true,
-			SystemPrompt: `You are Aegis's red-team application security engineer. Review authorized code and runtime boundaries adversarially, produce reproducible non-destructive evidence, distinguish confirmed vulnerabilities from hypotheses, and recommend scoped fixes. Never access resources outside the task workspace, exfiltrate data, or perform destructive actions.`,
+			SystemPrompt: `You are Aegis's red-team application security engineer. Review authorized code and runtime boundaries adversarially, produce reproducible non-destructive evidence, distinguish confirmed vulnerabilities from hypotheses, and recommend scoped fixes. You may use any file path inside the task Docker container, but never access targets outside the authorized testing scope, exfiltrate data, or perform destructive actions.`,
 			Tools:        append(append([]string{}, defaultAgentTools...), uncoverToolID), SkillIDs: []string{"threat-model-workflows", "appsec-code-review", "security-validation", uncoverSkillID, agentBrowserSkillID},
 			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: false, ApprovalMode: "all"},
 			CreatedAt:   now, UpdatedAt: now,
@@ -834,12 +838,9 @@ func (s *Store) applyUncoverRedTeamSeedMigration(now time.Time) error {
 		}
 		next := cloneAgent(current)
 		switch current.ID {
-		case "red-team-lead", "red-team-engineer":
+		case "red-team-lead", "recon-engineer", "red-team-engineer":
 			next.Tools = uniqueStrings(append(next.Tools, uncoverToolID))
 			next.SkillIDs = uniqueStrings(append(next.SkillIDs, uncoverSkillID))
-		case "recon-engineer":
-			next.Tools = stringsWithout(next.Tools, uncoverToolID)
-			next.SkillIDs = stringsWithout(next.SkillIDs, uncoverSkillID)
 		default:
 			continue
 		}
@@ -941,9 +942,48 @@ func (s *Store) UpdateAgent(id string, input SaveAgentInput) (AgentDefinition, e
 func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if strings.TrimSpace(input.TemplateID) == "" && id != "" {
+	if id != "" {
 		if index, exists := agentIndex(s.agents, id); exists {
-			input.TemplateID = s.agents[index].TemplateID
+			if strings.TrimSpace(input.TemplateID) == "" {
+				input.TemplateID = s.agents[index].TemplateID
+			}
+			if strings.TrimSpace(input.PositionID) == "" {
+				input.PositionID = s.agents[index].PositionID
+			}
+			if strings.TrimSpace(input.EnglishName) == "" {
+				input.EnglishName = s.agents[index].EnglishName
+			}
+		}
+	}
+	var position Position
+	if strings.TrimSpace(input.PositionID) != "" {
+		var positionErr error
+		position, positionErr = s.GetPosition(input.PositionID)
+		if positionErr != nil || !position.Enabled {
+			return AgentDefinition{}, errors.New("所属岗位不存在或已停用")
+		}
+		input.DepartmentID = position.DepartmentID
+		input.TemplateID = fallback(strings.TrimSpace(input.TemplateID), position.TemplateID)
+		input.Description = fallback(strings.TrimSpace(input.Description), position.Description)
+		input.Avatar = fallback(strings.TrimSpace(input.Avatar), position.Avatar)
+		input.Category = fallback(strings.TrimSpace(input.Category), position.Category)
+		input.Model.Provider = fallback(strings.TrimSpace(input.Model.Provider), position.Model.Provider)
+		input.Model.Model = fallback(strings.TrimSpace(input.Model.Model), position.Model.Model)
+		input.Model.BaseURL = fallback(strings.TrimSpace(input.Model.BaseURL), position.Model.BaseURL)
+		input.Model.Thinking = fallback(strings.TrimSpace(input.Model.Thinking), position.Model.Thinking)
+		if input.Model.Pricing == nil && position.Model.Pricing != nil {
+			pricing := *position.Model.Pricing
+			input.Model.Pricing = &pricing
+		}
+		input.SystemPrompt = fallback(strings.TrimSpace(input.SystemPrompt), position.SystemPrompt)
+		if len(input.Tools) == 0 {
+			input.Tools = append([]string{}, position.Tools...)
+		}
+		if len(input.SkillIDs) == 0 {
+			input.SkillIDs = append([]string{}, position.SkillIDs...)
+		}
+		if len(input.KnowledgeBaseIDs) == 0 {
+			input.KnowledgeBaseIDs = append([]string{}, position.KnowledgeBaseIDs...)
 		}
 	}
 	if strings.TrimSpace(input.TemplateID) == "" {
@@ -954,7 +994,7 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 		_ = s.db.Model(&AgentTemplate{}).Where("id = ?", input.TemplateID).Count(&count).Error
 		if count == 0 {
 			now := time.Now()
-			template := AgentTemplate{ID: input.TemplateID, Provider: provider, Model: model, SystemPrompt: strings.TrimSpace(input.SystemPrompt), Metadata: AgentTemplateMetadata{EnglishName: fallback(strings.TrimSpace(input.ID), normalizeRegistryID(input.Name)), ChineseName: input.Name, Introduction: fallback(input.Description, input.Name), Positions: []string{fallback(input.Category, "general")}}, CreatedAt: now, UpdatedAt: now}
+			template := AgentTemplate{ID: input.TemplateID, Provider: provider, Model: model, SystemPrompt: strings.TrimSpace(input.SystemPrompt), Metadata: AgentTemplateMetadata{EnglishName: fallback(strings.TrimSpace(input.EnglishName), fallback(strings.TrimSpace(input.ID), normalizeRegistryID(input.Name))), ChineseName: input.Name, Introduction: fallback(input.Description, input.Name), Positions: []string{fallback(position.Name, fallback(input.Category, "general"))}}, CreatedAt: now, UpdatedAt: now}
 			if err := s.db.Create(&template).Error; err != nil {
 				return AgentDefinition{}, err
 			}
@@ -964,19 +1004,32 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 	if err != nil {
 		return AgentDefinition{}, errors.New("请先选择或创建 Agent 模板")
 	}
-	input.Name = fallback(template.Metadata.ChineseName, template.Metadata.EnglishName)
-	input.Description = template.Metadata.Introduction
-	input.Category = fallback(firstString(template.Metadata.Positions), "general")
-	input.Model.Provider = template.Provider
-	input.Model.Model = template.Model
-	input.SystemPrompt = template.SystemPrompt
+	// A standalone talent hire keeps the historical template-lock contract.
+	// Employees hired into an explicit Position receive a copied blueprint and
+	// may customize it independently afterwards.
+	if position.ID == "" {
+		input.Name = fallback(template.Metadata.ChineseName, template.Metadata.EnglishName)
+		input.Description = template.Metadata.Introduction
+		input.Category = fallback(firstString(template.Metadata.Positions), "general")
+		input.Model.Provider = template.Provider
+		input.Model.Model = template.Model
+		input.SystemPrompt = template.SystemPrompt
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return AgentDefinition{}, errors.New("Agent 名称不能为空")
+		return AgentDefinition{}, errors.New("员工中文姓名不能为空")
+	}
+	englishName := strings.TrimSpace(input.EnglishName)
+	if englishName == "" && strings.TrimSpace(input.PositionID) == "" {
+		englishName = fallback(strings.TrimSpace(input.ID), name)
 	}
 	creating := id == ""
 	if creating {
-		id = normalizeRegistryID(fallback(strings.TrimSpace(input.ID), name))
+		if position.ID != "" && strings.TrimSpace(input.ID) == "" {
+			id = s.nextEmployeeID(position)
+		} else {
+			id = normalizeRegistryID(fallback(strings.TrimSpace(input.ID), fallback(englishName, name)))
+		}
 		if id == "" {
 			id = "agent-" + strconv.FormatInt(time.Now().UnixMilli(), 10)
 		}
@@ -990,6 +1043,12 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 	}
 	internal := exists && s.agents[index].Internal
 	concierge := id == conciergeAgentID || strings.TrimSpace(input.Category) == "concierge"
+	if !internal && !concierge && englishName == "" {
+		return AgentDefinition{}, errors.New("员工英文姓名不能为空")
+	}
+	if err := s.validateManager(id, input.ManagerAgentID); err != nil {
+		return AgentDefinition{}, err
+	}
 	// Keep the data invariant for programmatic callers and old imports: every
 	// external employee is assigned to a safe default department when no
 	// department was supplied. The hiring UI still requires an explicit choice.
@@ -1027,10 +1086,10 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 		tools = ensureRequiredAgentTools(tools)
 	}
 	agent := AgentDefinition{
-		ID: id, TemplateID: template.ID, Name: name, Description: strings.TrimSpace(input.Description), Avatar: strings.TrimSpace(input.Avatar),
+		ID: id, TemplateID: template.ID, Name: name, EnglishName: englishName, Description: strings.TrimSpace(input.Description), Avatar: strings.TrimSpace(input.Avatar),
 		Category: fallback(strings.TrimSpace(input.Category), "general"), Enabled: input.Enabled, Builtin: builtin, Internal: internal,
 		Model: input.Model, SystemPrompt: strings.TrimSpace(input.SystemPrompt), Memo: strings.TrimSpace(input.Memo),
-		Tools: tools, SkillIDs: uniqueStrings(input.SkillIDs), KnowledgeBaseIDs: uniqueStrings(input.KnowledgeBaseIDs), Permissions: input.Permissions, DepartmentID: strings.TrimSpace(input.DepartmentID),
+		Tools: tools, SkillIDs: uniqueStrings(input.SkillIDs), KnowledgeBaseIDs: uniqueStrings(input.KnowledgeBaseIDs), Permissions: input.Permissions, DepartmentID: strings.TrimSpace(input.DepartmentID), PositionID: strings.TrimSpace(input.PositionID), ManagerAgentID: strings.TrimSpace(input.ManagerAgentID),
 		CreatedAt: createdAt, UpdatedAt: now,
 	}
 	if internal {
@@ -1055,6 +1114,11 @@ func (s *Store) saveAgent(id string, input SaveAgentInput) (AgentDefinition, err
 		s.agents[index] = agent
 	} else {
 		s.agents = append(s.agents, agent)
+	}
+	if isEmployeeAgent(agent) {
+		if _, err := s.ensureEmployeeWorkspace(agent); err != nil {
+			return AgentDefinition{}, err
+		}
 	}
 	s.updatedAt = now
 	s.broadcastLocked()
@@ -1378,37 +1442,43 @@ func (s *Store) chooseAgent(issue Issue) (AgentDefinition, error) {
 	wanted := issue.AssigneeAgentID
 	if wanted == "" {
 		text := strings.ToLower(strings.Join([]string{issue.Title, issue.Description, issue.Objective}, " "))
+		wantedPosition := "backend-engineer"
 		switch {
 		case containsAny(text, "vulnerability report", "security report", "assessment report", "penetration test report", "remediation report", "漏洞报告", "安全报告", "评估报告", "渗透测试报告", "整改报告", "报告编写", "编写报告"):
-			wanted = "vulnerability-report-engineer"
+			wantedPosition = "vulnerability-report-engineer"
 		case containsAny(text, "recon", "reconnaissance", "footprint", "asset discovery", "subdomain", "fingerprint", "osint", "信息收集", "资产发现", "资产收集", "子域名", "指纹识别", "端口服务", "攻击面收集"):
-			wanted = "recon-engineer"
+			wantedPosition = "recon-engineer"
 		case containsAny(text, "security", "secure", "threat", "attack", "vulnerability", "auth", "安全", "攻防", "漏洞", "权限", "注入"):
 			if issue.ParentID == "" {
-				wanted = "red-team-lead"
+				wantedPosition = "red-team-lead"
 			} else {
-				wanted = "red-team-engineer"
+				wantedPosition = "red-team-engineer"
 			}
-		case containsAny(text, "frontend", "react", "tailwind", "css", "browser", "ui", "ux", "前端", "页面", "交互", "界面"):
-			wanted = "frontend-engineer"
-		default:
-			wanted = "backend-engineer"
+		case containsAny(text, "product requirements", "product design", "ui design", "ux design", "wireframe", "prototype", "prd", "产品需求文档", "产品设计", "交互设计", "界面设计", "原型", "用户流程", "需求文档"):
+			wantedPosition = "ui-design-engineer"
+		case containsAny(text, "frontend", "react", "tailwind", "css", "browser", "前端", "页面开发", "组件开发"):
+			wantedPosition = "frontend-engineer"
 		}
+		for _, agent := range agents {
+			if agent.PositionID != wantedPosition || !isEmployeeAgent(agent) {
+				continue
+			}
+			availability, availabilityErr := employeeAssignmentConflict(s.db, agent.ID, issue.ID)
+			if availabilityErr == nil && availability.Available {
+				return agent, nil
+			}
+		}
+		return AgentDefinition{}, fmt.Errorf("岗位 %s 当前没有可接单的员工", wantedPosition)
 	}
 	for _, agent := range agents {
-		if agent.ID == wanted && agent.Enabled && !agent.Internal {
+		if agent.ID == wanted && isEmployeeAgent(agent) {
 			return agent, nil
 		}
 	}
 	if issue.AssigneeAgentID != "" {
 		return AgentDefinition{}, fmt.Errorf("Issue 指定的 Agent 不存在或已停用: %s", issue.AssigneeAgentID)
 	}
-	for _, agent := range agents {
-		if agent.Category != "orchestrator" && agent.Enabled && !agent.Internal {
-			return agent, nil
-		}
-	}
-	return AgentDefinition{}, errors.New("没有可用于执行 Issue 的已启用 Agent")
+	return AgentDefinition{}, errors.New("没有可用于执行 Issue 的已启用员工")
 }
 
 func validateAgentInput(input SaveAgentInput, skills []SkillDefinition, knowledgeBaseIDs map[string]struct{}, internal bool) error {
@@ -1550,9 +1620,19 @@ func stringsWithout(values []string, excluded string) []string {
 }
 
 func ensureRequiredAgentTools(tools []string) []string {
-	values := append([]string{}, tools...)
+	values := withoutRetiredAgentTools(tools)
 	values = append(values, requiredAgentTools...)
 	return uniqueStrings(values)
+}
+
+func withoutRetiredAgentTools(tools []string) []string {
+	values := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if !slices.Contains(retiredAgentTools, tool) {
+			values = append(values, tool)
+		}
+	}
+	return values
 }
 
 func containsAny(value string, candidates ...string) bool {

@@ -33,7 +33,7 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doneChild, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Already done", Objective: "Remain complete.", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	doneChild, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Already done", Objective: "Remain complete.", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer-002"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completedExecution, err := store.createExecution(doneChild, "backend-engineer", "work")
+	completedExecution, err := store.createExecution(doneChild, "backend-engineer-002", "work")
 	if err != nil {
 		t.Fatal(err)
 	}

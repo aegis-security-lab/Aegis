@@ -81,14 +81,14 @@ func TestConciergeAgentUsesOnlyControlledConversationTools(t *testing.T) {
 	}
 }
 
-func TestConciergeRuntimePromptIncludesOnlyAssignableAgentRoster(t *testing.T) {
-	prompt := conciergeRuntimePrompt("请实现登录页面", []AgentDefinition{
+func TestConciergeSystemPromptIncludesOnlyAssignableAgentRoster(t *testing.T) {
+	prompt := conciergeRosterSystemPrompt("You are the concierge.", []AgentDefinition{
 		{ID: conciergeAgentID, Name: "管家", Enabled: true, Description: "不应出现在名册中"},
 		{ID: "frontend-engineer", Name: "前端工程师", Category: "frontend", Enabled: true, Description: "负责 React UI"},
 		{ID: "disabled-agent", Name: "已停用", Enabled: false, Description: "不应出现在名册中"},
 		{ID: "acceptance-validator", Name: "验收", Enabled: true, Internal: true, Description: "不应出现在名册中"},
-	})
-	for _, expected := range []string{"frontend-engineer", "前端工程师", "负责 React UI", "请实现登录页面"} {
+	}, nil)
+	for _, expected := range []string{"You are the concierge.", "frontend-engineer", "前端工程师", "负责 React UI"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("runtime prompt missing %q: %s", expected, prompt)
 		}
@@ -115,7 +115,7 @@ func TestConciergeTaskInputLimitsObjectiveAndExecutionBoundary(t *testing.T) {
 	}
 }
 
-func TestConciergeSessionReceivesRosterWithoutPersistingItAsUserMessage(t *testing.T) {
+func TestConciergeSessionSendsOnlyRawOperatorMessage(t *testing.T) {
 	store := configuredStore(t)
 	conversation, err := store.CreateConciergeConversation()
 	if err != nil {
@@ -140,8 +140,8 @@ func TestConciergeSessionReceivesRosterWithoutPersistingItAsUserMessage(t *testi
 		t.Fatal(err)
 	}
 	runtimeMessage, _ := rpc["message"].(string)
-	if !strings.Contains(runtimeMessage, "frontend-engineer") || !strings.Contains(runtimeMessage, "负责 React、Tailwind") {
-		t.Fatalf("Pi runtime message did not receive the Agent roster: %s", runtimeMessage)
+	if runtimeMessage != operatorMessage {
+		t.Fatalf("Pi runtime message contains injected context: %q", runtimeMessage)
 	}
 	var stored Message
 	if err = store.db.Where("execution_id = ? AND role = ?", detail.Execution.ID, "user").Order("created_at desc, id desc").First(&stored).Error; err != nil {

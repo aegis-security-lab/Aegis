@@ -64,16 +64,9 @@ func TestIssueHierarchyRelationsAndCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.CheckoutIssue(b.ID, CheckoutIssueInput{AgentID: "frontend-engineer", ExecutionID: "exec-b", ExpectedStatuses: []string{"todo"}}); err == nil {
-		t.Fatal("blocked issue checkout should fail")
-	}
-	done := "done"
-	if _, err = s.UpdateIssue(a.ID, UpdateIssueInput{Status: &done}); err != nil {
-		t.Fatal(err)
-	}
 	checked, err := s.CheckoutIssue(b.ID, CheckoutIssueInput{AgentID: "frontend-engineer", ExecutionID: "exec-b", ExpectedStatuses: []string{"todo"}})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("informational dependency must not block checkout: %v", err)
 	}
 	if checked.Status != "in_progress" || checked.CheckoutExecutionID != "exec-b" {
 		t.Fatalf("unexpected checkout: %+v", checked)
@@ -127,8 +120,8 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	if !slices.Contains(custom.Tools, "aegis_report_progress") {
 		t.Fatalf("custom agent tools=%v, missing progress capability", custom.Tools)
 	}
-	if !slices.Contains(custom.Tools, "aegis_broadcast") || !slices.Contains(custom.Tools, "aegis_list_broadcasts") {
-		t.Fatalf("custom agent tools=%v, missing broadcast capabilities", custom.Tools)
+	if !slices.Contains(custom.Tools, "aegis_board") || !slices.Contains(custom.Tools, "aegis_relay") {
+		t.Fatalf("custom agent tools=%v, missing office app capabilities", custom.Tools)
 	}
 
 	custom.Tools = []string{"read"}
@@ -151,8 +144,8 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	if !slices.Contains(updated.Tools, "aegis_report_progress") {
 		t.Fatalf("updated agent tools=%v, progress capability was removed", updated.Tools)
 	}
-	if !slices.Contains(updated.Tools, "aegis_broadcast") || !slices.Contains(updated.Tools, "aegis_list_broadcasts") {
-		t.Fatalf("updated agent tools=%v, broadcast capabilities were removed", updated.Tools)
+	if !slices.Contains(updated.Tools, "aegis_board") || !slices.Contains(updated.Tools, "aegis_relay") {
+		t.Fatalf("updated agent tools=%v, office app capabilities were removed", updated.Tools)
 	}
 }
 
@@ -232,7 +225,7 @@ func TestSessionDetailIncludesPromptSnapshots(t *testing.T) {
 		t.Fatalf("read purpose parameter=%+v", purpose)
 	}
 	children := detail.Session.Execution.ToolsSnapshot[1].Parameters[4].Children
-	if len(children) != 6 || children[3].Name != "priority" || len(children[3].Enum) != 4 {
+	if len(children) != 5 || children[3].Name != "priority" || len(children[3].Enum) != 4 {
 		t.Fatalf("nested tool parameters=%+v", children)
 	}
 }
@@ -613,32 +606,109 @@ func TestAgentMemoPersistsAndRequiredToolsAreAvailable(t *testing.T) {
 	}
 }
 
-func TestAgentMemoIsAppendedOnlyToFirstSessionPrompt(t *testing.T) {
+func TestAgentMemoIsIncludedInSystemPrompt(t *testing.T) {
 	base := "Complete the Issue."
-	withMemo := agentMemoInitialPrompt(base, "Always include test evidence.")
+	withMemo := agentMemoSystemPrompt(base, "Always include test evidence.")
 	if !strings.Contains(withMemo, base) || !strings.Contains(withMemo, "<agent_memo>") || !strings.Contains(withMemo, "Always include test evidence.") {
-		t.Fatalf("memo was not appended to initial prompt: %s", withMemo)
+		t.Fatalf("memo was not included in system prompt: %s", withMemo)
 	}
-	if got := agentMemoInitialPrompt(base, "  "); got != base {
-		t.Fatalf("empty memo changed prompt: %q", got)
+	if got := agentMemoSystemPrompt(base, "  "); got != base {
+		t.Fatalf("empty memo changed system prompt: %q", got)
 	}
 }
 
-func TestPermissionBoundaryIsIncludedInSessionPrompt(t *testing.T) {
-	prompt := agentPermissionInitialPrompt("Complete the Issue.", "/tmp/authorized-workspace", PermissionBoundary{
+func TestPermissionBoundaryIsIncludedInSystemPrompt(t *testing.T) {
+	prompt := agentPermissionSystemPrompt("You are a backend engineer.", "/tmp/authorized-workspace", PermissionBoundary{
 		WorkspaceScope: "run_workspace", AllowShell: true, AllowNetwork: false, AllowWrite: false,
 	})
 	for _, required := range []string{
 		"<agent_permission_boundary>",
 		"/tmp/authorized-workspace",
-		"Do not use absolute paths outside it",
+		"not a filesystem access boundary",
+		"Absolute paths and \"..\" traversal are allowed",
 		"Network access: false",
 		"Workspace write access: false",
-		"Never attempt to bypass this boundary",
+		"default working directory does not restrict file paths",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("permission prompt missing %q: %s", required, prompt)
 		}
+	}
+}
+
+func TestDelegationRosterIsIncludedInSystemPrompt(t *testing.T) {
+	prompt := agentDelegationSystemPrompt("You are a red-team lead.", "Available direct reports:\n- employeeId=red-team-engineer-002")
+	for _, required := range []string{
+		"You are a red-team lead.",
+		"<organization_delegation_boundary>",
+		"employeeId=red-team-engineer-002",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("delegation system prompt missing %q: %s", required, prompt)
+		}
+	}
+}
+
+func TestExecutionEfficiencyIsIncludedInEmployeeSystemPrompt(t *testing.T) {
+	prompt := agentExecutionEfficiencySystemPrompt("You are a red-team lead.")
+	for _, required := range []string{
+		"<execution_efficiency>",
+		"Start useful work immediately",
+		"delegate parallel work",
+		"Limited deliberate redundancy is allowed",
+		"exchange findings through Relay",
+		"never trade away correctness",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("execution efficiency prompt missing %q: %s", required, prompt)
+		}
+	}
+}
+
+func TestManagerOperatingContractRequiresDelegationAndStrictAcceptance(t *testing.T) {
+	prompt := agentManagerOperatingSystemPrompt("You are a red-team lead.")
+	for _, required := range []string{
+		"<manager_operating_contract>",
+		"primary responsibility is to decompose work",
+		"independently verifiable child Issues",
+		"Treat hard goals as binary",
+		"requires RCE",
+		"reject the result",
+		"require continued work or rework",
+		"impossibility proof",
+		"Never lower, reinterpret, or quietly replace",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("manager operating prompt missing %q: %s", required, prompt)
+		}
+	}
+}
+
+func TestOnlyManagersHaveDirectReports(t *testing.T) {
+	s := configuredStore(t)
+	if !s.hasDirectReports("red-team-lead") {
+		t.Fatal("red-team lead should be recognized as a manager")
+	}
+	if s.hasDirectReports("red-team-engineer") {
+		t.Fatal("individual contributor should not be recognized as a manager")
+	}
+}
+
+func TestLegacySystemContextIsRemovedFromVisibleUserPrompt(t *testing.T) {
+	original := "帮我对目标进行红队测试，创建一个 Issue"
+	for _, injected := range []string{
+		"\n\n## Organization delegation boundary\nAvailable direct reports: ...",
+		"\n\n<organization_delegation_boundary>\nAvailable direct reports: ...\n</organization_delegation_boundary>",
+		"\n\n<agent_permission_boundary>\nWorkspace boundary: ...\n</agent_permission_boundary>",
+		"\n\n<agent_memo>\nRemember prior work.\n</agent_memo>",
+	} {
+		if got := stripLegacyUserPromptContext(original + injected); got != original {
+			t.Fatalf("legacy context was not removed: got=%q", got)
+		}
+	}
+	untouched := "  用户主动输入 <agent_memo> 作为普通文本  "
+	if got := stripLegacyUserPromptContext(untouched); got != untouched {
+		t.Fatalf("ordinary user text was changed: got=%q", got)
 	}
 }
 

@@ -64,7 +64,7 @@ export function IssueCommentsList({
   return (
     <ScrollArea
       viewportRef={viewportRef}
-      className="min-h-0 flex-1 rounded-xl border"
+      className="size-full min-h-0 rounded-xl border"
     >
       <div
         className="relative"

@@ -25,6 +25,38 @@ func toolCatalog() map[string]ToolSnapshot {
 		return ToolParameterSnapshot{Name: name, Type: kind, Description: description, Required: required}
 	}
 	catalog := map[string]ToolSnapshot{
+		"aegis_board": {
+			Name: "aegis_board", Label: "Board", Source: "aegis_extension",
+			Description: "读取和控制共享的 Linear 风格 Issue 看板。Agent 的普通输出不会自动写入看板，评论、委派和状态更新必须显式调用此工具。",
+			Parameters: []ToolParameterSnapshot{
+				{Name: "action", Type: "enum", Description: "看板操作。", Required: true, Enum: []string{"list", "get", "create", "update", "assign", "comment", "relate", "unrelate", "archive", "delete"}},
+				parameter("issueId", "string", "目标 Issue 数据库 ID。", false),
+				parameter("body", "string", "Markdown 评论正文。", false),
+				parameter("assigneeAgentId", "string", "具体受派员工的 employeeId；不能填写岗位 ID，且员工必须处于空闲状态。", false),
+				parameter("relationId", "string", "要删除的依赖关系 ID。", false),
+			},
+		},
+		"aegis_relay": {
+			Name: "aegis_relay", Label: "Relay", Source: "aegis_extension",
+			Description: "使用员工异步办公聊天应用：查看收件箱、读取会话或给其他员工发消息。发送后无需等待回复。",
+			Parameters: []ToolParameterSnapshot{
+				{Name: "action", Type: "enum", Description: "Relay 操作。", Required: true, Enum: []string{"directory", "inbox", "read", "send"}},
+				parameter("recipientId", "string", "收件员工 Agent ID。", false),
+				parameter("threadId", "string", "要读取的会话 ID。", false),
+				parameter("body", "string", "消息正文。", false),
+			},
+		},
+		"aegis_web_search": {
+			Name: "aegis_web_search", Label: "Web Search", Source: "aegis_extension",
+			Description: "使用系统设置中配置的 Web 搜索服务检索公开信息。搜索密钥和服务地址由系统托管，不会暴露给 Agent。",
+			Parameters: []ToolParameterSnapshot{
+				parameter("query", "string", "自然语言搜索关键词。", true),
+				{Name: "topic", Type: "enum", Description: "搜索主题，默认 general。", Required: false, Enum: []string{"general", "news", "finance"}},
+				{Name: "searchDepth", Type: "enum", Description: "搜索深度，默认 basic。", Required: false, Enum: []string{"basic", "advanced"}},
+				parameter("includeAnswer", "boolean", "是否让搜索引擎返回综合答案。", false),
+				parameter("maxResults", "number", "最大结果数，范围 1–20，默认 5。", false),
+			},
+		},
 		"read": {
 			Name: "read", Label: "Read", Source: "pi_builtin",
 			Description: "读取文本文件或受支持的图片。文本可按行偏移和数量分段读取；图片会作为多模态附件返回给模型。",
@@ -109,17 +141,9 @@ func toolCatalog() map[string]ToolSnapshot {
 			Description: "仅在操作员或 Leader 明确要求时恢复已取消的当前 Issue 及全部已取消后代，并启动新的根 Execution；普通评论不会触发恢复。",
 			Parameters:  []ToolParameterSnapshot{parameter("reason", "string", "明确恢复任务树的原因，最多 2000 个字符。", true)},
 		},
-		"aegis_comment_issue": {
-			Name: "aegis_comment_issue", Label: "Comment on a direct child Issue", Source: "aegis_extension",
-			Description: "向当前 Issue 的直属子 Issue 发送 Markdown 评论并唤醒负责 Agent。运行中或等待中的子 Issue 会在固定 Pi Session 中收到纠正或催促信息；正在验收或最终总结的子 Issue 不会被打断。",
-			Parameters: []ToolParameterSnapshot{
-				parameter("issueId", "string", "目标直属子 Issue 的数据库 ID。", true),
-				parameter("body", "string", "具体、可执行且基于证据的 Markdown 评论，最多 10000 个字符。", true),
-			},
-		},
 		"aegis_create_subissues": {
 			Name: "aegis_create_subissues", Label: "Create child Issues", Source: "aegis_extension",
-			Description: "把当前 Issue 原子拆分为 2–8 个持久化子 Issues，并把执行权交还给调度器；评论唤醒已完成 Issue 后调用会自动重新打开父 Issue。",
+			Description: "创建 2–8 个彼此独立、无依赖关系的持久化子 Issues。创建后必须调用 aegis_wait_for_child_issues，给出预计等待分钟数并暂时结束当前回合。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("requestKey", "string", "当前父 Issue 内唯一且稳定的幂等键。", true),
 				parameter("summary", "string", "为什么需要拆分的简短说明。", true),
@@ -131,8 +155,7 @@ func toolCatalog() map[string]ToolSnapshot {
 						parameter("description", "string", "子 Issue 的执行范围与上下文。", true),
 						parameter("objective", "string", "验收 Agent 用于判断是否完成的明确目标。", true),
 						{Name: "priority", Type: "enum", Description: "子 Issue 优先级。", Required: true, Enum: []string{"critical", "high", "medium", "low"}},
-						parameter("agentId", "string", "负责该子 Issue 的启用 Agent ID；空字符串表示由调度器选择。", true),
-						parameter("dependsOn", "array<number>", "依赖的较早子项序号，使用从 1 开始的索引。", true),
+						parameter("agentId", "string", "负责该子 Issue 的具体空闲员工 employeeId；不能填写岗位 ID，同一批子 Issue 不能重复使用同一员工。", true),
 					},
 				},
 			},
@@ -163,7 +186,7 @@ func toolCatalog() map[string]ToolSnapshot {
 		"aegis_submit_final_result": {
 			Name: "aegis_submit_final_result", Label: "Submit final result", Source: "aegis_extension",
 			Description: "提交针对当前 Issue 目标的独立最终交付正文，可选文件或目录会由工具直传服务端；目录会在当前运行环境打包为 ZIP。只有提交后 Worker 才能结束并进入后续验收。",
-			Parameters:  []ToolParameterSnapshot{parameter("body", "string", "针对目标的最终结果正文，最多 50000 个字符。", true), parameter("path", "string", "可选的工作区内文件或目录路径。", false), parameter("name", "string", "可选附件名称。", false), parameter("attachmentDescription", "string", "可选附件说明。", false)},
+			Parameters:  []ToolParameterSnapshot{parameter("body", "string", "针对目标的最终结果正文，最多 50000 个字符。", true), parameter("path", "string", "可选的容器内文件或目录路径。", false), parameter("name", "string", "可选附件名称。", false), parameter("attachmentDescription", "string", "可选附件说明。", false)},
 		},
 		"aegis_report_progress": {
 			Name: "aegis_report_progress", Label: "Report work progress", Source: "aegis_extension",
@@ -184,22 +207,6 @@ func toolCatalog() map[string]ToolSnapshot {
 				parameter("messageLimit", "number", "最多内联的最近消息条数，默认 10，最大 50；输出仍受 12 KiB 字符预算限制。", false),
 			},
 		},
-		"aegis_broadcast": {
-			Name: "aegis_broadcast", Label: "Broadcast task information", Source: "aegis_extension",
-			Description: "把经过验证且对其他工作有价值的关键信息持久化，并广播给同一顶层任务树中所有正在执行的其他 Agent。",
-			Parameters: []ToolParameterSnapshot{
-				parameter("subject", "string", "广播主题，最多 160 个字符。", true),
-				parameter("message", "string", "包含发现、证据、影响范围和协作价值的 Markdown 消息，最多 6000 个字符。", true),
-				{Name: "importance", Type: "enum", Description: "广播重要性。", Required: true, Enum: []string{"normal", "important", "critical"}},
-			},
-		},
-		"aegis_list_broadcasts": {
-			Name: "aegis_list_broadcasts", Label: "List task broadcasts", Source: "aegis_extension",
-			Description: "只读获取同一顶层任务树内最近的广播历史，按时间从新到旧返回。",
-			Parameters: []ToolParameterSnapshot{
-				parameter("limit", "number", "最多返回的广播数量，范围 1–50，默认 20。", false),
-			},
-		},
 		"aegis_list_validation_attachments": {
 			Name: "aegis_list_validation_attachments", Label: "List validation attachments", Source: "aegis_extension",
 			Description: "只读列出当前验收所对应 Worker Execution 发布的附件，不能访问其他 Issue 或 Execution 的附件。",
@@ -207,9 +214,10 @@ func toolCatalog() map[string]ToolSnapshot {
 		},
 		"aegis_read_validation_attachment": {
 			Name: "aegis_read_validation_attachment", Label: "Read validation attachment", Source: "aegis_extension",
-			Description: "按字节分段读取当前验收范围内的文本附件，用于核对附件交付物是否满足 Issue 目标。",
+			Description: "按字节分段读取当前验收范围内的文本附件，或 ZIP 附件中的可读文本文件，用于核对交付物是否满足 Issue 目标。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("attachmentId", "string", "附件清单中的附件 ID。", true),
+				parameter("archivePath", "string", "ZIP 内文件清单中的精确路径；普通文本附件不填。", false),
 				parameter("offset", "number", "继续读取的字节偏移，默认 0。", false),
 				parameter("limit", "number", "本次最多读取的字节数，范围 1–32768。", false),
 			},
