@@ -1,0 +1,7 @@
+project: Aegis
+track: product-ui-redesign
+output_folder: bmad-output
+language: zh-CN
+platforms:
+  - responsive-web
+  - desktop-first-operations-console

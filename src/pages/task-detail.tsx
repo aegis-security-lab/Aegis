@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { StatusBadge } from "@/components/status-badge"
+import { PageHeader } from "@/components/page-header"
 import {
   Card,
   CardContent,
@@ -131,6 +132,33 @@ export function TaskDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <PageHeader
+        eyebrow={`任务 / ${issue.identifier}`}
+        title={parameters.title}
+        description={parameters.objective || "查看执行进度、计划与运行记录。"}
+        actions={
+          <>
+            <StatusBadge status={issue.status} />
+            <Button
+              variant="outline"
+              size="sm"
+              render={<Link to={`/issues/${issue.id}`} />}
+              nativeButton={false}
+            >
+              <LinkIcon data-icon="inline-start" />
+              查看计划树
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate("/tasks/new", { state: { clone: parameters } })}
+            >
+              <Copy data-icon="inline-start" />
+              复制任务
+            </Button>
+          </>
+        }
+      />
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Clock3 className="size-4" />任务时间进度</CardTitle>
@@ -141,7 +169,7 @@ export function TaskDetailPage() {
             <span>{budgetMinutes ? `已用 ${formatDuration(elapsedMinutes)} / ${budgetMinutes} 分钟` : "未设置时间预算"}</span>
             <span className={remainingMinutes !== null && remainingMinutes <= 0 ? "font-medium text-destructive" : "text-muted-foreground"}>{remainingMinutes === null ? "无限制" : remainingMinutes <= 0 ? "已超出预算" : `剩余 ${formatDuration(remainingMinutes)}`}</span>
           </div>
-          {budgetMinutes ? <div className="h-2 overflow-hidden rounded-full bg-muted"><div className={cn("h-full rounded-full transition-all", progress >= 100 ? "bg-destructive" : progress >= 80 ? "bg-amber-500" : "bg-primary")} style={{ width: `${progress}%` }} /></div> : null}
+          {budgetMinutes ? <div className="h-2 overflow-hidden rounded-full bg-muted"><div className={cn("h-full w-full origin-left rounded-full transition-[transform,background-color] duration-200", progress >= 100 ? "bg-destructive" : progress >= 80 ? "bg-warning" : "bg-primary")} style={{ transform: `scaleX(${progress / 100})` }} /></div> : null}
           <div className="flex max-w-sm items-center gap-2">
             <Input type="number" min={1} value={budgetInput} onChange={(event) => setBudgetInput(event.target.value)} placeholder="分钟" />
             <Button variant="outline" onClick={() => void saveBudget()} disabled={savingBudget}>{savingBudget ? <Spinner data-icon="inline-start" /> : <Save data-icon="inline-start" />}调整预算</Button>
@@ -231,7 +259,6 @@ export function TaskDetailPage() {
             value={formatTime(parameters.createdAt)}
           />
         </CardContent>
-        <div className="flex justify-end border-t px-6 py-4"><Button variant="outline" onClick={() => navigate("/tasks/new", { state: { clone: parameters } })}><Copy data-icon="inline-start" />复制任务</Button></div>
       </Card>
 
       <Card>

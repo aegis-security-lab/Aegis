@@ -29,33 +29,23 @@ const labels: Record<string, string> = {
 }
 
 const styles: Record<string, string> = {
-  planning:
-    "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300",
-  running:
-    "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-  in_progress:
-    "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-  todo: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300",
+  planning: "border-info/25 bg-info/10 text-info",
+  running: "border-success/25 bg-success/10 text-success",
+  in_progress: "border-success/25 bg-success/10 text-success",
+  todo: "border-info/25 bg-info/10 text-info",
   completed: "border-border bg-muted text-foreground",
   done: "border-border bg-muted text-foreground",
-  paused:
-    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
-  awaiting_review:
-    "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-300",
-  review:
-    "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-300",
-  in_review:
-    "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-300",
-  pending:
-    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
-  waiting_approval:
-    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
+  paused: "border-warning/25 bg-warning/10 text-warning",
+  awaiting_review: "border-info/25 bg-info/10 text-info",
+  review: "border-info/25 bg-info/10 text-info",
+  in_review: "border-info/25 bg-info/10 text-info",
+  pending: "border-warning/25 bg-warning/10 text-warning",
+  waiting_approval: "border-warning/25 bg-warning/10 text-warning",
   failed: "border-destructive/25 bg-destructive/10 text-destructive",
   blocked: "border-destructive/25 bg-destructive/10 text-destructive",
   disconnected: "border-destructive/25 bg-destructive/10 text-destructive",
   stopped: "border-border bg-muted text-muted-foreground",
-  interrupted:
-    "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300",
+  interrupted: "border-warning/25 bg-warning/10 text-warning",
 }
 
 export function StatusBadge({

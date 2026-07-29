@@ -101,11 +101,6 @@ export function WorkspaceChatPage() {
   }, [loadConversations, state?.updatedAt])
 
   React.useEffect(() => {
-    if (loading || conversationId || conversations.length === 0) return
-    navigate(`/workspace/${conversations[0].id}`, { replace: true })
-  }, [conversationId, conversations, loading, navigate])
-
-  React.useEffect(() => {
     if (!conversationId) {
       const timer = window.setTimeout(() => {
         setDetail(null)
@@ -267,11 +262,11 @@ export function WorkspaceChatPage() {
   )
 
   return (
-    <div className="flex size-full min-h-0 max-h-full overflow-hidden bg-background">
+    <div className="flex size-full max-h-full min-h-0 overflow-hidden bg-background">
       <aside
-        aria-hidden="true"
         className={cn(
-          "hidden min-h-0 w-full shrink-0 flex-col border-r bg-muted/20 md:w-72"
+          "min-h-0 w-full shrink-0 flex-col border-r bg-muted/20 md:flex md:w-72",
+          conversationId ? "hidden" : "flex"
         )}
       >
         <div className="flex h-14 shrink-0 items-center justify-between gap-3 px-4">
@@ -337,7 +332,7 @@ export function WorkspaceChatPage() {
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    className="mr-2 shrink-0 opacity-0 group-hover/conversation:opacity-100 focus-visible:opacity-100"
+                    className="mr-2 shrink-0 opacity-100 focus-visible:opacity-100 md:opacity-0 md:group-hover/conversation:opacity-100"
                     aria-label={`删除会话 ${conversation.title}`}
                     onClick={() => setDeleteTarget(conversation)}
                   >
@@ -352,10 +347,11 @@ export function WorkspaceChatPage() {
 
       <section
         className={cn(
-          "grid h-full min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_auto]"
+          "h-full min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto]",
+          conversationId ? "grid" : "hidden md:grid"
         )}
       >
-        <div className="hidden">
+        <div className="flex h-14 shrink-0 items-center gap-3 border-b px-3 sm:px-4">
           <Button
             type="button"
             variant="ghost"
@@ -366,11 +362,13 @@ export function WorkspaceChatPage() {
           >
             <ArrowLeft />
           </Button>
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Sparkles className="size-4" />
+          <span className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <Sparkles />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">Aegis 管家</p>
+            <p className="truncate text-sm font-medium">
+              {detail?.conversation.title ?? "Aegis 管家"}
+            </p>
             <p className="truncate text-xs text-muted-foreground">
               {busy ? "正在处理你的消息" : "可以直接回答，也可以创建并调度任务"}
             </p>
@@ -427,7 +425,7 @@ export function WorkspaceChatPage() {
               void send()
             }}
           >
-            <InputGroup className="min-h-24 items-stretch rounded-2xl bg-background">
+            <InputGroup className="min-h-24 items-stretch rounded-lg bg-background">
               <InputGroupTextarea
                 value={draft}
                 maxLength={50000}

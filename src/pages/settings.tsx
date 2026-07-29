@@ -129,7 +129,7 @@ export function SettingsPage() {
       />
       <div className="grid items-start gap-5 md:grid-cols-[180px_minmax(0,1fr)]">
         <nav
-          className="flex gap-2 overflow-x-auto rounded-xl border bg-card p-2 md:sticky md:top-20 md:flex-col"
+          className="flex gap-1 overflow-x-auto rounded-lg border bg-card p-1.5 md:sticky md:top-20 md:flex-col"
           aria-label="设置分类"
         >
           {(
@@ -137,6 +137,7 @@ export function SettingsPage() {
               ["general", "全局配置"],
               ["runtime", "Pi Runtime"],
               ["model", "模型与认证"],
+              ["search", "Web 搜索"],
               ["workspace", "工作区"],
               ["budget", "预算与心跳"],
               ["policy", "执行与拆分策略"],
@@ -257,7 +258,7 @@ export function SettingsPage() {
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="search-api-key">API Key</FieldLabel>
-                      <Input id="search-api-key" type="password" autoComplete="off" value={form.webSearch.apiKey} onChange={(event) => update("webSearch", { ...form.webSearch, apiKey: event.target.value })} placeholder={config.webSearch?.hasApiKey ? "已保存；留空保持不变" : "th-..."} />
+                      <Input id="search-api-key" type="password" autoComplete="off" value={form.webSearch.apiKey} onChange={(event) => update("webSearch", { ...form.webSearch, apiKey: event.target.value })} placeholder={config.webSearch?.hasApiKey ? "已保存；留空保持不变" : "th-…"} />
                       <FieldDescription>密钥只保存在服务端，不会返回前端或暴露给 Agent。</FieldDescription>
                     </Field>
                     <Field>
