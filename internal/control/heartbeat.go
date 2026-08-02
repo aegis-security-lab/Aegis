@@ -164,9 +164,9 @@ Issue %s：%s
 
 本次唤醒用于协调而不是空等：
 1. 可以继续对当前任务有价值的工作。
-2. 使用 aegis_list_child_issues 查看直属子 Issue，用 aegis_get_issue_progress 根据 currentExecutionId 查看子 Agent 的进度或最近消息。
-3. 对运行中或等待中的直属子 Issue，用 aegis_board 记录可见的纠正意见，并用 aegis_relay 异步通知负责人。如果当前方向不安全、完全无关或无法就地纠正，则使用 aegis_cancel_issue 停止子 Issue。
-4. 需要等待子 Issue 结果时，使用 aegis_wait_for_child_issues 等待相应 childIssueIds；Relay 消息本身不会阻塞工作。
+2. 使用 Phone Board 快捷指令 phone_board_list_issues 查看任务 Issue，再用 phone_board_get_issue 阅读目标、状态和评论。
+3. 对需要指导的子 Issue，使用 phone_board_comment_issue 记录可见意见；需要异步沟通时使用 phone_relay_list_threads、phone_relay_get_thread 和 phone_relay_send_message。
+4. 需要等待子 Issue 结果时，使用 phone_board_sleep 释放当前 loop；Relay 消息本身不会阻塞工作。
 5. 如果子树仍未满足，完成本轮协调后结束回合；Aegis 会恢复等待状态并在下一次心跳再次唤醒你。
 
 当前直属子 Issues：

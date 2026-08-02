@@ -289,6 +289,121 @@ func TestUnsourcedRootIssueIsPromotedToTaskWithContainer(t *testing.T) {
 	}
 }
 
+func TestFinishedTaskAutomaticallyStopsContainerAndKeepsWorkspaceVolume(t *testing.T) {
+	logPath, statePath := installFakeDocker(t)
+	store := configuredStore(t)
+	task, root, err := store.CreateTask(CreateIssueInput{Title: "auto stop task", Objective: "finish and release runtime", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	container, err := store.ensureTaskContainer(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "last child", Objective: "finish first", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = store.db.Model(&Issue{}).Where("id = ?", root.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed", "completed_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	root, _ = store.GetIssue(root.ID)
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.ReconcileIssue(root)
+	time.Sleep(50 * time.Millisecond)
+	if state, _ := os.ReadFile(statePath); strings.TrimSpace(string(state)) != "running" {
+		t.Fatalf("container stopped while a child Issue was unfinished: %q", state)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", child.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed", "completed_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	child, _ = store.GetIssue(child.ID)
+	manager.ReconcileIssue(child)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		state, _ := os.ReadFile(statePath)
+		if strings.TrimSpace(string(state)) == "exited" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	state, _ := os.ReadFile(statePath)
+	if strings.TrimSpace(string(state)) != "exited" {
+		t.Fatalf("finished task container was not stopped: %q", state)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logData)
+	if !strings.Contains(logText, "stop --time 5 "+container.Name) {
+		t.Fatalf("docker stop was not called for task %s: %s", task.ID, logText)
+	}
+	if strings.Contains(logText, "volume rm") || strings.Contains(logText, "rm -f "+container.Name) {
+		t.Fatalf("automatic stop deleted the task runtime or workspace volume: %s", logText)
+	}
+	var events []ExecutionEvent
+	eventDeadline := time.Now().Add(time.Second)
+	for time.Now().Before(eventDeadline) {
+		events = nil
+		if err = store.db.Where("issue_id = ? AND type = ?", root.ID, "container").Find(&events).Error; err != nil {
+			t.Fatal(err)
+		}
+		if len(events) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(events) != 1 || !strings.Contains(events[0].Title, "自动停止") {
+		t.Fatalf("automatic container stop event missing: %+v", events)
+	}
+}
+
+func TestFinishedTaskWaitsForActiveExecutionBeforeStoppingContainer(t *testing.T) {
+	_, statePath := installFakeDocker(t)
+	store := configuredStore(t)
+	_, root, err := store.CreateTask(CreateIssueInput{Title: "active execution guard", Objective: "do not stop early", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ensureTaskContainer(root); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(root, root.AssigneeAgentID, "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", root.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed", "completed_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	root, _ = store.GetIssue(root.ID)
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.ReconcileIssue(root)
+	time.Sleep(50 * time.Millisecond)
+	state, _ := os.ReadFile(statePath)
+	if strings.TrimSpace(string(state)) != "running" {
+		t.Fatalf("container stopped while an Execution was active: %q", state)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "completed", "finished_at": now}); err != nil {
+		t.Fatal(err)
+	}
+	manager.ReconcileIssue(root)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		state, _ = os.ReadFile(statePath)
+		if strings.TrimSpace(string(state)) == "exited" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("container remained running after the active Execution ended: %q", state)
+}
+
 func TestRootIssueCreationAutomaticallyCreatesTask(t *testing.T) {
 	installFakeDocker(t)
 	store := configuredStore(t)

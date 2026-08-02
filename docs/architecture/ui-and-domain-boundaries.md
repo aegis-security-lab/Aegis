@@ -55,8 +55,8 @@ Phone 的唯一键是 `taskId + taskAgentId`。页面栈、当前 App、输入�
 
 当前只有 `board_autonomy`，所以创建任务页只展示其说明，不提供伪多模式选择器：
 
-- 父 TaskAgent 通过 `coordinate_delegate` 创建和指派子 Issue，同时继续自己的工作；
-- 无价值动作时使用 `coordinate_sleep`；
+- 父 TaskAgent 通过 Phone Board 快捷指令 `phone_board_delegate` 创建和指派子 Issue，同时继续自己的工作；
+- 无价值动作时使用 `phone_board_sleep`；
 - 每分钟持久化心跳给出耗时、变化和子 Issue 进度；
 - Board 评论或 Relay/Phone 消息精确 steer 正在运行的 TaskAgent，或提前唤醒睡眠会话；
 - 评论和消息是软提示，TaskAgent 可自行决定是否回复；

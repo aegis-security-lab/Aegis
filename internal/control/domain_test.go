@@ -793,7 +793,7 @@ func TestRedTeamLeadHasMandatoryComplexTaskBoundary(t *testing.T) {
 		"requires reconnaissance or information collection",
 		"requires a formal vulnerability",
 		"covers two or more vulnerability classes",
-		"you MUST call coordinate_delegate",
+		"you MUST call the Phone Board shortcut phone_board_delegate",
 	} {
 		if !strings.Contains(lead.SystemPrompt, required) {
 			t.Fatalf("red-team lead prompt is missing %q", required)

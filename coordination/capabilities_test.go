@@ -11,17 +11,17 @@ type capabilityCatalog map[string]bool
 func (c capabilityCatalog) Has(ref capability.Ref) bool { return c[string(ref.Kind)+"/"+ref.Name] }
 
 func TestCapabilityPlannerMergesFiltersAndRequires(t *testing.T) {
-	planner := CapabilityPlanner{Catalog: capabilityCatalog{"skill/go": true, "web/default": true, "phone/default": true, "tool/coordination": true}}
+	planner := CapabilityPlanner{Catalog: capabilityCatalog{"skill/go": true, "web/default": true, "phone/default": true}}
 	decision, err := planner.Plan(CapabilityPlanRequest{
 		Defaults:       []capability.Ref{{Kind: capability.KindSkill, Name: "go"}, {Kind: capability.KindWeb, Name: "default"}},
 		Requested:      []capability.Ref{{Kind: capability.KindPhone, Name: "default", Config: map[string]any{"installedApps": []any{"aegis.board"}}}},
-		SystemRequired: []capability.Ref{{Kind: capability.KindTool, Name: "coordination"}},
+		SystemRequired: []capability.Ref{{Kind: capability.KindPhone, Name: "default"}},
 		Policy:         CapabilityPolicy{Allowed: []CapabilityPattern{{Kind: "*", Name: "*"}}, Denied: []CapabilityPattern{{Kind: capability.KindWeb, Name: "default"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(decision.Capabilities) != 3 || decision.Capabilities[0].Name != "go" || decision.Capabilities[1].Name != "default" || decision.Capabilities[2].Name != "coordination" {
+	if len(decision.Capabilities) != 2 || decision.Capabilities[0].Name != "go" || decision.Capabilities[1].Name != "default" {
 		t.Fatalf("decision=%+v", decision)
 	}
 }

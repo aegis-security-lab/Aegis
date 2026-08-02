@@ -46,6 +46,26 @@ func TestBoardAutonomyAssignmentEnqueuesNotifiesAndSchedulesHeartbeat(t *testing
 	}
 }
 
+func TestBoardAutonomyRootAssignmentCannotBecomeResumeWake(t *testing.T) {
+	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
+		ID: "root-assigned", Type: coordination.EventIssueAssigned, CoordinationID: "task", TaskID: "task",
+		IssueID: "root", AgentID: "leader", TaskAgentID: "task-agent-root", OccurredAt: time.Now(),
+	}, coordination.Binding{}, coordination.Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 3 || effects[0].Type != coordination.EffectEnqueueIssue || effects[1].Type != coordination.EffectDeliverMessage || effects[2].Type != coordination.EffectScheduleWakeup {
+		t.Fatalf("effects=%+v", effects)
+	}
+	var command coordination.AgentCommand
+	if err = json.Unmarshal(effects[1].Payload, &command); err != nil {
+		t.Fatal(err)
+	}
+	if command.Delivery != "assignment" {
+		t.Fatalf("root assignment delivery=%q; delayed delivery could create a spurious resume execution", command.Delivery)
+	}
+}
+
 func TestBoardAutonomyDelegationAlwaysCreatesChildIssues(t *testing.T) {
 	payload, _ := json.Marshal(coordination.DelegationRequest{Children: []coordination.ChildWork{
 		{AgentID: "child-agent", Prompt: "work independently"},

@@ -81,7 +81,7 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 			// the same task-local wake/steer signal as delegated TaskAgents.
 			assignment, err := effect(coordination.EffectDeliverMessage, "board:assignment-delivery:"+event.ID, coordination.AgentCommand{
 				AgentID: event.AgentID, TaskAgentID: event.TaskAgentID, ExecutionID: event.ExecutionID, IssueID: event.IssueID,
-				Message: "你收到了一条新的看板 Issue。请在手机中打开 Board，确认目标、上下文和验收要求后开始执行。", Delivery: "steer",
+				Message: "你收到了一条新的看板 Issue。请在手机中打开 Board，确认目标、上下文和验收要求后开始执行。", Delivery: "assignment",
 			})
 			if err != nil {
 				return nil, err
@@ -274,7 +274,7 @@ func heartbeatMessage(event coordination.Event, snapshot coordination.Snapshot, 
 - 检查你拆出的子 Issue 和执行进度；
 - 通过 Issue 评论或 Relay 询问、指导、纠偏；
 - 必要时停止错误方向的子 Issue，再给出新的清晰要求；
-- 如果暂时没有可做事项，可再次使用 coordinate_sleep 设置休息时间。
+- 如果暂时没有可做事项，可使用 Phone Board 快捷指令 phone_board_sleep 设置休息时间。
 
 消息和评论只提供信息，不强制要求回复；是否回复由你根据任务价值自行判断。`,
 		formatDuration(elapsed), snapshot.Current.Status, len(snapshot.Children), statusCounts[coordination.WorkRunning], statusCounts[coordination.WorkWaiting], statusCounts[coordination.WorkSucceeded], statusCounts[coordination.WorkFailed], strings.Join(childDetails, "\n"))

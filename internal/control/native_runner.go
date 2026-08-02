@@ -444,7 +444,7 @@ func (r NativeIssueRunner) terminalChildAttentionPrompt(parentID string) string 
 		return ""
 	}
 	var summary strings.Builder
-	summary.WriteString("## 必须处理的直属子 Issue 异常结果\n\n恢复 Execution 排队期间出现了以下失败或超预算结果。不要继续被动等待；逐项明确选择 coordinate_continue、委派替代方向，或接受部分结果并继续父目标：\n")
+	summary.WriteString("## 必须处理的直属子 Issue 异常结果\n\n恢复 Execution 排队期间出现了以下失败或超预算结果。不要继续被动等待；逐项明确选择 phone_board_continue_issue、使用 phone_board_delegate 委派替代方向，或接受部分结果并继续父目标：\n")
 	for _, child := range children {
 		fmt.Fprintf(&summary, "\n- %s · %s [%s]\n  结果：%s\n  错误：%s\n", child.Identifier, child.Title, child.Status, fallback(truncate(strings.TrimSpace(child.Result), 2400), "无结果摘要"), fallback(truncate(strings.TrimSpace(child.Error), 1000), "无"))
 	}
@@ -561,12 +561,12 @@ func nativeCoordinationSystemPrompt(systemPrompt string, issue Issue, agent Agen
 You are one task-local Agent instance, not a global employee. Your role type is %q (agentId=%s), taskAgentId=%s, and current Issue is %s. Your conversation and Phone belong only to this Task and must never be treated as memory for another Task.
 
 The only coordination mode is Board Autonomy:
-- Use coordinate_delegate to create and assign durable child Issues. Delegation does not pause you; continue any useful parent work.
-- When a direct child ends as failed or budget_exceeded, you are woken immediately. Use coordinate_continue only if its evidence justifies another Execution; otherwise delegate a different direction or accept the partial result and continue. A new Execution resets only its own budget, never the Task wall-clock.
+- Use the Phone Board shortcut phone_board_delegate to create and assign durable child Issues. Delegation does not pause you; continue any useful parent work.
+- When a direct child ends as failed or budget_exceeded, you are woken immediately. Use phone_board_continue_issue only if its evidence justifies another Execution; otherwise use phone_board_delegate for a different direction or accept the partial result and continue. A new Execution resets only its own budget, never the Task wall-clock.
 - A one-minute heartbeat wakes this Agent only after it releases the active loop into sleeping or waiting_children; it is never periodic input to active model work. On wake, use it to inspect, guide, stop, or reassign work when needed.
 - Board comments and Phone Relay messages identify the sender and may directly steer this running loop or wake it early. A reply is optional; reply only when it advances the task.
-- Use coordinate_sleep only when no valuable work remains until a heartbeat, comment, Relay message, or child update arrives.
-- Use the task Phone for Board and Relay. Never infer another task's messages, drafts, pages, or state.
+- Use the Phone Board shortcut phone_board_sleep only when no valuable work remains until a heartbeat, comment, Relay message, or child update arrives.
+- Board and Relay operations, including their shortcuts, always run through the task Phone. Never infer another task's messages, drafts, pages, or state.
 </aegis_task_identity>`, strings.TrimSpace(systemPrompt), agent.Name, agent.ID, issue.AssigneeTaskAgentID, issue.Identifier)
 }
 

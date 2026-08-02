@@ -20,6 +20,8 @@ type fakePhoneClient struct {
 	startRequest agentapp.StartSessionRequest
 	viewCalls    int
 	actRequests  []agentapp.ActionRequest
+	shortcuts    []agentapp.ShortcutDefinition
+	shortcutRuns []agentapp.ShortcutRequest
 	failActs     int
 }
 
@@ -52,6 +54,17 @@ func (c *fakePhoneClient) Act(_ context.Context, request agentapp.ActionRequest)
 		return agentapp.ActionResponse{}, errors.New("temporary network failure")
 	}
 	return agentapp.ActionResponse{Status: "ok", Effect: "navigated", Page: phonePage("rev-2", "Issue")}, nil
+}
+
+func (c *fakePhoneClient) Shortcuts(_ context.Context, _ string) ([]agentapp.ShortcutDefinition, error) {
+	return append([]agentapp.ShortcutDefinition(nil), c.shortcuts...), nil
+}
+
+func (c *fakePhoneClient) RunShortcut(_ context.Context, request agentapp.ShortcutRequest) (agentapp.ShortcutResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.shortcutRuns = append(c.shortcutRuns, request)
+	return agentapp.ShortcutResponse{Status: "ok", Effect: "delegated", Page: phonePage("rev-shortcut", "Task Issues"), Toast: "Child Issue created"}, nil
 }
 
 func phonePage(revision, title string) agentapp.Page {
@@ -118,6 +131,39 @@ func TestPhoneActionUsesStableCallIDAcrossRetries(t *testing.T) {
 	}
 	if result.State.Messages[2].Role != agentcore.RoleTool || !strings.Contains(result.State.Messages[2].Text(), "[PAGE] Issue") {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestDiscoveredShortcutRunsOnlyThroughPhoneClient(t *testing.T) {
+	client := &fakePhoneClient{shortcuts: []agentapp.ShortcutDefinition{{
+		Name: "phone_board_delegate", Description: "Delegate through Board", AppID: "aegis.board", Frequency: 100,
+		Parameters: []byte(`{"type":"object","properties":{"children":{"type":"array"}},"required":["children"],"additionalProperties":false}`),
+	}}}
+	toolset, err := NewToolset(ToolsetConfig{Client: client, ExecutionID: "execution-1", AgentID: "agent-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = toolset.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var shortcut agentcore.Tool
+	for _, tool := range toolset.Tools() {
+		if tool.Definition().Name == "phone_board_delegate" {
+			shortcut = tool
+		}
+	}
+	if shortcut == nil {
+		t.Fatal("discovered Phone shortcut was not materialized as an AgentCore tool")
+	}
+	result, err := shortcut.Execute(context.Background(), []byte(`{"children":[]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.shortcutRuns) != 1 || client.shortcutRuns[0].PhoneSessionID != "phone-1" || client.shortcutRuns[0].Name != "phone_board_delegate" {
+		t.Fatalf("shortcut did not traverse Phone client: %+v", client.shortcutRuns)
+	}
+	if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "Task Issues") || result.Terminate {
+		t.Fatalf("result=%+v", result)
 	}
 }
 

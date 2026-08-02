@@ -54,7 +54,7 @@ func TestNativeValidationCapabilityIsNarrowAndPersistsDecisionWithoutPiSession(t
 	if err != nil || decision.Outcome != "passed" {
 		t.Fatalf("decision=%+v err=%v", decision, err)
 	}
-	for _, forbidden := range []string{"aegis_list_validation_attachments", "aegis_read_validation_attachment", "coordinate_delegate", "phone_view"} {
+	for _, forbidden := range []string{"aegis_list_validation_attachments", "aegis_read_validation_attachment", "phone_board_delegate", "phone_view"} {
 		for _, tool := range resolved.Tools {
 			if tool.Definition().Name == forbidden {
 				t.Fatalf("validator received forbidden tool %q", forbidden)

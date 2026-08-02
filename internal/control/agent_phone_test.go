@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"aegis/agentapp"
 )
@@ -18,6 +19,53 @@ func phoneAction(t *testing.T, client AgentPhoneClient, sessionID string, page a
 		t.Fatalf("%s %s: %v", action, ref, err)
 	}
 	return response
+}
+
+func TestControlPhoneBoardShortcutDelegatesThroughCoordination(t *testing.T) {
+	store, manager := bridgeTestManager(t)
+	bridge, err := newTestCoordinationBridge(manager, "phone-board-delegate", "board_autonomy", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetCoordination(bridge)
+	ctx, cancel := context.WithCancel(context.Background())
+	bridge.Start(ctx)
+	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
+	parent, err := store.CreateIssue(CreateIssueInput{Title: "Phone parent", Objective: "Delegate through Phone", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(parent, parent.AssigneeAgentID, "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "active", "current_execution_id": execution.ID, "checkout_execution_id": execution.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, client, err := NewControlAgentPhone(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := client.Start(context.Background(), agentapp.StartSessionRequest{AgentID: parent.AssigneeAgentID, TaskAgentID: parent.AssigneeTaskAgentID, TaskID: parent.ID, ExecutionID: execution.ID, InstalledApps: []string{"aegis.board", "aegis.relay"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.RunShortcut(context.Background(), agentapp.ShortcutRequest{PhoneSessionID: started.PhoneSessionID, Name: "phone_board_delegate", IdempotencyKey: "delegate-one", Arguments: map[string]any{"children": []any{map[string]any{"agentId": "frontend-engineer", "title": "Focused child", "prompt": "Produce one independently verifiable result"}}}})
+	if err != nil || response.Effect != "delegated" {
+		t.Fatalf("shortcut response=%+v err=%v", response, err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var children []Issue
+		if err = store.db.Where("parent_id = ?", parent.ID).Find(&children).Error; err == nil && len(children) == 1 {
+			if children[0].AssigneeAgentID != "frontend-engineer" || children[0].CreatedBy != parent.AssigneeTaskAgentID {
+				t.Fatalf("child=%+v", children[0])
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Phone Board shortcut did not create a child Issue through Coordination")
 }
 
 func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T) {

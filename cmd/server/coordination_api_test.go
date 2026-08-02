@@ -83,7 +83,7 @@ func TestCoordinationModeAPI(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"selection":"replace"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"name":"coordination"`)) {
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"selection":"replace"`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"name":"delivery"`)) || bytes.Contains(response.Body.Bytes(), []byte(`"name":"coordination"`)) {
 		t.Fatalf("plan status=%d body=%s", response.Code, response.Body.String())
 	}
 

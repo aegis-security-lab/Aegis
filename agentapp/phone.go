@@ -51,6 +51,45 @@ func (r *Registry) Manifests() []Manifest {
 	return items
 }
 
+func (r *Registry) shortcuts(installed []string) []ShortcutDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	items := make([]ShortcutDefinition, 0, MaxPhoneShortcuts)
+	seen := map[string]bool{}
+	for _, appID := range installed {
+		app, ok := r.apps[appID]
+		if !ok {
+			continue
+		}
+		provider, ok := app.(ShortcutApp)
+		if !ok {
+			continue
+		}
+		for _, item := range provider.Shortcuts() {
+			item.Name = strings.TrimSpace(item.Name)
+			if item.Name == "" || seen[item.Name] {
+				continue
+			}
+			item.AppID = appID
+			seen[item.Name] = true
+			items = append(items, item)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Frequency != items[j].Frequency {
+			return items[i].Frequency > items[j].Frequency
+		}
+		if items[i].AppID != items[j].AppID {
+			return items[i].AppID < items[j].AppID
+		}
+		return items[i].Name < items[j].Name
+	})
+	if len(items) > MaxPhoneShortcuts {
+		items = items[:MaxPhoneShortcuts]
+	}
+	return items
+}
+
 type Session struct {
 	ID          string
 	Actor       Actor
@@ -291,6 +330,93 @@ func (p *Phone) Act(ctx context.Context, request ActionRequest) (ActionResponse,
 	return response, nil
 }
 
+// Shortcuts returns the highest-frequency shortcuts from apps installed on
+// this Phone. Discovery is session-scoped so an uninstalled app cannot leak a
+// callable operation into the Agent capability bundle.
+func (p *Phone) Shortcuts(ctx context.Context, sessionID string) ([]ShortcutDefinition, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	session, err := p.sessionLocked(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return p.registry.shortcuts(session.Installed), nil
+}
+
+// RunShortcut executes a semantic app command through Phone. It deliberately
+// shares the ordinary action cache, persisted session state and audit stream.
+func (p *Phone) RunShortcut(ctx context.Context, request ShortcutRequest) (ShortcutResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	session, err := p.sessionLocked(ctx, request.PhoneSessionID)
+	if err != nil {
+		return ShortcutResponse{}, err
+	}
+	auditRequest := ActionRequest{PhoneSessionID: request.PhoneSessionID, PageRevision: session.Current.Revision, Action: "shortcut", Ref: request.Name, Arguments: request.Arguments, IdempotencyKey: request.IdempotencyKey}
+	if request.IdempotencyKey != "" {
+		if cached, exists := session.results[request.IdempotencyKey]; exists {
+			p.auditor.Record(ctx, audit(session, session.Current, auditRequest, request.Name, "success", "idempotent_replay", "", nil))
+			return ShortcutResponse{Status: cached.Status, Effect: cached.Effect, Page: cached.Page, Toast: cached.Toast, Terminate: cached.Terminate}, nil
+		}
+	}
+	var definition ShortcutDefinition
+	for _, candidate := range p.registry.shortcuts(session.Installed) {
+		if candidate.Name == request.Name {
+			definition = candidate
+			break
+		}
+	}
+	if definition.Name == "" {
+		return ShortcutResponse{}, p.fail(ctx, session, auditRequest, "SHORTCUT_NOT_FOUND", ErrActionNotAllowed)
+	}
+	app, ok := p.registry.App(definition.AppID)
+	if !ok {
+		return ShortcutResponse{}, p.fail(ctx, session, auditRequest, "APP_NOT_FOUND", ErrAppNotFound)
+	}
+	provider, ok := app.(ShortcutApp)
+	if !ok {
+		return ShortcutResponse{}, p.fail(ctx, session, auditRequest, "SHORTCUT_NOT_FOUND", ErrActionNotAllowed)
+	}
+	result, err := provider.ExecuteShortcut(ctx, ShortcutCommand{Actor: session.Actor, Name: request.Name, Arguments: cloneMap(request.Arguments), IdempotencyKey: request.IdempotencyKey})
+	if err != nil {
+		return ShortcutResponse{}, p.fail(ctx, session, auditRequest, errorCode(err), err)
+	}
+	if session.Drafts[definition.AppID] == nil {
+		session.Drafts[definition.AppID] = map[string]any{}
+	}
+	if result.Draft != nil {
+		session.Drafts[definition.AppID] = result.Draft
+	}
+	location := Location{AppID: definition.AppID, Route: "home"}
+	if result.Location != nil {
+		location = *result.Location
+	}
+	session.ActiveAppID = definition.AppID
+	session.Stacks[definition.AppID] = []Location{location}
+	page, err := app.Render(ctx, RenderRequest{Actor: session.Actor, Route: location.Route, Params: location.Params, Draft: session.Drafts[definition.AppID]})
+	if err != nil {
+		return ShortcutResponse{}, p.fail(ctx, session, auditRequest, errorCode(err), err)
+	}
+	page = withApp(page, app.Manifest(), false)
+	effect := result.Effect
+	if effect == "" {
+		effect = "shortcut_completed"
+	}
+	response := ActionResponse{Status: "ok", Effect: effect, Page: page, Toast: result.Toast, Terminate: result.Terminate}
+	session.Current = page
+	session.UpdatedAt = time.Now().UTC()
+	if request.IdempotencyKey != "" {
+		session.results[request.IdempotencyKey] = response
+	}
+	if p.persistence != nil {
+		if err = p.persistence.SaveSession(ctx, session); err != nil {
+			return ShortcutResponse{}, p.fail(ctx, session, auditRequest, "PERSISTENCE_ERROR", fmt.Errorf("persist phone state: %w", err))
+		}
+	}
+	p.auditor.Record(ctx, audit(session, page, auditRequest, request.Name, "success", effect, "", nil))
+	return ShortcutResponse{Status: response.Status, Effect: response.Effect, Page: response.Page, Toast: response.Toast, Terminate: response.Terminate}, nil
+}
+
 func validateGestureRequest(request *ActionRequest, page Page, source Ref) error {
 	if request.Arguments == nil {
 		request.Arguments = map[string]any{}
@@ -438,7 +564,7 @@ func (p *Phone) appAction(ctx context.Context, session *Session, current Page, r
 	if effect == "" {
 		effect = "updated"
 	}
-	return ActionResponse{Status: "ok", Effect: effect, Page: page, Toast: result.Toast}, nil
+	return ActionResponse{Status: "ok", Effect: effect, Page: page, Toast: result.Toast, Terminate: result.Terminate}, nil
 }
 
 func (p *Phone) back(ctx context.Context, session *Session) (ActionResponse, error) {

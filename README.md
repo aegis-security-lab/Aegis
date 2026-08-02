@@ -14,7 +14,7 @@ Aegis 是一个由 Go AgentCore 驱动的本地任务控制台。它把可复用
 - Skill 管理支持标准 `SKILL.md` 的新增、编辑、ZIP/Markdown 导入、ZIP 导出与本地路径安装
 - Task 是顶层 Issue；Orchestrator 将其拆成彼此独立的子 Issues，子树调度不创建 `blocks` 依赖
 - 任意工作 Agent 都能通过 AgentCore capability 递归拆分 2–8 个彼此独立的子 Issues；支持最多 4 层与幂等重试
-- 父 Agent 创建子 Issue 后继续工作；没有有价值动作时可调用 `coordinate_sleep`，心跳、评论或 Phone 消息可提前唤醒
+- 父 Agent 通过 Phone Board 创建子 Issue 后继续工作；没有有价值动作时可调用 `phone_board_sleep`，心跳、评论或 Phone 消息可提前唤醒
 - 顶层任务支持树级取消：在调度临界区内取消所有未完成后代与活跃/排队 AgentCore Execution，并关闭待审批和 Agent Wakeup；已完成历史保持不变
 - Issues 页面提供可折叠层级树、直属子项进度、未完成 blocker、等待子树与汇总中状态
 - 原子 checkout 使用条件 SQL 校验状态、Agent 所有权、Execution 锁与未完成 blockers，冲突返回 409
@@ -75,7 +75,7 @@ git config --global url."ssh://git@ssh.github.com:443/".insteadOf https://github
 - `AEGIS_AGENTAPP_URL` 和 `AEGIS_AGENTAPP_TOKEN`：可把进程内 Board/Relay Agent Phone 替换为远程 Phone transport；
 - Coordination 同时持有模式决策与可靠执行。两者在代码中分层，但不会产生两套任务状态所有者。
 
-`GET /api/coordination/modes` 只返回 `board_autonomy`。Task binding、事件 inbox、effect outbox、重试、租约和定时唤醒均保存在 Aegis SQLite；Agent 使用 `coordinate_delegate` 创建并指派子 Issue，使用 `coordinate_sleep` 主动休眠。每分钟心跳会提供耗时、子 Issue 变化、进度与当前活动，评论或 Relay 消息会直接 steer 正在运行的 loop，或唤醒休眠实例。
+`GET /api/coordination/modes` 只返回 `board_autonomy`。Task binding、事件 inbox、effect outbox、重试、租约和定时唤醒均保存在 Aegis SQLite；Agent 使用 Phone Board 快捷指令 `phone_board_delegate` 创建并指派子 Issue，使用 `phone_board_sleep` 主动休眠。每分钟心跳会提供耗时、子 Issue 变化、进度与当前活动，评论或 Relay 消息会直接 steer 正在运行的 loop，或唤醒休眠实例。
 
 Coordination 现在也是统一能力控制平面：`capabilityPolicy` 按 Task 控制 Agent 可获得的 Skill、MCP、Phone、Web 和工具。Board/Relay 作为 Phone App 暴露，delegation 可只开放 `aegis.board`。`GET /api/coordination/capabilities` 查看已注册插件，`POST /api/coordination/capabilities/plan` 在执行前预览最终计划，`POST /api/coordination/invoke` 可由操作者主动调用指定 Agent。默认只允许 Agent 自身能力；新增插件必须显式列入 binding 的 `allowed`。详细配置见 [`coordination/README.md`](coordination/README.md)。
 
@@ -133,6 +133,8 @@ Node.js、Python、Go、Java 以及常用的基础安全工具均通过 Kali 软
 
 每个 Task 在创建时自动绑定一个专属容器和 Docker named volume，卷固定挂载为 `/workspace`。同一 Task 的根 Agent、所有子 Agent、重试和唤醒 Execution 始终复用这一个容器工作区；不同 Task 使用不同容器和卷。容器环境不再接受宿主机工作目录映射。
 
+当根 Issue 进入 `done`、`failed`、`budget_exceeded`、`cancelled` 或 `in_review`，且整棵 Issue 树已结束、没有活跃 Execution 时，Aegis 会自动停止该 Task 的容器。自动回收只停止 runtime，不删除容器记录或 named volume；继续任务时会原地启动容器，`/workspace` 数据保持不变。
+
 Go AgentCore loop 属于控制平面；`bash/read/write/edit/grep/find/ls` 编码能力全部通过 `docker exec` 在对应 Task 容器内执行，且没有宿主机回退。输入附件直接写入任务卷，Agent 生成的文件默认只存在于卷内。只有显式调用 `aegis_publish_attachment` 的文件才会流式进入 Aegis 附件存储，并显示在 Issue 评论/任务证据包中。任务详情页不会浏览、复制或映射容器卷内容。
 
 ## Agent、Session 与协作
@@ -148,17 +150,19 @@ Agent 是可复用类型，TaskAgent 是任务内实例，Issue 是工作对象�
 
 ### Board Autonomy
 
-所有工作都由 Board Issue 表示。根 TaskAgent 可使用 `coordinate_delegate` 创建并指派子 Issue；每次指派都会创建新的 TaskAgent，即使同一种 Agent 类型在同一 Task 中并行出现多次，也不会共享身份、会话或 Phone。父 TaskAgent 发出委派后继续自己的工作，不会被隐式挂起。
+所有工作都由 Board Issue 表示。根 TaskAgent 可使用 Phone Board 快捷指令 `phone_board_delegate` 创建并指派子 Issue；每次指派都会创建新的 TaskAgent，即使同一种 Agent 类型在同一 Task 中并行出现多次，也不会共享身份、会话或 Phone。父 TaskAgent 发出委派后继续自己的工作，不会被隐式挂起。
 
-没有高价值动作时，TaskAgent 可以使用 `coordinate_sleep` 保留同一 Session 并进入睡眠。每分钟持久化心跳会提供耗时、直属子 Issue 状态、进度摘要和当前活动；Board 评论与 Relay/Phone 消息通过同一个 Coordination outbox 精确 steer 运行中的 TaskAgent，或提前唤醒睡眠实例。旧睡眠定时器带代次令牌，不会误唤醒后续的新睡眠周期。
+没有高价值动作时，TaskAgent 可以使用 `phone_board_sleep` 保留同一 Session 并进入睡眠。每分钟持久化心跳会提供耗时、直属子 Issue 状态、进度摘要和当前活动；Board 评论与 Relay/Phone 消息通过同一个 Coordination outbox 精确 steer 运行中的 TaskAgent，或提前唤醒睡眠实例。旧睡眠定时器带代次令牌，不会误唤醒后续的新睡眠周期。
 
 消息会标注发送方，属于软提示：TaskAgent 可以回复、纠偏、停止或重新指派子 Issue，也可以先继续当前工作。已经终止的 Issue 不会因为迟到评论被重新唤醒。
 
 ### Agent Phone
 
-Phone 是 `agentapp` 模块提供的任务内软件运行环境。Coordination 在执行入队前以 `taskId + taskAgentId` 幂等创建或恢复 Phone，AgentHost 再把它物化成 `phone_view`、`phone_action`、`phone_back`、`phone_home` 四个工具。内置 Board/Relay App 只返回当前 Task 和当前身份有权访问的内容。
+Phone 是 `agentapp` 模块提供的任务内软件运行环境。Coordination 在执行入队前以 `taskId + taskAgentId` 幂等创建或恢复 Phone，AgentHost 再把它物化成 `phone_view`、`phone_action`、`phone_back`、`phone_home`，以及由已安装 App 动态发现的高频快捷指令。快捷指令最多 20 个，按频率排序，仍然经过 Phone Session、权限、幂等、页面状态持久化和审计，不允许绕过 Phone 直连 Board/Relay 后端。
 
-SQLite 表 `agent_app_phone_sessions` 保存当前 App、页面栈和草稿，`agent_app_action_results` 保存幂等动作结果，`agent_app_audit_events` 保存完整操作审计。任务详情页按 Task 展示编队和所有独立 Phone；任务证据导出同时包含 Phone 状态与审计记录。
+当前内置快捷指令共 9 个：`phone_board_list_issues`、`phone_board_get_issue`、`phone_board_comment_issue`、`phone_board_delegate`、`phone_board_continue_issue`、`phone_board_sleep`、`phone_relay_list_threads`、`phone_relay_get_thread`、`phone_relay_send_message`。Board 采用类似 Linear 的紧凑 Issue 列表、注意事项优先、集中详情和动作菜单，但保留 Aegis 的父子 Issue、Execution 预算与任务隔离语义。
+
+SQLite 表 `agent_app_phone_sessions` 保存当前 App、页面栈、草稿和幂等动作/快捷指令结果，`agent_app_audit_events` 保存完整操作审计。任务详情页按 Task 展示编队和所有独立 Phone；任务证据导出同时包含 Phone 状态与审计记录。
 
 UI 与领域边界、页面到后端职责的映射见 [`docs/architecture/ui-and-domain-boundaries.md`](docs/architecture/ui-and-domain-boundaries.md)。
 

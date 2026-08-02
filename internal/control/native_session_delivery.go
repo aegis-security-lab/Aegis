@@ -150,7 +150,7 @@ func terminalChildrenPrompt(children []Issue) string {
 	for _, child := range children {
 		fmt.Fprintf(&summary, "- %s · %s [%s]：%s\n", child.Identifier, child.Title, child.Status, fallback(child.Result, fallback(child.Error, "没有结果摘要")))
 	}
-	return fmt.Sprintf("所有直属子 Issue 已经结束。请在同一任务会话中检查 Board/Relay 与以下结果，完成父 Issue 的整合、验证和最终交付；不要只复述子项。若子项状态为 failed 或 budget_exceeded，必须明确选择：调用 coordinate_continue 重新派发同一 Issue、创建新 Issue 探索其他方向，或接受部分结果并继续。重新执行不会重置 Task 总时钟墙预算。\n\n%s", summary.String())
+	return fmt.Sprintf("所有直属子 Issue 已经结束。请在同一任务会话中检查 Phone Board/Relay 与以下结果，完成父 Issue 的整合、验证和最终交付；不要只复述子项。若子项状态为 failed 或 budget_exceeded，必须明确选择：使用 phone_board_continue_issue 重新派发同一 Issue、使用 phone_board_delegate 创建新 Issue 探索其他方向，或接受部分结果并继续。重新执行不会重置 Task 总时钟墙预算。\n\n%s", summary.String())
 }
 
 func (d *NativeSessionDelivery) DeliverCoordinationMessage(ctx context.Context, command coordination.AgentCommand) error {
@@ -168,9 +168,15 @@ func (d *NativeSessionDelivery) DeliverCoordinationMessage(ctx context.Context, 
 			endingTurn = issue.ExecutionPhase == "sleeping" || issue.ExecutionPhase == "resuming" || issue.ExecutionPhase == "waiting_children"
 		}
 	}
+	if command.Delivery == "assignment" && (!entryMatches || !entry.session.Status().Running || endingTurn) {
+		// The enqueue effect already starts the Issue with its complete initial
+		// prompt. A delayed assignment notification must never resurrect a turn
+		// that has since gone to sleep or finished.
+		return nil
+	}
 	if entryMatches && entry.session.Status().Running && !endingTurn {
 		message := agentcore.TextMessage(agentcore.RoleUser, command.Message)
-		if command.Delivery == "steer" {
+		if command.Delivery == "steer" || command.Delivery == "assignment" {
 			return entry.session.Steer(message)
 		}
 		return entry.session.FollowUp(message)

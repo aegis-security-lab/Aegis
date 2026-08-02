@@ -10,7 +10,6 @@ import (
 
 	"aegis/agenthost"
 	"aegis/coordination"
-	coordinationcap "aegis/coordination/agentcoreadapter"
 	"github.com/z3r2ne/agentcore"
 )
 
@@ -47,25 +46,25 @@ type NativeCoordinationRuntime struct {
 	Planner      *coordination.CapabilityPlanner
 }
 
-// ManagerCoordinationClient connects AgentCore tools to the currently
-// installed bridge without making the capability adapter import control.
-type ManagerCoordinationClient struct{ Manager *Manager }
+// ManagerBoardCoordinator connects Phone Board operations to the durable
+// Coordination control plane. It is not an Agent tool surface.
+type ManagerBoardCoordinator struct{ Manager *Manager }
 
-func (c ManagerCoordinationClient) Delegate(ctx context.Context, invocation coordinationcap.Invocation, request coordination.DelegationRequest) error {
+func (c ManagerBoardCoordinator) Delegate(ctx context.Context, invocation coordination.Invocation, request coordination.DelegationRequest) error {
 	if c.Manager == nil || c.Manager.Coordination() == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
 	return c.Manager.Coordination().SubmitDelegation(ctx, invocation.EventID, invocation.IssueID, invocation.ExecutionID, invocation.AgentID, request)
 }
 
-func (c ManagerCoordinationClient) Continue(ctx context.Context, invocation coordinationcap.Invocation, request coordination.ContinueRequest) error {
+func (c ManagerBoardCoordinator) Continue(ctx context.Context, invocation coordination.Invocation, request coordination.ContinueRequest) error {
 	if c.Manager == nil || c.Manager.Coordination() == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
 	return c.Manager.Coordination().ContinueTerminalChildIssue(ctx, invocation, request)
 }
 
-func (c ManagerCoordinationClient) Wait(ctx context.Context, invocation coordinationcap.Invocation, request coordination.WaitRequest) error {
+func (c ManagerBoardCoordinator) Wait(ctx context.Context, invocation coordination.Invocation, request coordination.WaitRequest) error {
 	if c.Manager == nil || c.Manager.Coordination() == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
@@ -194,4 +193,3 @@ func stringSpecValue(spec agenthost.ExecutionSpec, key string) string {
 var _ agenthost.Runner = CoordinationRunner{}
 var _ agenthost.Runner = (*NativeCoordinationRuntime)(nil)
 var _ CoordinationSubagentStarter = (*NativeCoordinationRuntime)(nil)
-var _ coordinationcap.Client = ManagerCoordinationClient{}

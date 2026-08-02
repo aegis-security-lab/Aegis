@@ -52,6 +52,7 @@ type Manager struct {
 	nativeHost     *agenthost.Host
 	nativeDelivery *NativeSessionDelivery
 	scheduleMu     sync.Mutex
+	containerMu    sync.Mutex
 	sessions       map[string]*PiSession
 	closing        atomic.Bool
 	budgetStop     chan struct{}
@@ -1585,7 +1586,7 @@ func childOutcomeWakeMessage(parent Issue, children []Issue) string {
 	}
 	instruction := "所有直属子 Issue 已经结束。请整合、验证并继续完成父 Issue。"
 	if hasFailure {
-		instruction = "至少一个直属子 Issue 未成功结束，因此立即唤醒你，不必等待其他子项。先检查失败原因和已有证据：对 failed 或 budget_exceeded 子项，如果原方向仍有价值，调用 coordinate_continue 创建全新的 Execution；如果方向不值得继续，调用 coordinate_delegate 创建替代方向；如果现有结果足够，则接受部分结果并继续父 Issue。不要因为一个子项失败而停留在等待状态。"
+		instruction = "至少一个直属子 Issue 未成功结束，因此立即唤醒你，不必等待其他子项。先检查失败原因和已有证据：对 failed 或 budget_exceeded 子项，如果原方向仍有价值，通过 Phone Board 快捷指令 phone_board_continue_issue 创建全新的 Execution；如果方向不值得继续，通过 phone_board_delegate 创建替代方向；如果现有结果足够，则接受部分结果并继续父 Issue。不要因为一个子项失败而停留在等待状态。"
 	}
 	return fmt.Sprintf("## 子 Issue 状态变化\n\n父 Issue %s：%s\n\n%s\n\n当前直属子 Issue：\n%s", parent.Identifier, parent.Title, instruction, summary.String())
 }
@@ -2362,6 +2363,9 @@ func (m *Manager) ReconcileIssue(issue Issue) {
 	}
 	if issue.ParentID != "" && issueStatusTerminal(issue.Status) {
 		go m.scheduleChildren(issue.ParentID)
+	}
+	if issueStatusTerminal(issue.Status) || issue.Status == "in_review" {
+		go m.reconcileFinishedTaskContainer(issue)
 	}
 }
 
@@ -3670,7 +3674,7 @@ Context: %s
 Constraints: %s
 Workspace: %s
 Use the system-provided Agent type roster to select the best role for each child Issue. Reusing one Agent type is allowed: every child receives a distinct task-local identity, Session and Phone.
-Create only the next small, useful wave by calling coordinate_delegate exactly once with 2-%d independently verifiable Issues. Do not dispatch the entire project up front. The configured hierarchy permits depth %d and at most %d direct children per Issue. Every child scope must be realistically completable and verifiable within one Execution budget of %d model turns and %d active minutes. Split large repositories, modules, or audit surfaces into smaller outcome-based slices instead of assigning one Agent an exhaustive review of tens of thousands of lines. Every objective must state the concrete outcome and acceptance evidence. Continue useful parent work after dispatch; use coordinate_sleep only when no valuable action remains. Board heartbeats wake released waiting loops and do not interrupt active work; Phone messages may still steer when useful.`, i.Objective, fallback(i.Context, i.Description), i.Constraints, i.Workspace, maxPerRequest, maxDepth, maxDirect, budget.MaxTurns, budget.ActiveTimeMinutes)
+Create only the next small, useful wave by calling the Phone Board shortcut phone_board_delegate exactly once with 2-%d independently verifiable Issues. Do not dispatch the entire project up front. The configured hierarchy permits depth %d and at most %d direct children per Issue. Every child scope must be realistically completable and verifiable within one Execution budget of %d model turns and %d active minutes. Split large repositories, modules, or audit surfaces into smaller outcome-based slices instead of assigning one Agent an exhaustive review of tens of thousands of lines. Every objective must state the concrete outcome and acceptance evidence. Continue useful parent work after dispatch; use phone_board_sleep only when no valuable action remains. Board heartbeats wake released waiting loops and do not interrupt active work; Phone messages may still steer when useful.`, i.Objective, fallback(i.Context, i.Description), i.Constraints, i.Workspace, maxPerRequest, maxDepth, maxDirect, budget.MaxTurns, budget.ActiveTimeMinutes)
 }
 func workerPrompt(i Issue, maxDepth, maxPerRequest, maxDirect int, budget IssueBudgetConfig) string {
 	completionInstruction := "Before ending the turn, you MUST call aegis_submit_final_result with a standalone result directly addressing the Issue objective. That explicit Agent action immediately publishes a delivery comment to Board and starts acceptance; the runtime will never copy your final prose into Board for you."
@@ -3686,7 +3690,7 @@ Workspace: %s
 Use tools to inspect and modify the project, run relevant validation, fix in-scope failures, and finish with a concise evidence-based report.
 For every user-facing deliverable file you generate (reports, archives, images, documents, or datasets), call aegis_publish_attachment before ending the turn so the tool uploads it directly to Aegis and mounts it on your completion comment. Source-code edits are collected separately and should not be published merely as attachments.
 
-This child Execution has a work budget of %d model turns and %d active minutes, followed only by a restricted summary window. If this Issue cannot be completed and verified inside that budget, call coordinate_delegate once with only the next small wave of 2-%d independently verifiable child Issues before doing broad exploration. Large modules, repositories, and audit surfaces must be split into smaller outcome-based slices; do not accept an exhaustive tens-of-thousands-of-lines scope as one Execution. Reusing the same Agent type is allowed because each Issue receives a unique task-local identity, Session and Phone. Continue useful work after dispatch. Use coordinate_sleep only when there is no valuable action left; heartbeats wake released waiting loops rather than interrupting active work, while child completion, comments or Phone Relay may still steer or wake this session.
+This child Execution has a work budget of %d model turns and %d active minutes, followed only by a restricted summary window. If this Issue cannot be completed and verified inside that budget, call the Phone Board shortcut phone_board_delegate once with only the next small wave of 2-%d independently verifiable child Issues before doing broad exploration. Large modules, repositories, and audit surfaces must be split into smaller outcome-based slices; do not accept an exhaustive tens-of-thousands-of-lines scope as one Execution. Reusing the same Agent type is allowed because each Issue receives a unique task-local identity, Session and Phone. Continue useful work after dispatch. Use phone_board_sleep only when there is no valuable action left; heartbeats wake released waiting loops rather than interrupting active work, while child completion, comments or Phone Relay may still steer or wake this session.
 
 %s`, i.Identifier, i.Title, i.Description, i.Objective, i.Constraints, i.Workspace, budget.MaxTurns, budget.ActiveTimeMinutes, maxPerRequest, completionInstruction)
 }

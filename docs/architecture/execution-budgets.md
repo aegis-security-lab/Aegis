@@ -22,7 +22,7 @@ Aegis 使用两层互不替代的预算：
 
 父 Issue 必须选择以下一种处理方式：
 
-1. 调用 `coordinate_continue` 将同一 Issue 重新置为 `todo` 并派发，创建全新的 Coordination Execution 和 Agent Execution；该工具也用于恢复普通 `failed` 子 Issue；
+1. 调用 Phone Board 快捷指令 `phone_board_continue_issue` 将同一 Issue 重新置为 `todo` 并派发，创建全新的 Coordination Execution 和 Agent Execution；该操作也用于恢复普通 `failed` 子 Issue；
 2. 创建另一个 Issue 探索不同方向；
 3. 接受当前部分结果并停止。
 

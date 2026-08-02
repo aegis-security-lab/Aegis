@@ -10,6 +10,7 @@
 - `click`、`input`、`select`、`toggle`、`submit`、`back`、`home`、`refresh`；
 - AI-first 语义手势：`scroll`、`swipe`、`long_press`、`drag`、`load_more`；
 - 幂等动作、过期页面保护、权限边界和操作审计接口；
+- 可发现、最多 20 个、按使用频率裁剪的 Phone 快捷指令；
 - 人类 Web UI 与并排 AI View；
 - Board 和 Relay 的标准 App 实现；
 - 可替换的 `BoardRepository`、`RelayRepository`；
@@ -86,7 +87,15 @@ type RelayRepository interface {
     Messages(context.Context, Actor, string) ([]RelayMessage, error)
     Send(context.Context, Actor, string, string, string) (RelayMessage, error)
 }
+
+type BoardCoordinator interface {
+    Delegate(context.Context, Actor, BoardDelegationRequest, string) error
+    Continue(context.Context, Actor, string, string, string) error
+    Wait(context.Context, Actor, []string, int64, string, string) error
+}
 ```
+
+需要委派、继续和休眠功能时，使用 `NewCoordinatedBoardApp(repository, coordinator)`；普通 `NewBoardApp` 仍提供列表、详情和评论。Board 与 Relay 都实现可选的 `ShortcutApp`，Phone 只会发现当前 Session 已安装 App 的快捷指令，按 `Frequency` 从高到低选择前 20 个。
 
 ## HTTP 接口
 
@@ -98,7 +107,9 @@ type RelayRepository interface {
 | `GET` | `/phone/sessions?taskId={taskId}&taskAgentId={taskAgentId}` | 列出该任务实例可恢复的 Phone 及当前 App/页面 |
 | `GET` | `/phone/sessions/{id}/page` | 读取当前页面 |
 | `GET` | `/phone/sessions/{id}/logs?limit=100` | 读取成功与失败操作日志（最新在前） |
+| `GET` | `/phone/sessions/{id}/shortcuts` | 发现当前 Phone 最多 20 个高频快捷指令 |
 | `POST` | `/phone/actions` | 对当前页面的 REF 执行动作 |
+| `POST` | `/phone/shortcuts` | 通过 Phone 执行一个语义快捷指令 |
 
 页面接口指定 `Accept: text/agent-ui` 时返回纯文本；默认返回 JSON 和同一份规范化文本。
 
@@ -117,6 +128,16 @@ next, _ := client.Act(ctx, agentapp.ActionRequest{
     Action: agentapp.ActionOpenApp,
     Ref: "@1",
     IdempotencyKey: "open-board-once",
+})
+
+shortcuts, _ := client.Shortcuts(ctx, started.PhoneSessionID)
+delegated, _ := client.RunShortcut(ctx, agentapp.ShortcutRequest{
+    PhoneSessionID: started.PhoneSessionID,
+    Name: "phone_board_delegate",
+    Arguments: map[string]any{"children": []any{
+        map[string]any{"agentId": "backend-agent", "prompt": "实现并验证接口"},
+    }},
+    IdempotencyKey: "delegate-child-once",
 })
 ```
 

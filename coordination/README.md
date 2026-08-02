@@ -59,7 +59,7 @@ Task 根的 binding 固定使用 `board_autonomy`，同时保存能力策略：
 }
 ```
 
-一旦配置 `allowed`，它也会过滤 Agent 默认能力，因此必须包含 `tool/coordination`。策略中的 `required` 可强制每个执行携带指定能力。Capability config 只能保存非敏感参数或 secret reference，出现 `apiKey`、`password`、`authorization`、裸 `token`/`secret` 会被拒绝。
+一旦配置 `allowed`，它也会过滤 Agent 默认能力，因此必须包含 `phone/default`。策略中的 `required` 可强制每个执行携带指定能力。Capability config 只能保存非敏感参数或 secret reference，出现 `apiKey`、`password`、`authorization`、裸 `token`/`secret` 会被拒绝。
 
 Board 和 Relay 已通过 `phone/default` 转成通用 Phone 工具。一次执行可以只开放 Board：
 
@@ -82,13 +82,13 @@ Phone Source 会再次检查所选 App 和 scope 是否属于服务端 allowlist
 
 所有入口最终都提交 Coordination Event：
 
-- 父 Agent 调用 `coordinate_delegate`；
+- 父 Agent 调用 Phone Board 快捷指令 `phone_board_delegate`；
 - 操作者调用 `POST /api/coordination/invoke`；
 - Board Issue 被创建、指派或手动 dispatch；
 - Relay 消息到达；
 - durable wakeup 到期。
 
-运行时只注册 `board_autonomy`：子任务表现为 Board Issue，父 Agent 不因委派而暂停；每分钟 delayed effect 汇总子项状态、最新进展和当前活动。Agent 没有可继续推进的动作时调用 `coordinate_sleep`，心跳、Board 评论和带发送者身份的 Relay/Phone 消息都可以提前唤醒或直接 steer 当前 loop。
+运行时只注册 `board_autonomy`：子任务表现为 Board Issue，父 Agent 不因委派而暂停；每分钟 delayed effect 汇总子项状态、最新进展和当前活动。Agent 没有可继续推进的动作时调用 Phone Board 快捷指令 `phone_board_sleep`，心跳、Board 评论和带发送者身份的 Relay/Phone 消息都可以提前唤醒或直接 steer 当前 loop。
 
 Mode 产生 outbox effect 后，Execution Worker、Board、Relay 或 Agent Session adapter 才执行副作用。Agent 执行由 `ExecutionQueue` 持久化，`ExecutionWorker` 使用带 fencing token 的租约领取并调用 `agenthost.Runner`。Aegis 的公开 `IssueDispatcher` 只指向 Coordination gateway，不存在第二套执行控制面。
 

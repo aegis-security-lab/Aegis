@@ -23,6 +23,16 @@ type DelegationRequest struct {
 	ResultDelivery string      `json:"resultDelivery,omitempty"`
 }
 
+// Invocation identifies one durable Agent-authored control-plane action. The
+// model-facing transport may be Phone, HTTP or another application surface;
+// Coordination never owns or exposes Agent tools.
+type Invocation struct {
+	EventID     string `json:"eventId"`
+	IssueID     string `json:"issueId"`
+	ExecutionID string `json:"executionId"`
+	AgentID     string `json:"agentId"`
+}
+
 // AgentInvocation lets the Coordination control plane start work without an
 // already-running parent Agent. IssueID anchors policy, audit and delivery.
 type AgentInvocation struct {

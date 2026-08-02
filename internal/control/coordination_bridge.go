@@ -13,7 +13,6 @@ import (
 	"aegis/agenthost"
 	"aegis/capability"
 	"aegis/coordination"
-	coordinationcap "aegis/coordination/agentcoreadapter"
 	coordinationmodes "aegis/coordination/modes"
 	coordinationsqlite "aegis/coordination/sqlitestore"
 	"aegis/observability"
@@ -98,7 +97,9 @@ func (b *CoordinationBridge) PlanAgentCapabilities(ctx context.Context, coordina
 	required := []capability.Ref{
 		{Kind: capability.KindTool, Name: "workspace"},
 		{Kind: capability.KindTool, Name: "delivery"},
-		{Kind: capability.KindTool, Name: "coordination"},
+	}
+	if b.phoneEnabled {
+		required = append(required, capability.Ref{Kind: capability.KindPhone, Name: "default"})
 	}
 	decision, err := planExecutionCapabilities(ctx, b.manager, b.planner, coordinationID, defaults, requested, required, selection)
 	if err != nil {
@@ -379,7 +380,7 @@ func (b *CoordinationBridge) SubmitIssueCompleted(ctx context.Context, issue Iss
 // ContinueTerminalChildIssue is the explicit parent decision that converts a
 // failed or budget-exceeded child back into schedulable work. It never mutates
 // or reuses the previous Agent Execution; normal assignment creates a new one.
-func (b *CoordinationBridge) ContinueTerminalChildIssue(ctx context.Context, invocation coordinationcap.Invocation, request coordination.ContinueRequest) error {
+func (b *CoordinationBridge) ContinueTerminalChildIssue(ctx context.Context, invocation coordination.Invocation, request coordination.ContinueRequest) error {
 	if b == nil || b.manager == nil || b.manager.store == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
@@ -472,7 +473,8 @@ func (b *CoordinationBridge) SubmitDelegation(ctx context.Context, eventID, issu
 
 // InvokeAgent is the operator/service-facing entry point for proactive work.
 // It goes through the same durable mode decision and outbox as Agent-authored
-// coordinate_delegate calls, so no caller bypasses Coordination policy.
+// Phone Board delegation and service calls share this path, so no caller
+// bypasses Coordination policy.
 func (b *CoordinationBridge) InvokeAgent(ctx context.Context, invocation coordination.AgentInvocation) (coordination.InvocationReceipt, error) {
 	if b == nil || b.manager == nil {
 		return coordination.InvocationReceipt{}, errors.New("control coordination: runtime is disabled")
@@ -879,6 +881,11 @@ func (b *CoordinationBridge) EnqueueIssueResumeExecution(ctx context.Context, co
 	command.Message = strings.TrimSpace(command.Message)
 	if command.CommandID == "" || command.IssueID == "" || command.Message == "" {
 		return errors.New("control coordination: wake command ID, Issue ID and message are required")
+	}
+	if command.Delivery == "assignment" {
+		// Assignment is informational; EffectEnqueueIssue owns the initial run.
+		// It must never be converted into a later resume execution.
+		return nil
 	}
 	issue, err := b.manager.store.GetIssue(command.IssueID)
 	if err != nil {

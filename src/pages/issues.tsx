@@ -57,9 +57,9 @@ export function IssuesPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        eyebrow="Work / Issues"
-        title="计划树"
-        description="查看任务拆解、负责人、阻塞关系与每个 Issue 的当前状态。"
+		eyebrow="Board"
+		title="Issues"
+		description="像工作队列一样快速扫描状态、负责人、优先级和父子关系，再进入单个 Issue 处理细节。"
       />
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative min-w-0 flex-1 lg:max-w-xs">

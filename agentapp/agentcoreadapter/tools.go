@@ -21,6 +21,8 @@ type Client interface {
 	Start(context.Context, agentapp.StartSessionRequest) (agentapp.StartSessionResponse, error)
 	View(context.Context, string) (agentapp.Page, error)
 	Act(context.Context, agentapp.ActionRequest) (agentapp.ActionResponse, error)
+	Shortcuts(context.Context, string) ([]agentapp.ShortcutDefinition, error)
+	RunShortcut(context.Context, agentapp.ShortcutRequest) (agentapp.ShortcutResponse, error)
 }
 
 // ToolsetConfig binds one execution identity to one hidden Phone session.
@@ -45,6 +47,7 @@ type Toolset struct {
 	mu        sync.Mutex
 	sessionID string
 	current   agentapp.Page
+	shortcuts []agentapp.ShortcutDefinition
 	sequence  atomic.Uint64
 }
 
@@ -71,6 +74,13 @@ func (t *Toolset) Initialize(ctx context.Context) (agentapp.Page, error) {
 
 func (t *Toolset) initializeLocked(ctx context.Context) (agentapp.Page, error) {
 	if t.current.Revision != "" {
+		if t.shortcuts == nil {
+			shortcuts, err := t.config.Client.Shortcuts(ctx, t.sessionID)
+			if err != nil {
+				return agentapp.Page{}, fmt.Errorf("discover Phone shortcuts: %w", err)
+			}
+			t.shortcuts = shortcuts
+		}
 		return t.current, nil
 	}
 	if t.sessionID != "" {
@@ -79,6 +89,11 @@ func (t *Toolset) initializeLocked(ctx context.Context) (agentapp.Page, error) {
 			return agentapp.Page{}, fmt.Errorf("restore Phone session: %w", err)
 		}
 		t.current = page
+		shortcuts, shortcutErr := t.config.Client.Shortcuts(ctx, t.sessionID)
+		if shortcutErr != nil {
+			return agentapp.Page{}, fmt.Errorf("discover Phone shortcuts: %w", shortcutErr)
+		}
+		t.shortcuts = shortcuts
 		return page, nil
 	}
 	started, err := t.config.Client.Start(ctx, agentapp.StartSessionRequest{
@@ -94,6 +109,11 @@ func (t *Toolset) initializeLocked(ctx context.Context) (agentapp.Page, error) {
 	}
 	t.sessionID = started.PhoneSessionID
 	t.current = started.Page
+	shortcuts, shortcutErr := t.config.Client.Shortcuts(ctx, t.sessionID)
+	if shortcutErr != nil {
+		return agentapp.Page{}, fmt.Errorf("discover Phone shortcuts: %w", shortcutErr)
+	}
+	t.shortcuts = shortcuts
 	return t.current, nil
 }
 
@@ -107,11 +127,47 @@ func (t *Toolset) SessionID() string {
 // Tools returns stable model-facing tools. All force sequential batches because
 // Phone actions consume and replace one page revision.
 func (t *Toolset) Tools() []agentcore.Tool {
-	return []agentcore.Tool{
+	tools := []agentcore.Tool{
 		t.viewTool(),
 		t.actionTool(),
 		t.navigationTool("phone_back", "Return to the previous Agent Phone page.", agentapp.ActionBack, "@back"),
 		t.navigationTool("phone_home", "Return to the Agent Phone home page.", agentapp.ActionHome, "@home"),
+	}
+	for _, shortcut := range t.shortcuts {
+		tools = append(tools, t.shortcutTool(shortcut))
+	}
+	return tools
+}
+
+func (t *Toolset) shortcutTool(definition agentapp.ShortcutDefinition) agentcore.Tool {
+	parameters := definition.Parameters
+	if len(parameters) == 0 {
+		parameters = json.RawMessage(`{"type":"object","additionalProperties":false}`)
+	}
+	return agentcore.FuncTool{
+		ToolDefinition: agentcore.ToolDefinition{Name: definition.Name, Description: definition.Description, Parameters: parameters},
+		Mode:           agentcore.ToolExecutionSequential, Policy: t.config.Policy,
+		ExecuteFunc: func(ctx context.Context, raw json.RawMessage, _ agentcore.ToolUpdateSink) (agentcore.ToolResult, error) {
+			arguments := map[string]any{}
+			if len(raw) > 0 {
+				if err := json.Unmarshal(raw, &arguments); err != nil {
+					return agentcore.ToolResult{}, err
+				}
+			}
+			t.mu.Lock()
+			defer t.mu.Unlock()
+			if _, err := t.initializeLocked(ctx); err != nil {
+				return agentcore.ToolResult{}, err
+			}
+			response, err := t.config.Client.RunShortcut(ctx, agentapp.ShortcutRequest{PhoneSessionID: t.sessionID, Name: definition.Name, Arguments: arguments, IdempotencyKey: t.idempotencyKey(ctx)})
+			if err != nil {
+				return agentcore.ToolResult{}, err
+			}
+			t.current = response.Page
+			result := t.pageResult(response.Effect, response.Toast, response.Page)
+			result.Terminate = definition.Terminates || response.Terminate
+			return result, nil
+		},
 	}
 }
 
@@ -196,7 +252,9 @@ func (t *Toolset) act(ctx context.Context, arguments actionArguments) (agentcore
 		return agentcore.ToolResult{}, err
 	}
 	t.current = response.Page
-	return t.pageResult(response.Effect, response.Toast, response.Page), nil
+	result := t.pageResult(response.Effect, response.Toast, response.Page)
+	result.Terminate = response.Terminate
+	return result, nil
 }
 
 func (t *Toolset) idempotencyKey(ctx context.Context) string {

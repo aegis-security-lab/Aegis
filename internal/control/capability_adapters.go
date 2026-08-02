@@ -11,7 +11,6 @@ import (
 	phonecap "aegis/agentapp/agentcoreadapter"
 	"aegis/agenthost"
 	"aegis/capability"
-	coordinationcap "aegis/coordination/agentcoreadapter"
 	"aegis/policy"
 	openai "aegis/provider/openai"
 	skillcap "aegis/skill"
@@ -139,7 +138,7 @@ func (a NativeToolAuthorizer) AuthorizeTool(ctx context.Context, request policy.
 	switch request.Call.Name {
 	case "web_search":
 		return policy.Decision{Allow: agent.Permissions.AllowNetwork, Reason: "Agent network permission is disabled"}, nil
-	case "phone_view", "phone_action", "phone_back", "phone_home", "coordinate_delegate", "coordinate_continue", "coordinate_sleep":
+	case "phone_view", "phone_action", "phone_back", "phone_home":
 		return policy.Decision{Allow: true}, nil
 	default:
 		if agenthost.ToolAuthorizedFromContext(ctx, request.Call.Name) {
@@ -152,9 +151,8 @@ func (a NativeToolAuthorizer) AuthorizeTool(ctx context.Context, request policy.
 // NewNativeAgentHost assembles the current control Skill registry and Web
 // search configuration around the provider-neutral AgentHost.
 type NativeHostOptions struct {
-	Phone        *phonecap.Source
-	Coordination coordinationcap.Client
-	Sources      []NativeCapabilitySource
+	Phone   *phonecap.Source
+	Sources []NativeCapabilitySource
 }
 
 // NativeCapabilitySource is an embedding extension point for MCP servers,
@@ -185,11 +183,6 @@ func NewNativeAgentHost(store *Store, options ...NativeHostOptions) (*agenthost.
 	}
 	if len(options) > 0 && options[0].Phone != nil {
 		if err := phonecap.RegisterDefault(registry, *options[0].Phone); err != nil {
-			return nil, err
-		}
-	}
-	if len(options) > 0 && options[0].Coordination != nil {
-		if err := coordinationcap.RegisterDefault(registry, coordinationcap.Source{Client: options[0].Coordination}); err != nil {
 			return nil, err
 		}
 	}

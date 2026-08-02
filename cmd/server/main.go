@@ -47,7 +47,6 @@ func main() {
 	workerID := envOr("AEGIS_WORKER_ID", "control-worker")
 	phoneURL := strings.TrimSpace(os.Getenv("AEGIS_AGENTAPP_URL"))
 	hostOptions := control.NativeHostOptions{
-		Coordination: control.ManagerCoordinationClient{Manager: manager},
 		Sources: []control.NativeCapabilitySource{{
 			Kind: capability.KindTool, Name: "validation", Source: control.NativeValidationSource{Manager: manager},
 		}, {

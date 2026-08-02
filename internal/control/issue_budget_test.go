@@ -8,7 +8,6 @@ import (
 
 	"aegis/agenthost"
 	"aegis/coordination"
-	coordinationcap "aegis/coordination/agentcoreadapter"
 	"github.com/z3r2ne/agentcore"
 )
 
@@ -110,7 +109,7 @@ func TestExecutionBudgetTransitionsToRestrictedSummary(t *testing.T) {
 	if current.ExecutionPhase != "budget_summarizing" {
 		t.Fatalf("phase=%s", current.ExecutionPhase)
 	}
-	decision, err := controller.BeforeToolCall(context.Background(), agentcore.ToolCallContext{Turn: 3, Call: agentcore.ToolCall{Name: "coordinate_delegate"}})
+	decision, err := controller.BeforeToolCall(context.Background(), agentcore.ToolCallContext{Turn: 3, Call: agentcore.ToolCall{Name: "phone_board_delegate"}})
 	if err != nil || !decision.Block {
 		t.Fatalf("summary tool was not blocked: decision=%+v err=%v", decision, err)
 	}
@@ -159,7 +158,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 	child, _ := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Child", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	now := time.Now()
 	_ = store.db.Model(&Issue{}).Where("id = ?", child.ID).Updates(map[string]any{"status": "budget_exceeded", "execution_phase": "budget_exceeded", "result": "promising evidence", "completed_at": now}).Error
-	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordinationcap.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: child.ID, Reason: "证据有价值，继续验证"}); err != nil {
+	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: child.ID, Reason: "证据有价值，继续验证"}); err != nil {
 		t.Fatal(err)
 	}
 	reopened, _ := store.GetIssue(child.ID)
@@ -175,7 +174,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 	}
 	failedChild, _ := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Failed child", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	_ = store.db.Model(&Issue{}).Where("id = ?", failedChild.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "error": "provider unavailable", "completed_at": now}).Error
-	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordinationcap.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: failedChild.ID, Reason: "临时错误，可以恢复"}); err != nil {
+	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: failedChild.ID, Reason: "临时错误，可以恢复"}); err != nil {
 		t.Fatal(err)
 	}
 	retried, _ := store.GetIssue(failedChild.ID)
@@ -194,7 +193,7 @@ func TestTaskTimeBudgetRejectsNonPositiveValue(t *testing.T) {
 
 func TestWorkerPromptRequiresBudgetSizedDecomposition(t *testing.T) {
 	prompt := workerPrompt(Issue{Identifier: "AEG-1", Title: "large audit", Workspace: TaskWorkspacePath}, 3, 4, 8, IssueBudgetConfig{MaxTurns: 37, ActiveTimeMinutes: 11})
-	for _, expected := range []string{"37 model turns", "11 active minutes", "tens-of-thousands-of-lines", "coordinate_delegate"} {
+	for _, expected := range []string{"37 model turns", "11 active minutes", "tens-of-thousands-of-lines", "phone_board_delegate"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("worker prompt missing %q: %s", expected, prompt)
 		}

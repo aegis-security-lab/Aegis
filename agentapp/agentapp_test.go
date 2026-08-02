@@ -538,3 +538,117 @@ func refByTarget(page Page, target string) (Ref, bool) {
 	}
 	return Ref{}, false
 }
+
+type recordingBoardCoordinator struct {
+	delegations []BoardDelegationRequest
+	continues   []string
+	waits       []int64
+}
+
+func (r *recordingBoardCoordinator) Delegate(_ context.Context, _ Actor, request BoardDelegationRequest, _ string) error {
+	r.delegations = append(r.delegations, request)
+	return nil
+}
+
+func (r *recordingBoardCoordinator) Continue(_ context.Context, _ Actor, issueID, _ string, _ string) error {
+	r.continues = append(r.continues, issueID)
+	return nil
+}
+
+func (r *recordingBoardCoordinator) Wait(_ context.Context, _ Actor, _ []string, seconds int64, _ string, _ string) error {
+	r.waits = append(r.waits, seconds)
+	return nil
+}
+
+func TestPhoneDiscoversAndExecutesBoardAndRelayShortcuts(t *testing.T) {
+	registry := NewRegistry()
+	coordinator := &recordingBoardCoordinator{}
+	board := NewCoordinatedBoardApp(NewMemoryBoardRepository(BoardIssue{ID: "issue-1", Identifier: "ISSUE-1", Title: "Phone shortcuts", Objective: "Use Phone only", Status: "failed", Priority: "high", AssigneeID: "agent-a"}), coordinator)
+	if err := registry.Register(board); err != nil {
+		t.Fatal(err)
+	}
+	relay := NewMemoryRelayRepository(RelayThread{ID: "thread-1", Title: "Task channel", ParticipantIDs: []string{"agent-a", "agent-b"}})
+	if err := registry.Register(NewRelayApp(relay)); err != nil {
+		t.Fatal(err)
+	}
+	phone := NewPhone(registry, nil)
+	sessionID, _, err := phone.StartSession(context.Background(), Actor{AgentID: "agent-a"}, []string{"aegis.board", "aegis.relay"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortcuts, err := phone.Shortcuts(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shortcuts) != 9 || shortcuts[0].Name != "phone_board_list_issues" {
+		t.Fatalf("shortcuts=%+v", shortcuts)
+	}
+	response, err := phone.RunShortcut(context.Background(), ShortcutRequest{PhoneSessionID: sessionID, Name: "phone_board_delegate", Arguments: map[string]any{"children": []any{map[string]any{"agentId": "agent-b", "prompt": "Verify one thing"}}}, IdempotencyKey: "delegate-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Effect != "delegated" || len(coordinator.delegations) != 1 || coordinator.delegations[0].Children[0].AgentID != "agent-b" {
+		t.Fatalf("response=%+v delegations=%+v", response, coordinator.delegations)
+	}
+	if _, err = phone.RunShortcut(context.Background(), ShortcutRequest{PhoneSessionID: sessionID, Name: "phone_board_delegate", Arguments: map[string]any{"children": []any{}}, IdempotencyKey: "delegate-1"}); err != nil || len(coordinator.delegations) != 1 {
+		t.Fatalf("shortcut idempotency failed: delegations=%+v err=%v", coordinator.delegations, err)
+	}
+	message, err := phone.RunShortcut(context.Background(), ShortcutRequest{PhoneSessionID: sessionID, Name: "phone_relay_send_message", Arguments: map[string]any{"threadId": "thread-1", "body": "Status?"}, IdempotencyKey: "relay-1"})
+	if err != nil || message.Effect != "sent" {
+		t.Fatalf("relay shortcut=%+v err=%v", message, err)
+	}
+	logs, err := phone.Logs(context.Background(), sessionID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range logs {
+		if event.Action == "shortcut" && event.Target == "phone_board_delegate" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Phone shortcut audit missing: %+v", logs)
+	}
+}
+
+type shortcutFloodApp struct{}
+
+func (shortcutFloodApp) Manifest() Manifest {
+	return Manifest{AppID: "test.shortcuts", Name: "Shortcuts", Version: "1", Web: WebManifest{Entry: "/shortcuts"}, AI: AIManifest{ProtocolVersion: ProtocolVersion, Entry: "/shortcuts/ai", Actions: "/phone/actions", ContentTypes: []string{"text/agent-ui"}}, Capabilities: []string{ActionRefresh}}
+}
+func (shortcutFloodApp) Render(context.Context, RenderRequest) (Page, error) {
+	return Page{PageID: "shortcuts.home", Title: "Shortcuts"}, nil
+}
+func (shortcutFloodApp) Execute(context.Context, Command) (CommandResult, error) {
+	return CommandResult{}, ErrActionNotAllowed
+}
+func (shortcutFloodApp) Shortcuts() []ShortcutDefinition {
+	items := make([]ShortcutDefinition, 25)
+	for index := range items {
+		items[index] = ShortcutDefinition{Name: fmt.Sprintf("shortcut_%02d", index), Description: "test", Frequency: index, Parameters: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
+	}
+	return items
+}
+func (shortcutFloodApp) ExecuteShortcut(context.Context, ShortcutCommand) (CommandResult, error) {
+	return CommandResult{}, nil
+}
+
+func TestPhoneShortcutDiscoveryCapsAtTwentyHighestFrequency(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(shortcutFloodApp{}); err != nil {
+		t.Fatal(err)
+	}
+	phone := NewPhone(registry, nil)
+	sessionID, _, err := phone.StartSession(context.Background(), Actor{AgentID: "agent-a"}, []string{"test.shortcuts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortcuts, err := phone.Shortcuts(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shortcuts) != MaxPhoneShortcuts || shortcuts[0].Name != "shortcut_24" || shortcuts[len(shortcuts)-1].Name != "shortcut_05" {
+		t.Fatalf("shortcut priority cap=%+v", shortcuts)
+	}
+}

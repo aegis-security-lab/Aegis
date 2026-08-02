@@ -299,6 +299,9 @@ func (m *Manager) validationAttachmentInfo(attachment IssueAttachment) Validatio
 		DownloadURL: strings.TrimRight(m.controlURL, "/") + "/api/attachments/" + attachment.ID,
 		Readable:    validationAttachmentReadable(attachment),
 	}
+	if strings.EqualFold(filepath.Ext(attachment.Name), ".zip") {
+		info.ArchiveEntries = m.validationArchiveEntries(attachment)
+	}
 	return info
 }
 

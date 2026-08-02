@@ -49,7 +49,7 @@ Provider 无关的 Agent loop，包括流式模型响应、工具循环、工具
 - `CapabilityPlanner`：合并 Agent 默认能力、delegation 请求、系统必需能力和 Task allow/deny/required 策略；
 - `ExecutionQueue`/`ExecutionWorker`：可靠保存并领取执行，维护重试、租约心跳、fencing token、取消和结果。
 
-运行时只注册 `board_autonomy`。它通过 Board 创建和指派子 Issue，父 Agent 始终可以继续工作；一分钟心跳由持久化 delayed effect 驱动，`coordinate_sleep`、Board 评论和 Relay/Phone 消息共享同一套唤醒/steer 通道。Mode 不能直接调用模型、写 Board 或启动 Agent。
+运行时只注册 `board_autonomy`。它通过 Phone Board 创建和指派子 Issue，父 Agent 始终可以继续工作；一分钟心跳由持久化 delayed effect 驱动，`phone_board_sleep`、Board 评论和 Relay/Phone 消息共享同一套唤醒/steer 通道。Mode 不能直接调用模型、写 Board 或启动 Agent。
 
 ### `agentapp` 与 Phone
 

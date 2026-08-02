@@ -73,6 +73,20 @@ func (c Client) Act(ctx context.Context, request ActionRequest) (ActionResponse,
 	return response, err
 }
 
+func (c Client) Shortcuts(ctx context.Context, sessionID string) ([]ShortcutDefinition, error) {
+	var response struct {
+		Shortcuts []ShortcutDefinition `json:"shortcuts"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, "/phone/sessions/"+sessionID+"/shortcuts", nil, &response, "")
+	return response.Shortcuts, err
+}
+
+func (c Client) RunShortcut(ctx context.Context, request ShortcutRequest) (ShortcutResponse, error) {
+	var response ShortcutResponse
+	err := c.doJSON(ctx, http.MethodPost, "/phone/shortcuts", request, &response, request.IdempotencyKey)
+	return response, err
+}
+
 func (c Client) doJSON(ctx context.Context, method, path string, input, output any, idempotencyKey string) error {
 	var body io.Reader
 	if input != nil {

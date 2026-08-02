@@ -2,6 +2,7 @@ package agentapp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -106,6 +107,38 @@ func (a *RelayApp) Execute(ctx context.Context, command Command) (CommandResult,
 		return CommandResult{Location: &command.Location, Effect: "replaced", Toast: "Message sent", Draft: map[string]any{}}, nil
 	}
 	return CommandResult{}, ErrActionNotAllowed
+}
+
+func (a *RelayApp) Shortcuts() []ShortcutDefinition {
+	return []ShortcutDefinition{
+		{Name: "phone_relay_list_threads", Description: "List task-scoped Relay conversations through the Phone.", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false}`), Frequency: 92},
+		{Name: "phone_relay_get_thread", Description: "Open and read one task-scoped Relay conversation through the Phone.", Parameters: json.RawMessage(`{"type":"object","properties":{"threadId":{"type":"string","minLength":1}},"required":["threadId"],"additionalProperties":false}`), Frequency: 91},
+		{Name: "phone_relay_send_message", Description: "Send an asynchronous message in an existing task-scoped Relay conversation through the Phone.", Parameters: json.RawMessage(`{"type":"object","properties":{"threadId":{"type":"string","minLength":1},"body":{"type":"string","minLength":1}},"required":["threadId","body"],"additionalProperties":false}`), Frequency: 90},
+	}
+}
+
+func (a *RelayApp) ExecuteShortcut(ctx context.Context, command ShortcutCommand) (CommandResult, error) {
+	switch command.Name {
+	case "phone_relay_list_threads":
+		return CommandResult{Location: &Location{AppID: "aegis.relay", Route: "home"}, Effect: "listed"}, nil
+	case "phone_relay_get_thread":
+		id := stringValue(command.Arguments, "threadId")
+		if _, err := a.Repository.Messages(ctx, command.Actor, id); err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Location: &Location{AppID: "aegis.relay", Route: "thread", Params: map[string]string{"id": id}}, Effect: "opened"}, nil
+	case "phone_relay_send_message":
+		id, body := stringValue(command.Arguments, "threadId"), stringValue(command.Arguments, "body")
+		if id == "" || body == "" {
+			return CommandResult{}, ErrValidation
+		}
+		if _, err := a.Repository.Send(ctx, command.Actor, id, body, command.IdempotencyKey); err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Location: &Location{AppID: "aegis.relay", Route: "thread", Params: map[string]string{"id": id}}, Effect: "sent", Toast: "Message sent", Draft: map[string]any{}}, nil
+	default:
+		return CommandResult{}, ErrActionNotAllowed
+	}
 }
 
 type MemoryRelayRepository struct {

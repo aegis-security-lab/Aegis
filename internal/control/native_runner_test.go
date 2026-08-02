@@ -12,7 +12,6 @@ import (
 	"aegis/agenthost"
 	"aegis/capability"
 	"aegis/coordination"
-	coordinationcap "aegis/coordination/agentcoreadapter"
 	"github.com/z3r2ne/agentcore"
 )
 
@@ -44,7 +43,7 @@ func TestNativeIssueRunnerCompletesWorkThroughAgentHost(t *testing.T) {
 	hostCalls := 0
 	host := hostRunnerFunc(func(ctx context.Context, spec agenthost.ExecutionSpec, sink agentcore.EventSink) (agenthost.Result, error) {
 		hostCalls++
-		if !strings.HasPrefix(spec.ExecutionID, "execution-") || spec.AgentID != "backend-engineer" || spec.Model.Provider != "test" || spec.Model.Model != "test-model" || len(spec.Capabilities) != 6 || spec.Capabilities[3].Name != "workspace" || spec.Capabilities[4].Name != "delivery" || spec.Capabilities[5].Name != "coordination" {
+		if !strings.HasPrefix(spec.ExecutionID, "execution-") || spec.AgentID != "backend-engineer" || spec.Model.Provider != "test" || spec.Model.Model != "test-model" || len(spec.Capabilities) != 5 || spec.Capabilities[3].Name != "workspace" || spec.Capabilities[4].Name != "delivery" {
 			t.Fatalf("spec = %+v", spec)
 		}
 		if sink != nil {
@@ -276,8 +275,8 @@ func TestDurableSleepStartsNewCoordinationExecutionOnWake(t *testing.T) {
 	host := hostRunnerFunc(func(ctx context.Context, spec agenthost.ExecutionSpec, _ agentcore.EventSink) (agenthost.Result, error) {
 		call := calls.Add(1)
 		if call == 1 {
-			client := ManagerCoordinationClient{Manager: manager}
-			err := client.Wait(ctx, coordinationcap.Invocation{EventID: "durable-sleep-event", IssueID: issue.ID, ExecutionID: spec.ExecutionID, AgentID: spec.AgentID}, coordination.WaitRequest{WakeAfterSeconds: 1, Message: "durable timer wake"})
+			client := ManagerBoardCoordinator{Manager: manager}
+			err := client.Wait(ctx, coordination.Invocation{EventID: "durable-sleep-event", IssueID: issue.ID, ExecutionID: spec.ExecutionID, AgentID: spec.AgentID}, coordination.WaitRequest{WakeAfterSeconds: 1, Message: "durable timer wake"})
 			if err != nil {
 				return agenthost.Result{}, err
 			}
@@ -358,7 +357,7 @@ func TestNativeIssueRunnerUsesCoordinationCapabilityPolicy(t *testing.T) {
 	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"container_profile_id": "", "container_id": "", "validation_disabled": true}).Error; err != nil {
 		t.Fatal(err)
 	}
-	policy := json.RawMessage(`{"capabilityPolicy":{"allowed":[{"kind":"phone","name":"default"},{"kind":"tool","name":"workspace"},{"kind":"tool","name":"delivery"},{"kind":"tool","name":"coordination"}]}}`)
+	policy := json.RawMessage(`{"capabilityPolicy":{"allowed":[{"kind":"phone","name":"default"},{"kind":"tool","name":"workspace"},{"kind":"tool","name":"delivery"}]}}`)
 	if _, err = bridge.BindIssue(context.Background(), issue.ID, "board_autonomy", "1", policy); err != nil {
 		t.Fatal(err)
 	}
@@ -367,9 +366,6 @@ func TestNativeIssueRunnerUsesCoordinationCapabilityPolicy(t *testing.T) {
 		return capability.Resolved{}, nil
 	})
 	if err = registry.Register(capability.KindPhone, "default", emptySource); err != nil {
-		t.Fatal(err)
-	}
-	if err = registry.Register(capability.KindTool, "coordination", emptySource); err != nil {
 		t.Fatal(err)
 	}
 	if err = registry.Register(capability.KindTool, "workspace", emptySource); err != nil {
@@ -381,7 +377,7 @@ func TestNativeIssueRunnerUsesCoordinationCapabilityPolicy(t *testing.T) {
 	planner := &coordination.CapabilityPlanner{Catalog: registry}
 	bridge.SetCapabilityPlanner(planner, false)
 	host := hostRunnerFunc(func(_ context.Context, spec agenthost.ExecutionSpec, _ agentcore.EventSink) (agenthost.Result, error) {
-		if len(spec.Capabilities) != 4 || spec.Capabilities[0].Kind != capability.KindPhone || spec.Capabilities[1].Name != "workspace" || spec.Capabilities[2].Name != "delivery" || spec.Capabilities[3].Name != "coordination" {
+		if len(spec.Capabilities) != 3 || spec.Capabilities[0].Kind != capability.KindPhone || spec.Capabilities[1].Name != "workspace" || spec.Capabilities[2].Name != "delivery" {
 			t.Fatalf("planned capabilities=%+v", spec.Capabilities)
 		}
 		decision, ok := spec.Values["coordination.capabilityDecision"].(coordination.CapabilityDecision)
@@ -393,7 +389,6 @@ func TestNativeIssueRunnerUsesCoordinationCapabilityPolicy(t *testing.T) {
 			Core: agentcore.Result{State: agentcore.State{Messages: []agentcore.Message{message}}, NewMessages: []agentcore.Message{message}, StopReason: agentcore.StopReasonStop},
 			Capabilities: []capability.Snapshot{
 				{Kind: capability.KindPhone, Name: "default", Version: "phone-v1", Metadata: map[string]string{"apps": "aegis.board"}},
-				{Kind: capability.KindTool, Name: "coordination", Version: "1"},
 			},
 		}, nil
 	})
@@ -405,7 +400,7 @@ func TestNativeIssueRunnerUsesCoordinationCapabilityPolicy(t *testing.T) {
 	if err = store.db.Where("issue_id = ?", issue.ID).Order("started_at desc").First(&execution).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(execution.CapabilitiesSnapshot) != 2 || execution.CapabilitiesSnapshot[0].Metadata["apps"] != "aegis.board" {
+	if len(execution.CapabilitiesSnapshot) != 1 || execution.CapabilitiesSnapshot[0].Metadata["apps"] != "aegis.board" {
 		t.Fatalf("capability snapshot=%+v", execution.CapabilitiesSnapshot)
 	}
 }
@@ -461,7 +456,7 @@ func TestResumePromptIncludesFailedAndBudgetExceededChildrenThatArrivedWhileQueu
 		t.Fatal(err)
 	}
 	prompt := (NativeIssueRunner{Manager: manager}).terminalChildAttentionPrompt(parent.ID)
-	for _, expected := range []string{"必须处理", failed.Identifier, "connection failed", exceeded.Identifier, "partial audit evidence", "coordinate_continue"} {
+	for _, expected := range []string{"必须处理", failed.Identifier, "connection failed", exceeded.Identifier, "partial audit evidence", "phone_board_continue_issue"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("attention prompt missing %q: %s", expected, prompt)
 		}

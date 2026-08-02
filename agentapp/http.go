@@ -53,7 +53,9 @@ func NewAuthenticatedHTTPServer(registry *Registry, phone *Phone, authenticator 
 	mux.HandleFunc("GET /phone/sessions", server.listSessions)
 	mux.HandleFunc("GET /phone/sessions/{sessionID}/page", server.viewPage)
 	mux.HandleFunc("GET /phone/sessions/{sessionID}/logs", server.sessionLogs)
+	mux.HandleFunc("GET /phone/sessions/{sessionID}/shortcuts", server.sessionShortcuts)
 	mux.HandleFunc("POST /phone/actions", server.action)
+	mux.HandleFunc("POST /phone/shortcuts", server.shortcut)
 	mux.HandleFunc("GET /", server.web)
 	server.Handler = securityHeaders(mux)
 	return server
@@ -219,6 +221,39 @@ func (s *HTTPServer) action(writer http.ResponseWriter, request *http.Request) {
 	if strings.Contains(request.Header.Get("Accept"), "text/agent-ui") {
 		writer.Header().Set("Content-Type", "text/agent-ui; charset=utf-8")
 		_, _ = writer.Write([]byte(response.Page.Text))
+		return
+	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
+func (s *HTTPServer) sessionShortcuts(writer http.ResponseWriter, request *http.Request) {
+	sessionID := request.PathValue("sessionID")
+	if !s.authorizeSession(writer, request, sessionID) {
+		return
+	}
+	shortcuts, err := s.Phone.Shortcuts(request.Context(), sessionID)
+	if err != nil {
+		writeAPIError(writer, err, nil)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"shortcuts": shortcuts})
+}
+
+func (s *HTTPServer) shortcut(writer http.ResponseWriter, request *http.Request) {
+	var input ShortcutRequest
+	if err := decodeJSON(request, &input); err != nil {
+		writeAPIError(writer, err, nil)
+		return
+	}
+	if input.IdempotencyKey == "" {
+		input.IdempotencyKey = request.Header.Get("Idempotency-Key")
+	}
+	if !s.authorizeSession(writer, request, input.PhoneSessionID) {
+		return
+	}
+	response, err := s.Phone.RunShortcut(request.Context(), input)
+	if err != nil {
+		writeAPIError(writer, err, nil)
 		return
 	}
 	writeJSON(writer, http.StatusOK, response)

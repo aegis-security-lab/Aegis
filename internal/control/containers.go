@@ -439,6 +439,81 @@ func (s *Store) StopContainer(id string) (ContainerInstance, error) {
 	return s.GetContainer(id)
 }
 
+// reconcileFinishedTaskContainer stops the task runtime only after the root
+// has ended (or entered human review), every descendant has ended, and no
+// Agent Execution can still be using /workspace. The container record and its
+// named volume are intentionally retained so continuation can restart in place.
+func (m *Manager) reconcileFinishedTaskContainer(issue Issue) {
+	if m == nil || m.store == nil {
+		return
+	}
+	if err := m.stopFinishedTaskContainer(issue); err != nil {
+		root, rootErr := m.store.taskRoot(issue)
+		if rootErr == nil {
+			m.store.addEvent(root.CurrentExecutionID, root.ID, "container", "任务结束后自动停止容器失败", err.Error())
+			m.store.notify()
+		}
+	}
+}
+
+func (m *Manager) stopFinishedTaskContainer(issue Issue) error {
+	root, err := m.store.taskRoot(issue)
+	if err != nil {
+		return err
+	}
+	if root.Hidden || root.TaskSourceID == "" || root.ContainerID == "" || (!issueStatusTerminal(root.Status) && root.Status != "in_review") {
+		return nil
+	}
+	m.containerMu.Lock()
+	defer m.containerMu.Unlock()
+
+	var candidates []Issue
+	if err = m.store.db.Where("project_id = ?", root.ProjectID).Find(&candidates).Error; err != nil {
+		return err
+	}
+	children := make(map[string][]Issue)
+	for _, candidate := range candidates {
+		children[candidate.ParentID] = append(children[candidate.ParentID], candidate)
+	}
+	issueIDs := make([]string, 0, len(candidates))
+	queue, seen := []string{root.ID}, map[string]bool{}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		issueIDs = append(issueIDs, id)
+		for _, child := range children[id] {
+			if !issueStatusTerminal(child.Status) {
+				return nil
+			}
+			queue = append(queue, child.ID)
+		}
+	}
+	var active int64
+	if err = m.store.db.Model(&Execution{}).Where("issue_id IN ? AND status IN ?", issueIDs, activeExecutionStatuses).Count(&active).Error; err != nil {
+		return err
+	}
+	if active > 0 {
+		return nil
+	}
+	container, err := m.store.GetContainer(root.ContainerID)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains([]string{"running", "paused", "restarting"}, container.RuntimeStatus) {
+		return nil
+	}
+	stopped, err := m.store.StopContainer(container.ID)
+	if err != nil {
+		return err
+	}
+	m.store.addEvent(root.CurrentExecutionID, root.ID, "container", "任务结束，容器已自动停止", fmt.Sprintf("容器 %s 已停止；任务 named volume 与 /workspace 数据保留，可在继续任务时原地恢复。", stopped.Name))
+	return nil
+}
+
 func removeContainerRuntime(container ContainerInstance) error {
 	if err := ProbeDocker(); err != nil {
 		return err

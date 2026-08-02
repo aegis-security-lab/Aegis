@@ -5,12 +5,15 @@ package agentapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
 
 const ProtocolVersion = "1.0"
+
+const MaxPhoneShortcuts = 20
 
 const (
 	ActionClick     = "click"
@@ -143,10 +146,38 @@ type ActionRequest struct {
 }
 
 type ActionResponse struct {
-	Status string `json:"status"`
-	Effect string `json:"effect,omitempty"`
-	Page   Page   `json:"page"`
-	Toast  string `json:"toast,omitempty"`
+	Status    string `json:"status"`
+	Effect    string `json:"effect,omitempty"`
+	Page      Page   `json:"page"`
+	Toast     string `json:"toast,omitempty"`
+	Terminate bool   `json:"terminate,omitempty"`
+}
+
+// ShortcutDefinition describes one high-frequency semantic operation exposed
+// by an installed Phone app. Shortcuts are still executed by Phone, so they
+// share its identity, authorization, idempotency, persistence and audit trail.
+type ShortcutDefinition struct {
+	Name        string          `json:"name"`
+	AppID       string          `json:"appId"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+	Frequency   int             `json:"frequency,omitempty"`
+	Terminates  bool            `json:"terminates,omitempty"`
+}
+
+type ShortcutRequest struct {
+	PhoneSessionID string         `json:"phoneSessionId"`
+	Name           string         `json:"name"`
+	Arguments      map[string]any `json:"arguments,omitempty"`
+	IdempotencyKey string         `json:"idempotencyKey,omitempty"`
+}
+
+type ShortcutResponse struct {
+	Status    string `json:"status"`
+	Effect    string `json:"effect,omitempty"`
+	Page      Page   `json:"page"`
+	Toast     string `json:"toast,omitempty"`
+	Terminate bool   `json:"terminate,omitempty"`
 }
 
 type ActionError struct {
@@ -176,16 +207,31 @@ type Command struct {
 }
 
 type CommandResult struct {
-	Location *Location
-	Toast    string
-	Effect   string
-	Draft    map[string]any
+	Location  *Location
+	Toast     string
+	Effect    string
+	Draft     map[string]any
+	Terminate bool
 }
 
 type App interface {
 	Manifest() Manifest
 	Render(context.Context, RenderRequest) (Page, error)
 	Execute(context.Context, Command) (CommandResult, error)
+}
+
+// ShortcutApp is optional. Phone discovers shortcuts only from apps installed
+// in the current session and caps the resulting high-frequency set at 20.
+type ShortcutApp interface {
+	Shortcuts() []ShortcutDefinition
+	ExecuteShortcut(context.Context, ShortcutCommand) (CommandResult, error)
+}
+
+type ShortcutCommand struct {
+	Actor          Actor
+	Name           string
+	Arguments      map[string]any
+	IdempotencyKey string
 }
 
 type AuditEvent struct {
