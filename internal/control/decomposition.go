@@ -111,30 +111,38 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		if err := tx.Model(&Issue{}).Select("coalesce(max(number),0)").Scan(&maxNumber).Error; err != nil {
 			return err
 		}
-		reservedEmployees := make(map[string]bool, len(input.Children))
-		for index, item := range input.Children {
-			if reservedEmployees[item.AgentID] {
-				return fmt.Errorf("子 Issue %d 重复指派给员工 %s；每名员工同一时间只能负责一个任务", index+1, item.AgentID)
-			}
-			if err := s.validateEmployeeAssignmentWithDBLocked(tx, item.AgentID, parent.ID); err != nil {
+		for _, item := range input.Children {
+			if err := s.validateAgentAssignmentWithDBLocked(tx, item.AgentID); err != nil {
 				return err
 			}
-			reservedEmployees[item.AgentID] = true
 		}
 		now := time.Now()
+		root, rootErr := taskRootWithDB(tx, parent)
+		if rootErr != nil {
+			return rootErr
+		}
+		creatorID := actorAgentID
+		var actorExecution Execution
+		if err := tx.First(&actorExecution, "id = ?", executionID).Error; err == nil && actorExecution.TaskAgentID != "" {
+			creatorID = actorExecution.TaskAgentID
+		}
 		validationMode, maxValidationAttempts := normalizeValidationPolicy(parent.ValidationMode, parent.MaxValidationAttempts)
 		validationDisabled := parent.ValidationDisabled || strings.TrimSpace(parent.Objective) == ""
 		children := make([]Issue, 0, len(input.Children))
 		for _, item := range input.Children {
 			maxNumber++
+			identity, identityErr := claimTaskAgentTx(tx, root.ID, item.AgentID, "")
+			if identityErr != nil {
+				return identityErr
+			}
 			child := Issue{
 				ID: nextID("issue"), Number: maxNumber, Identifier: fmt.Sprintf("%s-%04d", project.Key, maxNumber),
 				ProjectID: parent.ProjectID, ParentID: parent.ID, Title: item.Title, Description: item.Description,
 				Objective: item.Objective, Status: "todo", Priority: item.Priority,
 				WorkMode: parent.WorkMode, ExecutionPhase: "active", RequestDepth: parent.RequestDepth + 1,
 				ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, ValidationDisabled: validationDisabled,
-				AssigneeAgentID: item.AgentID, Workspace: parent.Workspace, ContainerProfileID: parent.ContainerProfileID, ContainerID: parent.ContainerID, Context: parent.Context,
-				Constraints: parent.Constraints, CreatedBy: actorAgentID, CreatedAt: now, UpdatedAt: now,
+				AssigneeAgentID: item.AgentID, AssigneeTaskAgentID: identity.ID, Workspace: parent.Workspace, ContainerProfileID: parent.ContainerProfileID, ContainerID: parent.ContainerID, Context: parent.Context,
+				Constraints: parent.Constraints, CreatedBy: creatorID, CreatedAt: now, UpdatedAt: now,
 			}
 			if err := tx.Create(&child).Error; err != nil {
 				return err

@@ -21,11 +21,11 @@ const parentAgentCancelSummaryInstruction = `## 父 Agent 请求取消此子 Iss
 
 请只提交一次最终总结，说明：已经完成的工作、已经生成的附件、当前状态以及剩余风险。总结会保存到 Issue.result，供父 Agent 恢复后整合；总结完成后，此 Issue 将结束。`
 
-const issueBudgetSummaryInstruction = `## Issue 执行预算已耗尽
+const issueBudgetSummaryInstruction = `## Task 总时钟墙预算已耗尽
 
-系统检测到当前 Issue 已达到全局配置的执行预算。立即停止继续实施，也不要再创建子 Issue 或进入目标验收。
+系统检测到整个 Task 从创建开始计算的总时间预算已经耗尽。立即停止继续实施，也不要再创建子 Issue 或进入目标验收。等待、休眠和重新执行均不会重置这个总预算。
 
-请只提交一次最终总结，说明：预算耗尽前已经完成的工作、已经生成的附件、当前状态以及剩余风险。总结会保存到 Issue.result；总结完成后，此 Issue 将以“目标已放弃”结束。`
+请只提交一次最终总结，说明：预算耗尽前已经完成的工作、已经生成的附件、当前状态以及剩余风险。总结会保存到 Issue.result；总结完成后，此 Task 将以“目标已放弃”结束。`
 
 func (m *Manager) AbandonIssue(id, reason string) (Issue, error) {
 	return m.abandonIssueWithSummary(id, reason, abandonSummaryInstruction, "操作员已放弃目标", "operator_abandoned_issue", false)
@@ -138,6 +138,9 @@ func (m *Manager) abandonIssueWithSummary(id, reason, instruction, eventTitle, e
 	}
 
 	m.closeAbandonedSessions(issue.ID, descendantIDs, currentExecutionID)
+	for _, descendantID := range descendantIDs {
+		m.reconcileIssueID(descendantID)
+	}
 	if summarySession == nil {
 		issue, _ = m.store.GetIssue(issue.ID)
 		m.finalizeManualAbandon(issue, "", "", "")
@@ -232,6 +235,7 @@ func (m *Manager) completeIssueWithoutValidation(issue Issue, sourceExecutionID,
 	}
 	m.store.addEvent(sourceExecutionID, issue.ID, "validation", title, detail)
 	m.store.notify()
+	m.reconcileIssueID(issue.ID)
 	if issue.ParentID != "" {
 		go m.scheduleChildren(issue.ParentID)
 	}
@@ -256,6 +260,7 @@ func (m *Manager) finalizeManualAbandon(issue Issue, executionID, agentID, resul
 	}).Error
 	m.store.addEvent(executionID, issue.ID, "cancellation", "负责人已完成取消总结", "此目标未经验收，已按操作员指令结束。")
 	m.store.notify()
+	m.reconcileIssueID(issue.ID)
 	if issue.ParentID != "" {
 		go m.scheduleChildren(issue.ParentID)
 	}

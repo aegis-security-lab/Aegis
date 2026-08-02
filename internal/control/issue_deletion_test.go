@@ -1,7 +1,6 @@
 package control
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +15,8 @@ func TestAgentRootIssueUsesCurrentWorkspaceAndCreator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspaceRoot := filepath.Join(store.Config().Workspace, ".aegis", "workspaces")
-	if issue.CreatedBy != "red-team-lead" || !strings.HasPrefix(issue.Workspace, workspaceRoot+string(filepath.Separator)) {
-		t.Fatalf("agent root issue=%+v workspaceRoot=%q", issue, workspaceRoot)
+	if issue.CreatedBy != "red-team-lead" || issue.Workspace != TaskWorkspacePath {
+		t.Fatalf("agent root issue=%+v workspace=%q", issue, issue.Workspace)
 	}
 }
 
@@ -28,14 +26,14 @@ func TestDeleteIssueTreeRemovesDescendantsAndRejectsActiveWork(t *testing.T) {
 
 	_, root, err := store.CreateTask(CreateIssueInput{
 		Title: "root", Objective: "root objective", Status: "backlog",
-		Priority: "medium", WorkMode: "autonomous", Workspace: store.Config().Workspace,
+		Priority: "medium", WorkMode: "autonomous", Workspace: store.Config().Workspace, AssigneeAgentID: "red-team-lead",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	child, err := store.CreateIssue(CreateIssueInput{
 		ParentID: root.ID, Title: "child", Objective: "child objective",
-		Status: "backlog", Priority: "medium", WorkMode: "autonomous",
+		Status: "backlog", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-lead",
 	})
 	if err != nil {
 		t.Fatal(err)

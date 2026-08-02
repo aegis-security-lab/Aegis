@@ -14,16 +14,6 @@ import { useAppState } from "@/lib/state"
 const AgentsPage = React.lazy(() =>
   import("@/pages/agents").then((module) => ({ default: module.AgentsPage }))
 )
-const DepartmentsPage = React.lazy(() =>
-  import("@/pages/departments").then((module) => ({
-    default: module.DepartmentsPage,
-  }))
-)
-const TalentLibraryPage = React.lazy(() =>
-  import("@/pages/talent-library").then((module) => ({
-    default: module.TalentLibraryPage,
-  }))
-)
 const ApprovalsPage = React.lazy(() =>
   import("@/pages/approvals").then((module) => ({
     default: module.ApprovalsPage,
@@ -46,14 +36,6 @@ const IssueDetailPage = React.lazy(() =>
   import("@/pages/board-issue-detail").then((module) => ({
     default: module.BoardIssueDetailPage,
   }))
-)
-const EmployeeWorkspacePage = React.lazy(() =>
-  import("@/pages/employee-workspace").then((module) => ({
-    default: module.EmployeeWorkspacePage,
-  }))
-)
-const RelayPage = React.lazy(() =>
-  import("@/pages/relay").then((module) => ({ default: module.RelayPage }))
 )
 const SettingsPage = React.lazy(() =>
   import("@/pages/settings").then((module) => ({
@@ -87,6 +69,11 @@ const UncoverPage = React.lazy(() =>
 )
 const SkillsPage = React.lazy(() =>
   import("@/pages/skills").then((module) => ({ default: module.SkillsPage }))
+)
+const CapabilitiesPage = React.lazy(() =>
+  import("@/pages/capabilities").then((module) => ({
+    default: module.CapabilitiesPage,
+  }))
 )
 const KnowledgeBasesPage = React.lazy(() =>
   import("@/pages/knowledge-bases").then((module) => ({
@@ -167,16 +154,9 @@ export function App() {
           <Route path="timeline" element={<TimelinePage />} />
           <Route path="issues" element={<IssuesPage />} />
           <Route path="issues/:issueId" element={<IssueDetailPage />} />
-          <Route path="employees" element={<EmployeeWorkspacePage />} />
-          <Route
-            path="employees/:agentId"
-            element={<EmployeeWorkspacePage />}
-          />
-          <Route path="relay" element={<RelayPage />} />
           <Route path="agents" element={<AgentsPage />} />
-          <Route path="departments" element={<DepartmentsPage />} />
-          <Route path="talent-library" element={<TalentLibraryPage />} />
           <Route path="skills" element={<SkillsPage />} />
+          <Route path="capabilities" element={<CapabilitiesPage />} />
           <Route path="knowledge-bases" element={<KnowledgeBasesPage />} />
           <Route
             path="knowledge-bases/:knowledgeBaseId"

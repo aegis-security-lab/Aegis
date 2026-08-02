@@ -2,7 +2,6 @@ ARG KALI_BASE_IMAGE=docker.io/kalilinux/kali-rolling:latest
 
 FROM ${KALI_BASE_IMAGE}
 
-ARG PI_VERSION=0.80.10
 ARG AGENT_BROWSER_VERSION=latest
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -45,7 +44,6 @@ RUN apt-get update \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && ln -sf /usr/bin/pip3 /usr/local/bin/pip \
     && npm install --global \
-        "@earendil-works/pi-coding-agent@${PI_VERSION}" \
         "agent-browser@${AGENT_BROWSER_VERSION}" \
 		pnpm \
 		yarn \
@@ -53,7 +51,7 @@ RUN apt-get update \
     && npm cache clean --force \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* \
-    && mkdir -p /workspace /aegis/sessions /aegis/runtime /aegis/skills /go
+    && mkdir -p /workspace /go
 
 WORKDIR /workspace
 
@@ -62,4 +60,4 @@ ENV GOPATH=/go
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PATH=/go/bin:${PATH}
 
-CMD ["pi", "--version"]
+CMD ["sleep", "infinity"]

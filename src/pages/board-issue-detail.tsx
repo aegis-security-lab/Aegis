@@ -77,6 +77,7 @@ const issueStatuses: IssueStatus[] = [
   "in_review",
   "blocked",
   "failed",
+  "budget_exceeded",
   "done",
   "cancelled",
 ]
@@ -281,8 +282,8 @@ export function BoardIssueDetailPage() {
                   评论
                 </CardTitle>
                 <CardDescription>
-                  这是 Board 评论，不是与员工的私聊；员工需要主动使用 Board
-                  工具回复。
+                  这是 Board 评论，不是私聊；协调层会把它直接送达对应的任务内 Agent
+                  实例，运行中即时引导，睡眠中立即唤醒。
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
@@ -327,7 +328,7 @@ export function BoardIssueDetailPage() {
                 <Meta label="创建者" value={creatorName} />
                 <Meta label="状态" value={issue.status} />
                 <Meta label="优先级" value={issue.priority} />
-                <Meta label="工作模式" value={issue.workMode} />
+                <Meta label="协作模式" value="Board Autonomy" />
                 <Meta label="创建时间" value={formatTime(issue.createdAt)} />
                 {issue.startedAt ? (
                   <Meta label="开始时间" value={formatTime(issue.startedAt)} />

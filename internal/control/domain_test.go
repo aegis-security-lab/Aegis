@@ -1,7 +1,6 @@
 package control
 
 import (
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,12 +14,8 @@ func configuredStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	workspace := t.TempDir()
-	_, err = s.SaveConfig(SaveConfigInput{NodePath: executable, PiPath: executable, Provider: "test", Model: "test-model", Pricing: ModelPricing{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 3}, Thinking: "medium", AuthMode: "environment", Workspace: workspace, Concurrency: 2, ApprovalMode: "risky"})
+	_, err = s.SaveConfig(SaveConfigInput{Provider: "test", Model: "test-model", Pricing: ModelPricing{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 3}, Thinking: "medium", AuthMode: "environment", Workspace: workspace, Concurrency: 2, ApprovalMode: "risky"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +103,8 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(custom.Tools, "aegis_create_subissues") {
-		t.Fatalf("custom agent tools=%v, missing decomposition capability", custom.Tools)
+	if slices.Contains(custom.Tools, "aegis_create_subissues") || slices.Contains(custom.Tools, "aegis_wait_for_child_issues") {
+		t.Fatalf("custom Agent retained legacy coordination tools: %v", custom.Tools)
 	}
 	if !slices.Contains(custom.Tools, "aegis_publish_attachment") {
 		t.Fatalf("custom agent tools=%v, missing attachment capability", custom.Tools)
@@ -132,8 +127,8 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(updated.Tools, "aegis_create_subissues") {
-		t.Fatalf("updated agent tools=%v, required capability was removed", updated.Tools)
+	if slices.Contains(updated.Tools, "aegis_create_subissues") || slices.Contains(updated.Tools, "aegis_wait_for_child_issues") {
+		t.Fatalf("updated Agent retained legacy coordination tools: %v", updated.Tools)
 	}
 	if !slices.Contains(updated.Tools, "aegis_publish_attachment") {
 		t.Fatalf("updated agent tools=%v, attachment capability was removed", updated.Tools)
@@ -236,9 +231,8 @@ func TestRelationCycleRejectedAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exe, _ := os.Executable()
 	workspace := t.TempDir()
-	_, err = s.SaveConfig(SaveConfigInput{NodePath: exe, PiPath: exe, Provider: "test", Model: "m", AuthMode: "environment", Workspace: workspace, Concurrency: 1, ApprovalMode: "none"})
+	_, err = s.SaveConfig(SaveConfigInput{Provider: "test", Model: "m", AuthMode: "environment", Workspace: workspace, Concurrency: 1, ApprovalMode: "none"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,9 +483,8 @@ func TestFindingPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exe, _ := os.Executable()
 	ws := t.TempDir()
-	_, err = s.SaveConfig(SaveConfigInput{NodePath: exe, PiPath: exe, Provider: "test", Model: "m", AuthMode: "environment", Workspace: ws, Concurrency: 1, ApprovalMode: "none"})
+	_, err = s.SaveConfig(SaveConfigInput{Provider: "test", Model: "m", AuthMode: "environment", Workspace: ws, Concurrency: 1, ApprovalMode: "none"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,19 +629,6 @@ func TestPermissionBoundaryIsIncludedInSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestDelegationRosterIsIncludedInSystemPrompt(t *testing.T) {
-	prompt := agentDelegationSystemPrompt("You are a red-team lead.", "Available direct reports:\n- employeeId=red-team-engineer-002")
-	for _, required := range []string{
-		"You are a red-team lead.",
-		"<organization_delegation_boundary>",
-		"employeeId=red-team-engineer-002",
-	} {
-		if !strings.Contains(prompt, required) {
-			t.Fatalf("delegation system prompt missing %q: %s", required, prompt)
-		}
-	}
-}
-
 func TestExecutionEfficiencyIsIncludedInEmployeeSystemPrompt(t *testing.T) {
 	prompt := agentExecutionEfficiencySystemPrompt("You are a red-team lead.")
 	for _, required := range []string{
@@ -665,32 +645,26 @@ func TestExecutionEfficiencyIsIncludedInEmployeeSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestManagerOperatingContractRequiresDelegationAndStrictAcceptance(t *testing.T) {
-	prompt := agentManagerOperatingSystemPrompt("You are a red-team lead.")
+func TestSecurityOutcomeGradeContractOnlyAppliesToSecurityAgents(t *testing.T) {
+	base := "You are a security engineer."
+	prompt := agentSecurityOutcomeGradeSystemPrompt(base, "security")
 	for _, required := range []string{
-		"<manager_operating_contract>",
-		"primary responsibility is to decompose work",
-		"independently verifiable child Issues",
-		"Treat hard goals as binary",
-		"requires RCE",
-		"reject the result",
-		"require continued work or rework",
-		"impossibility proof",
-		"Never lower, reinterpret, or quietly replace",
+		"<security_outcome_grade_contract>",
+		"成果等级必须遵循任务 Goal",
+		"S：已取得 root / SYSTEM / Administrator",
+		"A：已证明稳定任意系统命令执行",
+		"B：已证明目标主机、容器、应用进程或 worker 中存在系统级执行 foothold",
+		"C：高价值非系统执行型成果",
+		"D：高可信漏洞链路",
+		"WebShell 只有在已证明稳定任意系统命令执行时才算 A",
+		"不能用高等级名称掩盖稳定性或权限缺口",
 	} {
 		if !strings.Contains(prompt, required) {
-			t.Fatalf("manager operating prompt missing %q: %s", required, prompt)
+			t.Fatalf("security outcome grade prompt missing %q: %s", required, prompt)
 		}
 	}
-}
-
-func TestOnlyManagersHaveDirectReports(t *testing.T) {
-	s := configuredStore(t)
-	if !s.hasDirectReports("red-team-lead") {
-		t.Fatal("red-team lead should be recognized as a manager")
-	}
-	if s.hasDirectReports("red-team-engineer") {
-		t.Fatal("individual contributor should not be recognized as a manager")
+	if got := agentSecurityOutcomeGradeSystemPrompt(base, "backend"); got != base {
+		t.Fatalf("non-security agent unexpectedly received outcome grade contract: %s", got)
 	}
 }
 
@@ -788,8 +762,8 @@ func TestSecurityAgentRoutingUsesLeadForTopLevelAndWorkerForChildren(t *testing.
 	if !lead.Permissions.AllowNetwork || !lead.Permissions.AllowWrite || lead.Permissions.ApprovalMode != "none" || lead.Permissions.ReworkApprovalMode != "none" {
 		t.Fatalf("unexpected red-team lead permissions: %+v", lead.Permissions)
 	}
-	if !slices.Contains(lead.Tools, "aegis_create_subissues") {
-		t.Fatalf("red-team lead cannot decompose: %v", lead.Tools)
+	if slices.Contains(lead.Tools, "aegis_create_subissues") || slices.Contains(lead.Tools, "aegis_wait_for_child_issues") {
+		t.Fatalf("red-team lead retained legacy coordination tools: %v", lead.Tools)
 	}
 
 	child, err := s.CreateIssue(CreateIssueInput{
@@ -819,7 +793,7 @@ func TestRedTeamLeadHasMandatoryComplexTaskBoundary(t *testing.T) {
 		"requires reconnaissance or information collection",
 		"requires a formal vulnerability",
 		"covers two or more vulnerability classes",
-		"you MUST call aegis_create_subissues",
+		"you MUST call coordinate_delegate",
 	} {
 		if !strings.Contains(lead.SystemPrompt, required) {
 			t.Fatalf("red-team lead prompt is missing %q", required)

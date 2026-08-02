@@ -63,7 +63,6 @@ func TestInputAttachmentUploadAPIsStreamAndDeleteStagedFiles(t *testing.T) {
 
 	for _, attachment := range []control.InputAttachment{
 		upload("/api/tasks/attachments", "audit-image.tar", "task image"),
-		upload("/api/employees/red-team-lead/attachments", "direct-image.tar", "employee image"),
 	} {
 		request := httptest.NewRequest(http.MethodDelete, "/api/input-attachments/"+attachment.ID, nil)
 		response := httptest.NewRecorder()

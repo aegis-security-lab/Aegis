@@ -54,6 +54,35 @@ func TestRelayInboxTracksUnreadAndRead(t *testing.T) {
 	}
 }
 
+func TestRelayKeepsDirectMessagesInsideTaskBoundary(t *testing.T) {
+	store := configuredStore(t)
+	first, err := store.SendRelayMessage("agent", "backend-engineer", SendRelayMessageInput{
+		TaskID: "task-alpha", RecipientID: "frontend-engineer", Body: "Alpha-only context.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.SendRelayMessage("agent", "backend-engineer", SendRelayMessageInput{
+		TaskID: "task-beta", RecipientID: "frontend-engineer", Body: "Beta-only context.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ThreadID == second.ThreadID {
+		t.Fatal("the same employees must receive separate Relay threads in different tasks")
+	}
+	inbox, err := store.RelayInboxForTask("frontend-engineer", "task-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox) != 1 || inbox[0].Thread.ID != first.ThreadID || inbox[0].LastMessage == nil || inbox[0].LastMessage.Body != "Alpha-only context." {
+		t.Fatalf("task-scoped inbox leaked or omitted a thread: %+v", inbox)
+	}
+	if _, err = store.RelayConversationForTask("frontend-engineer", second.ThreadID, "task-alpha", false); err == nil {
+		t.Fatal("a task must not open another task's Relay conversation")
+	}
+}
+
 func TestBoardCanRemoveRelationAndArchiveRunningIssueTree(t *testing.T) {
 	store := configuredStore(t)
 	parent, err := store.CreateIssue(CreateIssueInput{Title: "Parent", Objective: "Coordinate work", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
@@ -64,7 +93,7 @@ func TestBoardCanRemoveRelationAndArchiveRunningIssueTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocker, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Blocker", Objective: "Block target", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer-002"})
+	blocker, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Blocker", Objective: "Block target", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -20,7 +19,12 @@ import (
 var containerImagePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$`)
 var ErrContainerProfileReferenced = errors.New("容器执行环境已被引用")
 
-const WorkerContainerImage = "aegis-pi-worker:latest"
+const WorkerContainerImage = "aegis-worker:latest"
+
+// TaskWorkspacePath is the only model-visible filesystem root. Every Task owns
+// one Docker volume mounted here; Issues and executions never receive a host
+// path or a private workspace root of their own.
+const TaskWorkspacePath = "/workspace"
 
 func (s *Store) ContainerProfiles() []ContainerProfile {
 	var profiles []ContainerProfile
@@ -51,15 +55,10 @@ func (s *Store) SaveContainerProfile(id string, input SaveContainerProfileInput)
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
 	input.Image = WorkerContainerImage
-	input.NodePath = fallback(strings.TrimSpace(input.NodePath), "node")
-	input.PiPath = fallback(strings.TrimSpace(input.PiPath), "/usr/local/bin/pi")
-	input.WorkspacePath = fallback(strings.TrimSpace(input.WorkspacePath), "/workspace")
+	input.WorkspacePath = TaskWorkspacePath
 	input.NetworkMode = fallback(strings.TrimSpace(input.NetworkMode), "bridge")
 	if input.Name == "" || !containerImagePattern.MatchString(input.Image) {
 		return ContainerProfile{}, errors.New("容器名称和有效的 Docker Image 必填")
-	}
-	if !strings.HasPrefix(input.WorkspacePath, "/") || strings.Contains(input.WorkspacePath, "..") {
-		return ContainerProfile{}, errors.New("容器工作目录必须是未包含 .. 的绝对路径")
 	}
 	if !slices.Contains([]string{"bridge", "none"}, input.NetworkMode) {
 		return ContainerProfile{}, errors.New("当前仅支持 bridge 或 none 网络模式")
@@ -68,7 +67,7 @@ func (s *Store) SaveContainerProfile(id string, input SaveContainerProfileInput)
 		return ContainerProfile{}, errors.New("容器资源限制无效")
 	}
 	now := time.Now()
-	profile := ContainerProfile{ID: id, Name: input.Name, Description: input.Description, Image: input.Image, NodePath: input.NodePath, PiPath: input.PiPath, WorkspacePath: input.WorkspacePath, NetworkMode: input.NetworkMode, MemoryMB: input.MemoryMB, CPUs: input.CPUs, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
+	profile := ContainerProfile{ID: id, Name: input.Name, Description: input.Description, Image: input.Image, WorkspacePath: input.WorkspacePath, NetworkMode: input.NetworkMode, MemoryMB: input.MemoryMB, CPUs: input.CPUs, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
 	if id == "" {
 		profile.ID = nextID("container-profile")
 	} else {
@@ -157,7 +156,7 @@ func (s *Store) createTaskContainerBinding(task Task) (ContainerInstance, error)
 	now := time.Now()
 	container := ContainerInstance{
 		ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: task.ID,
-		Image: profile.Image, NodePath: profile.NodePath, PiPath: profile.PiPath,
+		Image:         profile.Image,
 		WorkspacePath: profile.WorkspacePath, NetworkMode: profile.NetworkMode,
 		MemoryMB: profile.MemoryMB, CPUs: profile.CPUs, CreatedAt: now, UpdatedAt: now,
 	}
@@ -222,7 +221,7 @@ func (s *Store) ensureTaskContainer(issue Issue) (ContainerInstance, error) {
 			now := time.Now()
 			container = ContainerInstance{
 				ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: taskID,
-				Image: profile.Image, NodePath: profile.NodePath, PiPath: profile.PiPath,
+				Image:         profile.Image,
 				WorkspacePath: profile.WorkspacePath, NetworkMode: profile.NetworkMode,
 				MemoryMB: profile.MemoryMB, CPUs: profile.CPUs, CreatedAt: now, UpdatedAt: now,
 			}
@@ -264,15 +263,6 @@ func (s *Store) rootIssue(issue Issue) (Issue, error) {
 	return current, nil
 }
 
-func prepareContainerIssueWorkspace(container ContainerInstance, issueID string) (ContainerInstance, error) {
-	workspace := path.Join(container.WorkspacePath, ".aegis", "issues", issueID)
-	if output, err := exec.Command("docker", "exec", container.Name, "mkdir", "-p", workspace).CombinedOutput(); err != nil {
-		return ContainerInstance{}, fmt.Errorf("创建 Issue 独立工作目录失败: %s", strings.TrimSpace(string(output)))
-	}
-	container.WorkspacePath = workspace
-	return container, nil
-}
-
 func (s *Store) taskIDForIssue(issue Issue) (string, error) {
 	current := issue
 	for {
@@ -288,6 +278,30 @@ func (s *Store) taskIDForIssue(issue Issue) (string, error) {
 		}
 		current = parent
 	}
+}
+
+// ensureTaskVolume allocates the Task workspace without starting the Task
+// container. Docker run also performs this operation defensively, but explicit
+// allocation at task publication makes the workspace lifecycle Task-owned.
+func (s *Store) ensureTaskVolume(container ContainerInstance) error {
+	if err := ProbeDocker(); err != nil {
+		return err
+	}
+	name := taskContainerVolumeName(container.ID)
+	if err := exec.Command("docker", "volume", "inspect", name).Run(); err == nil {
+		return nil
+	}
+	output, err := exec.Command(
+		"docker", "volume", "create",
+		"--label", "aegis.managed=true",
+		"--label", "aegis.container-id="+container.ID,
+		"--label", "aegis.task-id="+container.TaskID,
+		name,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("创建任务 Workspace 失败: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func (s *Store) bindTaskContainer(taskID, containerID string) error {
@@ -343,6 +357,9 @@ func (s *Store) StartContainer(id string) (ContainerInstance, error) {
 	if err = ProbeDocker(); err != nil {
 		return ContainerInstance{}, err
 	}
+	if err = s.ensureTaskVolume(container); err != nil {
+		return ContainerInstance{}, err
+	}
 	container = containerRuntimeState(container)
 	switch container.RuntimeStatus {
 	case "running":
@@ -392,12 +409,7 @@ func (s *Store) createContainerRuntime(container ContainerInstance) error {
 	}
 	args = append(args,
 		"--volume", taskContainerVolumeName(container.ID)+":"+container.WorkspacePath,
-		"--volume", filepath.Join(s.dataDir, "sessions")+":/aegis/sessions",
-		"--volume", filepath.Join(s.dataDir, "runtime", "aegis-guard.ts")+":/aegis/runtime/aegis-guard.ts:ro",
 	)
-	if info, statErr := os.Stat(filepath.Join(s.dataDir, "skills")); statErr == nil && info.IsDir() {
-		args = append(args, "--volume", filepath.Join(s.dataDir, "skills")+":/aegis/skills:ro")
-	}
 	args = append(args, container.Image, "sleep", "infinity")
 	if output, runErr := exec.Command("docker", args...).CombinedOutput(); runErr != nil {
 		return fmt.Errorf("创建容器失败: %s", strings.TrimSpace(string(output)))

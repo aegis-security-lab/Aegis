@@ -37,7 +37,7 @@ func TestContinuationPromptIncludesAllChildCommentsAndSpillsLargeHistory(t *test
 	if !strings.Contains(prompt, newMarker) || !strings.Contains(prompt, "You MUST read that file") {
 		t.Fatalf("prompt does not contain newest tail and file instruction: %s", prompt)
 	}
-	contextPath := filepath.Join(workspace, ".aegis", "context", "child-comments-"+parent.ID+".md")
+	contextPath := filepath.Join(store.DataDir(), "test-task-runtime", parent.ID, ".aegis", "context", "child-comments-"+parent.ID+".md")
 	content, err := os.ReadFile(contextPath)
 	if err != nil {
 		t.Fatal(err)

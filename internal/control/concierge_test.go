@@ -87,7 +87,7 @@ func TestConciergeSystemPromptIncludesOnlyAssignableAgentRoster(t *testing.T) {
 		{ID: "frontend-engineer", Name: "前端工程师", Category: "frontend", Enabled: true, Description: "负责 React UI"},
 		{ID: "disabled-agent", Name: "已停用", Enabled: false, Description: "不应出现在名册中"},
 		{ID: "acceptance-validator", Name: "验收", Enabled: true, Internal: true, Description: "不应出现在名册中"},
-	}, nil)
+	})
 	for _, expected := range []string{"You are the concierge.", "frontend-engineer", "前端工程师", "负责 React UI"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("runtime prompt missing %q: %s", expected, prompt)

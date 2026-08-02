@@ -104,12 +104,10 @@ import type {
 } from "@/types"
 
 const defaults: SaveContainerProfileInput = {
-  name: "",
-  description: "",
-  image: "aegis-pi-worker:latest",
-  nodePath: "node",
-  piPath: "/usr/local/bin/pi",
-  workspacePath: "/workspace",
+	name: "",
+	description: "",
+	image: "aegis-worker:latest",
+	workspacePath: "/workspace",
   networkMode: "bridge",
   memoryMb: 2048,
   cpus: 2,
@@ -382,12 +380,10 @@ export function ContainersPage() {
                             {profile.cpus || "不限"} CPU · {profile.memoryMb ? `${profile.memoryMb} MB` : "内存不限"}
                           </dd>
                         </div>
-                        <div>
-                          <dt className="text-muted-foreground">运行命令</dt>
-                          <dd className="truncate font-mono" title={`${profile.nodePath} · ${profile.piPath}`}>
-                            {profile.nodePath} · {profile.piPath}
-                          </dd>
-                        </div>
+						<div>
+							<dt className="text-muted-foreground">执行方式</dt>
+							<dd>AgentCore 通过 Docker exec 调用工具</dd>
+						</div>
                       </dl>
                       <Separator />
                       <div className="flex flex-wrap items-center gap-2">
@@ -700,8 +696,6 @@ function ProfileDialog({
           name: value.name,
           description: value.description,
           image: value.image,
-          nodePath: value.nodePath,
-          piPath: value.piPath,
           workspacePath: value.workspacePath,
           networkMode: value.networkMode,
           memoryMb: value.memoryMb,
@@ -747,7 +741,7 @@ function ProfileDialog({
               <Input
                 id="container-image"
                 disabled
-                value="aegis-pi-worker:latest"
+                value="aegis-worker:latest"
               />
               <FieldDescription>
                 由项目 Dockerfile 统一构建，不允许配置单独覆盖。
@@ -767,11 +761,11 @@ function ProfileDialog({
             <FieldLabel htmlFor="container-workspace">容器工作目录</FieldLabel>
             <Input
               id="container-workspace"
-              value={form.workspacePath}
-              onChange={(event) => set("workspacePath", event.target.value)}
+              disabled
+              value="/workspace"
             />
             <FieldDescription>
-              工作区保存在任务容器自己的 Docker Volume 中，不映射宿主机目录。
+              固定为 /workspace；每个任务使用自己的 Docker Volume，不映射宿主机目录。
             </FieldDescription>
           </Field>
           <FieldGroup className="grid sm:grid-cols-3">

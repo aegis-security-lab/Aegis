@@ -466,7 +466,7 @@ export function WorkspaceChatPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>删除这个管家会话？</AlertDialogTitle>
             <AlertDialogDescription>
-              对话消息和对应的 Pi Session
+              对话消息和对应的 AgentCore Session
               记录将被删除；已经创建的任务不会受到影响。
             </AlertDialogDescription>
           </AlertDialogHeader>

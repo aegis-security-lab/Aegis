@@ -2,9 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="${AEGIS_WORKER_IMAGE:-aegis-pi-worker:latest}"
+IMAGE_NAME="${AEGIS_WORKER_IMAGE:-aegis-worker:latest}"
 KALI_BASE_IMAGE="${AEGIS_KALI_BASE_IMAGE:-docker.io/kalilinux/kali-rolling:latest}"
-PI_VERSION="${AEGIS_PI_VERSION:-0.80.10}"
 AGENT_BROWSER_VERSION="${AEGIS_AGENT_BROWSER_VERSION:-latest}"
 PLATFORM="${AEGIS_DOCKER_PLATFORM:-}"
 VERIFY_IMAGE="true"
@@ -13,15 +12,14 @@ DOCKER_BUILD_ARG_COUNT=0
 
 usage() {
   cat <<'EOF'
-构建 Aegis Pi Worker 镜像。
+构建 Aegis AgentCore Worker 沙箱镜像。
 
 用法：
   ./build-worker-image.sh [脚本选项] [Docker build 参数]
 
 脚本选项：
-  --image NAME                  镜像名，默认 aegis-pi-worker:latest
+  --image NAME                  镜像名，默认 aegis-worker:latest
   --base-image NAME             Kali 基础镜像
-  --pi-version VERSION          Pi CLI 版本，默认 0.80.10
   --agent-browser-version VER   agent-browser 版本，默认 latest
   --platform PLATFORM           构建平台，例如 linux/amd64 或 linux/arm64
   --no-verify                   构建后不启动临时容器验证工具链
@@ -32,7 +30,6 @@ usage() {
 对应环境变量：
   AEGIS_WORKER_IMAGE
   AEGIS_KALI_BASE_IMAGE
-  AEGIS_PI_VERSION
   AEGIS_AGENT_BROWSER_VERSION
   AEGIS_DOCKER_PLATFORM
   AEGIS_SKIP_IMAGE_VERIFY=true
@@ -57,11 +54,6 @@ while [[ $# -gt 0 ]]; do
     --base-image)
       require_value "$@"
       KALI_BASE_IMAGE="$2"
-      shift 2
-      ;;
-    --pi-version)
-      require_value "$@"
-      PI_VERSION="$2"
       shift 2
       ;;
     --agent-browser-version)
@@ -119,7 +111,6 @@ BUILD_COMMAND=(
   docker build
   --tag "${IMAGE_NAME}"
   --build-arg "KALI_BASE_IMAGE=${KALI_BASE_IMAGE}"
-  --build-arg "PI_VERSION=${PI_VERSION}"
   --build-arg "AGENT_BROWSER_VERSION=${AGENT_BROWSER_VERSION}"
 )
 if [[ -n "${PLATFORM}" ]]; then
@@ -133,7 +124,6 @@ BUILD_COMMAND+=("${SCRIPT_DIR}")
 echo "正在构建 Worker 镜像"
 echo "  镜像：${IMAGE_NAME}"
 echo "  基础镜像：${KALI_BASE_IMAGE}"
-echo "  Pi CLI：${PI_VERSION}"
 echo "  agent-browser：${AGENT_BROWSER_VERSION}"
 if [[ -n "${PLATFORM}" ]]; then
   echo "  平台：${PLATFORM}"
@@ -154,7 +144,6 @@ if [[ "${VERIFY_IMAGE}" == "true" ]]; then
     echo "Git:     $(git --version)"
     echo "rg:      $(rg --version | head -n 1)"
     echo "Java:    $(java -version 2>&1 | head -n 1)"
-    echo "Pi:      $(pi --version)"
     echo "Browser: $(agent-browser --version)"
   '
 else

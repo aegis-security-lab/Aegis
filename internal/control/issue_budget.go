@@ -2,109 +2,75 @@ package control
 
 import (
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 )
 
-type issueBudgetUsage struct {
-	Tokens   int64
-	Cost     float64
-	Duration time.Duration
-}
+const taskBudgetCheckInterval = 30 * time.Second
 
+// monitorIssueBudgets now owns only the Task wall-clock budget. Child Issue
+// Execution budgets are enforced synchronously inside the AgentCore loop, so
+// they cannot overshoot because a polling tick was late.
 func (m *Manager) monitorIssueBudgets() {
 	defer close(m.budgetDone)
 	for {
-		budget := normalizeIssueBudget(m.store.Config().IssueBudget)
-		interval := time.Duration(budget.CheckIntervalSeconds) * time.Second
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(taskBudgetCheckInterval)
 		select {
 		case <-m.budgetStop:
 			if !timer.Stop() {
 				<-timer.C
 			}
 			return
-		case <-timer.C:
-			m.checkIssueBudgets(time.Now())
+		case now := <-timer.C:
+			m.checkIssueBudgets(now)
 		}
 	}
 }
 
+// checkIssueBudgets measures a root Issue from its creation time. Sleeping,
+// waiting and newly-created Executions do not reset this Task-level clock.
 func (m *Manager) checkIssueBudgets(now time.Time) {
-	config := m.store.Config()
-	if !config.Configured {
+	if !m.store.Config().Configured {
 		return
 	}
-	var issues []Issue
-	if err := m.store.db.Where("parent_id = ? AND status = ? AND execution_phase <> ? AND abandon_requested_at IS NULL", "", "in_progress", "summarizing").Find(&issues).Error; err != nil {
+	var roots []Issue
+	if err := m.store.db.Where("parent_id = '' AND hidden = ? AND time_budget_minutes IS NOT NULL AND status NOT IN ?", false, terminalIssueStatuses).Find(&roots).Error; err != nil {
 		return
 	}
-	for _, issue := range issues {
-		budget := budgetForIssue(config, issue)
-		if budget.TokenLimit == nil && budget.CostLimit == nil && budget.TimeLimitMinutes == nil {
+	for _, root := range roots {
+		if root.TimeBudgetMinutes == nil || *root.TimeBudgetMinutes <= 0 {
 			continue
 		}
-		usage, ok := m.issueBudgetUsage(issue.ID, now)
-		if !ok {
+		elapsed := taskWallClockUsage(root, now)
+		limit := time.Duration(*root.TimeBudgetMinutes) * time.Minute
+		if elapsed < limit {
 			continue
 		}
-		reason := issueBudgetExceededReason(budget, usage)
-		if reason == "" {
-			continue
-		}
-		if _, err := m.abandonIssueWithSummary(issue.ID, reason, issueBudgetSummaryInstruction, "Issue 执行预算已耗尽", "issue_budget_exhausted", true); err != nil {
-			m.store.addEvent(issue.CurrentExecutionID, issue.ID, "error", "预算耗尽后放弃目标失败", err.Error())
+		reason := fmt.Sprintf("Task 总时钟墙预算已耗尽：从任务创建起已过 %.1f 分钟，配置上限 %d 分钟；重新执行子 Issue 不会重置此预算。", elapsed.Minutes(), *root.TimeBudgetMinutes)
+		if _, err := m.abandonIssueWithSummary(root.ID, reason, issueBudgetSummaryInstruction, "Task 总时间预算已耗尽", "task_wall_budget_exhausted", true); err != nil {
+			m.store.addEvent(root.CurrentExecutionID, root.ID, "error", "Task 总预算耗尽后结束目标失败", err.Error())
+		} else {
+			m.abortNativeIssue(root.ID)
 		}
 	}
 }
 
-func budgetForIssue(config Config, issue Issue) IssueBudgetConfig {
-	budget := normalizeIssueBudget(config.IssueBudget)
-	if issue.ParentID == "" && issue.TimeBudgetMinutes != nil {
-		budget.TimeLimitMinutes = issue.TimeBudgetMinutes
+func taskWallClockUsage(root Issue, now time.Time) time.Duration {
+	anchor := root.CreatedAt
+	if anchor.IsZero() || !now.After(anchor) {
+		return 0
 	}
-	return budget
+	return now.Sub(anchor)
 }
 
-func (m *Manager) issueBudgetUsage(issueID string, now time.Time) (issueBudgetUsage, bool) {
-	root, err := m.store.GetIssue(issueID)
-	if err != nil || root.ParentID != "" || root.CurrentExecutionID == "" {
-		return issueBudgetUsage{}, false
+func taskWallClockRemaining(root Issue, now time.Time) (limit, elapsed, remaining time.Duration, configured bool) {
+	if root.TimeBudgetMinutes == nil || *root.TimeBudgetMinutes <= 0 {
+		return 0, 0, 0, false
 	}
-	var execution Execution
-	if err := m.store.db.First(&execution, "id = ? AND issue_id = ? AND kind <> ?", root.CurrentExecutionID, root.ID, "concierge").Error; err != nil {
-		return issueBudgetUsage{}, false
+	limit = time.Duration(*root.TimeBudgetMinutes) * time.Minute
+	elapsed = taskWallClockUsage(root, now)
+	remaining = limit - elapsed
+	if remaining < 0 {
+		remaining = 0
 	}
-	if !slices.Contains(activeExecutionStatuses, execution.Status) {
-		return issueBudgetUsage{}, false
-	}
-	usage := issueBudgetUsage{Tokens: execution.Tokens, Cost: execution.Cost}
-	// Every Execution receives a fresh Issue budget. A comment wakeup, rework,
-	// continuation, heartbeat, or manually restarted Issue therefore starts from
-	// zero instead of inheriting usage from earlier or parallel executions.
-	if now.After(execution.StartedAt) {
-		usage.Duration = now.Sub(execution.StartedAt)
-	}
-	return usage, true
-}
-
-func issueBudgetExceededReason(budget IssueBudgetConfig, usage issueBudgetUsage) string {
-	reasons := make([]string, 0, 3)
-	if budget.TokenLimit != nil && usage.Tokens >= *budget.TokenLimit {
-		reasons = append(reasons, fmt.Sprintf("Token 预算已达到：本次 Execution 已使用 %d tokens，配置上限 %d tokens", usage.Tokens, *budget.TokenLimit))
-	}
-	if budget.CostLimit != nil && usage.Cost >= *budget.CostLimit {
-		reasons = append(reasons, fmt.Sprintf("成本预算已达到：本次 Execution 已使用 $%.6f，配置上限 $%.6f", usage.Cost, *budget.CostLimit))
-	}
-	if budget.TimeLimitMinutes != nil {
-		limit := time.Duration(*budget.TimeLimitMinutes) * time.Minute
-		if usage.Duration >= limit {
-			reasons = append(reasons, fmt.Sprintf("时间预算已达到：本次 Execution 已运行 %.1f 分钟，配置上限 %d 分钟", usage.Duration.Minutes(), *budget.TimeLimitMinutes))
-		}
-	}
-	if len(reasons) == 0 {
-		return ""
-	}
-	return "系统预算轮询触发目标放弃。" + strings.Join(reasons, "；") + "。"
+	return limit, elapsed, remaining, true
 }

@@ -1,14 +1,12 @@
 export interface ConfigView {
   configured: boolean
   language: "zh" | "en"
-  nodePath: string
-  piPath: string
   provider: string
   model: string
   pricing: ModelPricing
   baseUrl: string
   thinking: string
-  authMode: "api_key" | "environment" | "pi_auth" | ""
+	authMode: "api_key" | "environment" | ""
   hasApiKey: boolean
   workspace: string
   concurrency: number
@@ -25,10 +23,10 @@ export interface ConfigView {
   updatedAt: string
 }
 export interface IssueBudgetConfig {
-  tokenLimit: number | null
-  costLimit: number | null
-  timeLimitMinutes: number | null
-  checkIntervalSeconds: number
+  maxTurns: number
+  activeTimeMinutes: number
+  summaryTurns: number
+  summaryTimeMinutes: number
 }
 export interface IssueHeartbeatConfig {
   intervalSeconds: number
@@ -65,15 +63,6 @@ export interface WebSearchResult {
   results: WebSearchItem[]
   responseTime?: number
 }
-export interface RuntimeProbe {
-  ready: boolean
-  nodePath: string
-  nodeVersion?: string
-  piPath: string
-  piVersion?: string
-  authFound: boolean
-  error?: string
-}
 export interface Project {
   id: string
   key: string
@@ -108,8 +97,6 @@ export interface ContainerProfile {
   name: string
   description: string
   image: string
-  nodePath: string
-  piPath: string
   workspacePath: string
   networkMode: "bridge" | "none"
   memoryMb: number
@@ -125,8 +112,6 @@ export interface ContainerInstance {
   taskId: string
   name: string
   image: string
-  nodePath: string
-  piPath: string
   workspacePath: string
   networkMode: "bridge" | "none"
   memoryMb: number
@@ -183,6 +168,7 @@ export type IssueStatus =
   | "done"
   | "blocked"
   | "failed"
+  | "budget_exceeded"
   | "cancelled"
 export type IssueExecutionPhase =
   | "active"
@@ -190,6 +176,8 @@ export type IssueExecutionPhase =
   | "resuming"
   | "validating"
   | "summarizing"
+  | "budget_summarizing"
+  | "budget_exceeded"
   | "recovering"
   | "completed"
   | "blocked"
@@ -209,6 +197,7 @@ export interface Issue {
   executionPhase: IssueExecutionPhase
   requestDepth: number
   assigneeAgentId?: string
+  assigneeTaskAgentId?: string
   checkoutExecutionId?: string
   currentExecutionId?: string
   validationExecutionId?: string
@@ -253,6 +242,7 @@ export type ExecutionStatus =
   | "waiting_approval"
   | "completed"
   | "failed"
+  | "budget_exceeded"
   | "stopped"
   | "cancelled"
   | "disconnected"
@@ -269,7 +259,6 @@ export interface Execution {
     | "wakeup"
     | "heartbeat"
     | "recovery"
-    | "employee_chat"
     | "concierge"
     | "chat"
   status: ExecutionStatus
@@ -278,7 +267,6 @@ export interface Execution {
   pricing: ModelPricing
   thinking: string
   sessionId: string
-  employeeSessionId?: string
   pid?: number
   runtimeType: "host" | "container"
   runtimeId?: string
@@ -301,74 +289,24 @@ export interface Execution {
   cacheReadTokens: number
   cacheWriteTokens: number
   messageCount: number
+  budgetMaxTurns: number
+  budgetActiveMinutes: number
+  budgetSummaryTurns: number
+  budgetSummaryMinutes: number
+  budgetPhase?: "active" | "summarizing" | "exceeded"
+  budgetTurnsUsed: number
+  budgetSummaryUsed: number
+  budgetExceededReason?: string
+  budgetExceededAt?: string
   startedAt: string
   updatedAt: string
   finishedAt?: string
-}
-export interface EmployeeSession {
-  id: string
-  agentId: string
-  issueId?: string
-  sessionId: string
-  homeIssueId?: string
-  status: "active" | "archived"
-  createdAt: string
-  updatedAt: string
-}
-export interface RelayThread {
-  id: string
-  kind: "direct" | "group" | "system"
-  title: string
-  participantIds: string[]
-  lastMessageAt: string
-  createdAt: string
-  updatedAt: string
-}
-export interface RelayMessage {
-  id: string
-  threadId: string
-  senderType: "agent" | "operator" | "app"
-  senderId: string
-  recipientIds: string[]
-  body: string
-  issueId?: string
-  createdAt: string
-}
-export interface RelayThreadSummary {
-  thread: RelayThread
-  lastMessage?: RelayMessage
-  unreadCount: number
-}
-export interface RelayConversation {
-  thread: RelayThread
-  messages: RelayMessage[]
-  unreadCount: number
-}
-export interface EmployeeWorkspace {
-  agent: AgentDefinition
-  session: EmployeeSession
-  sessions: EmployeeSession[]
-  executions: Execution[]
-  messages: Message[]
-  events: ExecutionEvent[]
-  attachments: IssueAttachment[]
-  issues: Issue[]
-  relay: RelayThreadSummary[]
-  watermark: string
-}
-export interface EmployeeActivity {
-  executions: Execution[]
-  messages: Message[]
-  events: ExecutionEvent[]
-  attachments: IssueAttachment[]
-  issues: Issue[]
-  watermark: string
 }
 export interface ToolSnapshot {
   name: string
   label: string
   description: string
-  source: "pi_builtin" | "aegis_extension" | "unknown"
+  source: "agentcore_builtin" | "aegis_extension" | "unknown"
   parameters: ToolParameterSnapshot[]
 }
 export interface ToolParameterSnapshot {
@@ -421,7 +359,7 @@ export interface OperatorAttachment {
 }
 export interface InputAttachment {
   id: string
-  scope: "task" | "employee"
+  scope: "task"
   ownerId?: string
   taskId?: string
   issueId?: string
@@ -633,9 +571,7 @@ export interface PermissionBoundary {
 }
 export interface AgentDefinition {
   id: string
-  templateId: string
   name: string
-  englishName: string
   description: string
   avatar: string
   category: string
@@ -649,66 +585,74 @@ export interface AgentDefinition {
   skillIds: string[]
   knowledgeBaseIds: string[]
   permissions: PermissionBoundary
-  departmentId?: string
-  positionId?: string
-  managerAgentId?: string
   createdAt: string
   updatedAt: string
 }
-export interface EmployeeAvailability {
+
+export type CapabilityKind = "tool" | "skill" | "mcp" | "phone" | "web" | string
+
+export interface CapabilityRef {
+  kind: CapabilityKind
+  name: string
+  version?: string
+  config?: Record<string, unknown>
+  optional?: boolean
+}
+
+export interface CapabilityDescriptor {
+  kind: CapabilityKind
+  name: string
+  dynamic?: boolean
+}
+
+export interface CapabilityPattern {
+  kind?: CapabilityKind
+  name?: string
+}
+
+export interface CapabilityPolicy {
+  defaultSelection?: "inherit" | "merge" | "replace"
+  allowed?: CapabilityPattern[]
+  denied?: CapabilityPattern[]
+  required?: CapabilityRef[]
+  maxCapabilities?: number
+}
+
+export interface CoordinationBinding {
+  coordinationId: string
+  mode: string
+  version: string
+  config?: {
+    capabilityPolicy?: CapabilityPolicy
+    [key: string]: unknown
+  }
+  updatedAt: string
+}
+
+export interface TaskPhone {
+  id: string
+  taskId: string
   agentId: string
-  available: boolean
-  currentIssueId?: string
-  currentIssueIdentifier?: string
-  currentIssueTitle?: string
-  activity?: "issue" | "session" | "unknown"
-}
-export interface Department {
-  id: string
-  parentId?: string
-  name: string
-  code: string
-  description: string
-  leaderAgentId?: string
-  enabled: boolean
+  taskAgentId?: string
+  name?: string
+  executionId?: string
+  workspaceId?: string
+  installedApps: string[]
+  activeAppId?: string
+  currentAppId?: string
+  currentPageId?: string
+  actionCount: number
+  lastActionAt?: string
   createdAt: string
   updatedAt: string
 }
-export interface Position {
+
+export interface TaskAgent {
   id: string
-  departmentId: string
-  templateId: string
+  taskId: string
+  agentId: string
   name: string
-  englishName: string
-  code: string
-  description: string
-  avatar: string
-  category: string
-  model: AgentModelConfig
-  systemPrompt: string
-  tools: string[]
-  skillIds: string[]
-  knowledgeBaseIds: string[]
-  permissions: PermissionBoundary
-  enabled: boolean
-  createdAt: string
-  updatedAt: string
-}
-export interface AgentTemplateMetadata {
-  englishName: string
-  chineseName: string
-  introduction: string
-  positions: string[]
-}
-export interface AgentTemplate {
-  id: string
-  provider: string
-  model: string
-  systemPrompt: string
-  note: string
-  metadata: AgentTemplateMetadata
-  hidden: boolean
-  builtin: boolean
+  status: string
   createdAt: string
   updatedAt: string
 }
@@ -772,7 +716,6 @@ export interface SessionDelta {
 export interface AppState {
   configured: boolean
   config: ConfigView
-  runtime: RuntimeProbe
   projects: Project[]
   containerProfiles: ContainerProfile[]
   containers: ContainerInstance[]
@@ -782,9 +725,7 @@ export interface AppState {
   executions: Execution[]
   approvals: Approval[]
   agents: AgentDefinition[]
-  employeeAvailability: EmployeeAvailability[]
-  departments: Department[]
-  positions: Position[]
+  taskAgents: TaskAgent[]
   skills: SkillDefinition[]
   knowledgeBases: KnowledgeBase[]
   sessions: SessionSummary[]
@@ -792,14 +733,12 @@ export interface AppState {
 }
 export interface SaveConfigInput {
   language: "zh" | "en"
-  nodePath: string
-  piPath: string
   provider: string
   model: string
   pricing: ModelPricing
   baseUrl: string
   thinking: string
-  authMode: "api_key" | "environment" | "pi_auth"
+	authMode: "api_key" | "environment"
   apiKey: string
   workspace: string
   concurrency: number
@@ -839,6 +778,7 @@ export interface ConnectionTestResult {
   error?: string
 }
 export interface Finding {
+  auditLevel?: AuditLevel;
   id: string
   domain: string
   category: string
@@ -852,6 +792,8 @@ export interface Finding {
   createdAt: string
   updatedAt: string
 }
+
+export type AuditLevel = 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'I';
 export interface FindingList {
   findings: Finding[]
   total: number

@@ -2,33 +2,21 @@ import * as React from "react"
 import {
   Bot,
   BrainCircuit,
-  Code2,
   Database,
-  LibraryBig,
-  Palette,
   Pencil,
   Plus,
-  Route,
-  Server,
-  Shield,
   ShieldCheck,
-  Sparkles,
   Trash2,
-  Wrench,
 } from "lucide-react"
 import { toast } from "sonner"
-import { useSearchParams } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
-import { ModelPricingFields } from "@/components/model-pricing-fields"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -41,62 +29,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-  FieldTitle,
-} from "@/components/ui/field"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
   createAgent,
-  createAgentTemplate,
   deleteAgent,
-  fetchAgentTemplates,
   updateAgent,
   type SaveAgentInput,
 } from "@/lib/api"
-import { agentTemplateId } from "@/lib/agent-template"
 import { useAppState } from "@/lib/state"
-import type {
-  AgentDefinition,
-  AgentTemplate,
-  ModelPricing,
-  PermissionBoundary,
-  Position,
-} from "@/types"
+import type { AgentDefinition, PermissionBoundary } from "@/types"
 
-const zeroPricing: ModelPricing = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-}
-
-const allTools = [
+const toolCatalog = [
   "read",
   "grep",
   "find",
@@ -104,1300 +60,174 @@ const allTools = [
   "bash",
   "edit",
   "write",
-  "aegis_create_task",
-  "aegis_create_subissues",
   "aegis_board",
   "aegis_relay",
+  "aegis_web_search",
   "aegis_publish_attachment",
+  "aegis_submit_final_result",
   "aegis_report_progress",
+  "aegis_get_issue_progress",
   "aegis_get_memo",
   "aegis_update_memo",
-  "aegis_request_rework",
-  "aegis_uncover_search",
 ]
-const requiredAgentTools = new Set([
-  "aegis_create_subissues",
-  "aegis_board",
-  "aegis_relay",
-  "aegis_publish_attachment",
-  "aegis_report_progress",
-  "aegis_get_memo",
-  "aegis_update_memo",
-  "aegis_request_rework",
-])
 
-const categoryLabels: Record<string, string> = {
-  orchestrator: "调度",
-  backend: "后端",
-  frontend: "前端",
-  design: "设计",
-  security: "安全",
-  knowledge: "检索",
-  concierge: "管家",
-  general: "通用",
+const openPermissions: PermissionBoundary = {
+  workspaceScope: "run_workspace",
+  allowNetwork: true,
+  allowShell: true,
+  allowWrite: true,
+  approvalMode: "none",
+  reworkApprovalMode: "none",
+}
+
+function blankAgent(): SaveAgentInput {
+  return {
+    id: "",
+    name: "",
+    description: "",
+    avatar: "bot",
+    category: "general",
+    enabled: true,
+    internal: false,
+    model: { provider: "", model: "", baseUrl: "", thinking: "", pricing: null },
+    systemPrompt: "",
+    memo: "",
+    tools: [...toolCatalog],
+    skillIds: [],
+    knowledgeBaseIds: [],
+    permissions: { ...openPermissions },
+  }
+}
+
+function editAgent(agent: AgentDefinition): SaveAgentInput {
+  return {
+    ...agent,
+    model: { ...agent.model, pricing: agent.model.pricing ? { ...agent.model.pricing } : null },
+    tools: [...agent.tools],
+    skillIds: [...agent.skillIds],
+    knowledgeBaseIds: [...agent.knowledgeBaseIds],
+    permissions: { ...agent.permissions },
+  }
 }
 
 export function AgentsPage() {
   const { state, refresh } = useAppState()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const [templates, setTemplates] = React.useState<AgentTemplate[]>([])
-  const [editing, setEditing] = React.useState<AgentDefinition | "new" | null>(
-    null
-  )
-  const agents = React.useMemo(() => state?.agents ?? [], [state?.agents])
-  const skills = state?.skills ?? []
-  const knowledgeBases = state?.knowledgeBases ?? []
-  const enabled = agents.filter((agent) => agent.enabled).length
-  const customModels = agents.filter(
-    (agent) => agent.model.provider || agent.model.model
-  ).length
-  const requestedTemplate = templates.find(
-    (item) => item.id === searchParams.get("template")
-  )
-  const requestedAgent = agents.find(
-    (item) => item.id === searchParams.get("agent")
-  )
-  const effectiveEditing =
-    editing ?? requestedAgent ?? (requestedTemplate ? "new" : null)
-  const editingAgent =
-    effectiveEditing === "new"
-      ? "new"
-      : effectiveEditing
-        ? (agents.find((agent) => agent.id === effectiveEditing.id) ??
-          effectiveEditing)
-        : null
-  React.useEffect(() => {
-    void fetchAgentTemplates().then(setTemplates)
-  }, [])
+  const agents = (state?.agents ?? []).filter((agent) => !agent.internal)
+  const [editing, setEditing] = React.useState<AgentDefinition | "new" | null>(null)
+
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-6">
       <PageHeader
-        eyebrow="Agent definitions"
-        title="员工管理"
-        description="管理员工及其工具、Skills、知识库、权限和备忘录；身份、模型与提示词来自人才模板。"
+        eyebrow="Agent type registry"
+        title="Agent 类型"
+        description="这里定义可复用的角色能力。它不是员工名册：任务发布后，系统才为每个 Issue 创建独立的临时身份、会话和手机。"
         actions={
           <Button onClick={() => setEditing("new")}>
             <Plus data-icon="inline-start" />
-            新增员工
+            新建 Agent 类型
           </Button>
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Summary icon={Bot} label="员工数量" value={agents.length} />
-        <Summary icon={ShieldCheck} label="已启用" value={enabled} />
-        <Summary
-          icon={BrainCircuit}
-          label="独立模型覆盖"
-          value={customModels}
-        />
+      <div className="grid gap-3 md:grid-cols-3">
+        <Metric icon={Bot} label="可调度类型" value={agents.filter((item) => item.enabled).length} />
+        <Metric icon={BrainCircuit} label="Skill 绑定" value={agents.reduce((sum, item) => sum + item.skillIds.length, 0)} />
+        <Metric icon={Database} label="知识库绑定" value={agents.reduce((sum, item) => sum + item.knowledgeBaseIds.length, 0)} />
       </div>
 
-      {agents.length === 0 ? (
-        <Card>
-          <CardContent className="py-16">
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Bot />
-                </EmptyMedia>
-                <EmptyTitle>还没有员工</EmptyTitle>
-                <EmptyDescription>
-                  从人才库聘用，或创建新人才模板并配置员工能力与权限。
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-5 lg:grid-cols-2">
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b bg-muted/25">
+          <CardTitle>运行模型</CardTitle>
+          <CardDescription>
+            Agent 类型决定“会做什么”；任务成员实例决定“这次是谁、在哪个 Issue、使用哪部手机”。同一类型可以在一个任务中并行创建多个实例。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="hidden grid-cols-[minmax(12rem,1.2fr)_minmax(14rem,2fr)_8rem_8rem_6rem] gap-4 border-b px-5 py-2 text-xs font-medium text-muted-foreground lg:grid">
+            <span>Agent 类型</span><span>职责与能力</span><span>模型</span><span>权限</span><span className="text-right">操作</span>
+          </div>
           {agents.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              skillNames={agent.skillIds.map(
-                (id) =>
-                  skills.find((skill) => skill.id === id)?.displayName ?? id
-              )}
-              knowledgeBaseNames={agent.knowledgeBaseIds.map(
-                (id) =>
-                  knowledgeBases.find((item) => item.id === id)?.name ?? id
-              )}
-              globalProvider={state?.config.provider ?? "—"}
-              globalModel={state?.config.model ?? "—"}
-              departmentName={
-                state?.departments?.find(
-                  (department) => department.id === agent.departmentId
-                )?.name
-              }
-              positionName={
-                state?.positions?.find(
-                  (position) => position.id === agent.positionId
-                )?.name
-              }
-              onEdit={() => setEditing(agent)}
-            />
+            <AgentRow key={agent.id} agent={agent} onEdit={() => setEditing(agent)} onDelete={async () => {
+              if (!window.confirm(`删除 Agent 类型「${agent.name}」？`)) return
+              try { await deleteAgent(agent.id); await refresh(); toast.success("Agent 类型已删除") }
+              catch (error) { toast.error(error instanceof Error ? error.message : "删除失败") }
+            }} />
           ))}
-        </div>
-      )}
+          {agents.length === 0 ? <div className="px-6 py-16 text-center text-sm text-muted-foreground">暂无 Agent 类型。创建一个角色能力定义后即可发布任务。</div> : null}
+        </CardContent>
+      </Card>
 
-      {editingAgent ? (
-        <AgentDialog
-          key={editingAgent === "new" ? "new" : editingAgent.id}
-          agent={editingAgent}
-          skills={skills}
-          knowledgeBases={knowledgeBases}
-          departments={state?.departments ?? []}
-          positions={state?.positions ?? []}
-          employees={agents.filter(
-            (candidate) =>
-              !candidate.internal && candidate.category !== "concierge"
-          )}
-          globalProvider={state?.config.provider ?? ""}
-          globalModel={state?.config.model ?? ""}
-          globalPricing={state?.config.pricing ?? zeroPricing}
-          templates={templates}
-          lockedTemplate={
-            editingAgent === "new" ? requestedTemplate : undefined
-          }
-          onOpenChange={(open) => {
-            if (!open) setEditing(null)
-            if (
-              !open &&
-              (searchParams.has("template") || searchParams.has("agent"))
-            )
-              setSearchParams({})
-          }}
-          onSaved={async () => {
-            setEditing(null)
-            if (searchParams.has("template") || searchParams.has("agent"))
-              setSearchParams({})
-            await refresh()
-          }}
-        />
-      ) : null}
+      <AgentEditor
+        key={editing === "new" ? "new" : editing?.id ?? "closed"}
+        agent={editing}
+        onClose={() => setEditing(null)}
+        onSaved={async () => { setEditing(null); await refresh() }}
+      />
     </div>
   )
 }
 
-function AgentCard({
-  agent,
-  skillNames,
-  knowledgeBaseNames,
-  globalProvider,
-  globalModel,
-  departmentName,
-  positionName,
-  onEdit,
-}: {
-  agent: AgentDefinition
-  skillNames: string[]
-  knowledgeBaseNames: string[]
-  globalProvider: string
-  globalModel: string
-  departmentName?: string
-  positionName?: string
-  onEdit: () => void
-}) {
-  const provider = agent.model.provider || globalProvider
-  const model = agent.model.model || globalModel
+function Metric({ icon: Icon, label, value }: { icon: typeof Bot; label: string; value: number }) {
+  return <Card><CardContent className="flex items-center gap-3 py-4"><span className="flex size-9 items-center justify-center rounded-md border bg-background"><Icon className="size-4 text-primary" /></span><div><div className="text-2xl font-semibold tabular-nums">{value}</div><div className="text-xs text-muted-foreground">{label}</div></div></CardContent></Card>
+}
+
+function AgentRow({ agent, onEdit, onDelete }: { agent: AgentDefinition; onEdit: () => void; onDelete: () => void }) {
+  const capabilityCount = 2 + agent.skillIds.length + agent.knowledgeBaseIds.length
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
-            {categoryGlyph(agent.category)}
-          </span>
-          <div className="min-w-0">
-            <CardTitle className="truncate">{agent.name}</CardTitle>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              {agent.englishName || agent.id} · {positionName ?? "未分配岗位"}
-            </p>
-            <CardDescription className="mt-1 line-clamp-2">
-              {agent.description}
-            </CardDescription>
-          </div>
-        </div>
-        <CardAction className="flex items-center gap-2">
-          {agent.builtin ? <Badge variant="outline">内置</Badge> : null}
-          {agent.internal ? (
-            <Badge variant="secondary">系统 Agent</Badge>
-          ) : null}
-          <Badge variant={agent.enabled ? "default" : "secondary"}>
-            {agent.enabled ? "启用" : "停用"}
-          </Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Metadata label="模型" value={`${provider} / ${model}`} />
-          <Metadata
-            label="配置来源"
-            value={
-              agent.model.provider || agent.model.model
-                ? "Agent 覆盖"
-                : "继承全局"
-            }
-          />
-          <Metadata label="工具" value={`${agent.tools.length} 个`} />
-          <Metadata label="Skills" value={`${agent.skillIds.length} 个`} />
-          <Metadata
-            label="知识库"
-            value={`${agent.knowledgeBaseIds.length} 个`}
-          />
-        </div>
-        <Separator />
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="secondary">
-            {categoryLabels[agent.category] ?? agent.category}
-          </Badge>
-          <Badge variant="outline">{departmentName ?? "未分配部门"}</Badge>
-          <Badge variant="outline">{positionName ?? "未分配岗位"}</Badge>
-          <BoundaryBadge allowed={agent.permissions.allowWrite} label="写入" />
-          <BoundaryBadge allowed={agent.permissions.allowShell} label="Shell" />
-          <BoundaryBadge
-            allowed={agent.permissions.allowNetwork}
-            label="网络"
-          />
-          <Badge variant="outline">容器内全路径</Badge>
-        </div>
-        {skillNames.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {skillNames.map((name) => (
-              <Badge key={name} variant="outline">
-                {name}
-              </Badge>
-            ))}
-          </div>
-        ) : null}
-        {knowledgeBaseNames.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {knowledgeBaseNames.map((name) => (
-              <Badge key={name} variant="secondary">
-                <LibraryBig data-icon="inline-start" />
-                {name}
-              </Badge>
-            ))}
-          </div>
-        ) : null}
-      </CardContent>
-      <CardFooter className="justify-between gap-3">
-        <span className="truncate font-mono text-xs text-muted-foreground">
-          {agent.id}
-        </span>
-        <Button variant="outline" size="sm" onClick={onEdit}>
-          <Pencil data-icon="inline-start" />
-          配置
-        </Button>
-      </CardFooter>
-    </Card>
+    <div className="grid gap-4 border-b px-5 py-4 last:border-b-0 lg:grid-cols-[minmax(12rem,1.2fr)_minmax(14rem,2fr)_8rem_8rem_6rem] lg:items-center">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2"><span className="truncate font-medium">{agent.name}</span><span className={`size-2 rounded-full ${agent.enabled ? "bg-emerald-500" : "bg-muted-foreground/40"}`} /></div>
+        <code className="text-xs text-muted-foreground">{agent.id}</code>
+      </div>
+      <div className="min-w-0"><p className="line-clamp-2 text-sm text-muted-foreground">{agent.description || "未填写职责边界"}</p><div className="mt-2 flex flex-wrap gap-1.5"><Badge variant="outline">{agent.category}</Badge><Badge variant="secondary">{capabilityCount} 项能力</Badge>{agent.skillIds.slice(0, 2).map((id) => <Badge key={id} variant="outline">{id}</Badge>)}</div></div>
+      <div className="text-sm"><div className="font-medium">{agent.model.model || "继承默认"}</div><div className="text-xs text-muted-foreground">{agent.model.provider || "default"}</div></div>
+      <div className="flex items-center gap-2 text-sm"><ShieldCheck className="size-4 text-muted-foreground" /><span>{agent.permissions.approvalMode || "继承"}</span></div>
+      <div className="flex justify-end gap-1"><Button variant="ghost" size="icon-sm" aria-label={`编辑 ${agent.name}`} onClick={onEdit}><Pencil /></Button><Button variant="ghost" size="icon-sm" aria-label={`删除 ${agent.name}`} disabled={agent.builtin} onClick={onDelete}><Trash2 /></Button></div>
+    </div>
   )
 }
 
-function AgentDialog({
-  agent,
-  skills,
-  knowledgeBases,
-  departments,
-  positions,
-  employees,
-  globalProvider,
-  globalModel,
-  globalPricing,
-  templates,
-  lockedTemplate,
-  onOpenChange,
-  onSaved,
-}: {
-  agent: AgentDefinition | "new"
-  skills: { id: string; displayName: string; description: string }[]
-  knowledgeBases: { id: string; name: string; description: string }[]
-  departments: { id: string; name: string }[]
-  positions: Position[]
-  employees: AgentDefinition[]
-  globalProvider: string
-  globalModel: string
-  globalPricing: ModelPricing
-  templates: AgentTemplate[]
-  lockedTemplate?: AgentTemplate
-  onOpenChange: (open: boolean) => void
-  onSaved: () => Promise<void>
-}) {
-  const [form, setForm] = React.useState<SaveAgentInput>(() =>
-    agent === "new"
-      ? lockedTemplate
-        ? templateAgentInput(lockedTemplate)
-        : blankAgent()
-      : agentInput(agent)
-  )
+function AgentEditor({ agent, onClose, onSaved }: { agent: AgentDefinition | "new" | null; onClose: () => void; onSaved: () => Promise<void> }) {
+  const { state } = useAppState()
+  const [form, setForm] = React.useState<SaveAgentInput>(() => agent === "new" || !agent ? blankAgent() : editAgent(agent))
   const [saving, setSaving] = React.useState(false)
-  const [removing, setRemoving] = React.useState(false)
-  const previousMemo = React.useRef(agent === "new" ? "" : agent.memo)
-  const selectedPosition = positions.find(
-    (position) => position.id === form.positionId
-  )
-
-  React.useEffect(() => {
-    if (agent === "new") return
-    const prior = previousMemo.current
-    previousMemo.current = agent.memo
-    setForm((current) =>
-      current.memo === prior && current.memo !== agent.memo
-        ? { ...current, memo: agent.memo }
-        : current
-    )
-  }, [agent])
-
-  const set = <K extends keyof SaveAgentInput>(
-    key: K,
-    value: SaveAgentInput[K]
-  ) => setForm((current) => ({ ...current, [key]: value }))
-
+  if (!agent) return null
+  const set = <K extends keyof SaveAgentInput>(key: K, value: SaveAgentInput[K]) => setForm((current) => ({ ...current, [key]: value }))
+  const toggleItem = (key: "tools" | "skillIds" | "knowledgeBaseIds", value: string, checked: boolean) => set(key, checked ? [...new Set([...form[key], value])] : form[key].filter((item) => item !== value))
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (
-      !form.name.trim() ||
-      !form.englishName.trim() ||
-      !form.systemPrompt.trim() ||
-      saving
-    )
-      return
-    if (agent === "new" || !agent.internal) {
-      if (!form.positionId?.trim()) {
-        toast.error("员工必须先选择岗位")
-        return
-      }
-    }
+    if (!form.name.trim() || !form.systemPrompt.trim()) { toast.error("请填写 Agent 类型名称和系统提示词"); return }
     setSaving(true)
     try {
-      const provider = form.model.provider || globalProvider
-      const model = form.model.model || globalModel
-      const templateId = form.positionId
-        ? form.templateId
-        : await agentTemplateId(provider, model, form.systemPrompt)
-      let template = templates.find((item) => item.id === templateId)
-      if (!template) {
-        const chineseName = window
-          .prompt("新增人才模板：中文名", form.name)
-          ?.trim()
-        if (!chineseName) return
-        const englishName = window
-          .prompt("新增人才模板：英文名", form.id || form.name)
-          ?.trim()
-        if (!englishName) return
-        const introduction = window
-          .prompt("新增人才模板：个人介绍", form.description)
-          ?.trim()
-        if (!introduction) return
-        const positions = window
-          .prompt("新增人才模板：职位（多个用逗号分隔）", form.category)
-          ?.split(/[,，]/)
-          .map((value) => value.trim())
-          .filter(Boolean)
-        if (!positions?.length) return
-        template = await createAgentTemplate({
-          provider,
-          model,
-          systemPrompt: form.systemPrompt,
-          note: "",
-          metadata: { englishName, chineseName, introduction, positions },
-        })
-      }
-      const payload = { ...form, templateId: template.id }
-      if (agent === "new") await createAgent(payload)
-      else await updateAgent(agent.id, payload)
-      toast.success(agent === "new" ? "Agent 已创建" : "Agent 配置已保存")
+      if (agent === "new") await createAgent(form)
+      else await updateAgent(agent.id, form)
+      toast.success(agent === "new" ? "Agent 类型已创建" : "Agent 类型已更新")
       await onSaved()
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : "保存 Agent 失败")
-    } finally {
-      setSaving(false)
-    }
+    } catch (error) { toast.error(error instanceof Error ? error.message : "保存失败") }
+    finally { setSaving(false) }
   }
-
-  const remove = async () => {
-    if (agent === "new" || agent.builtin || removing) return
-    setRemoving(true)
-    try {
-      await deleteAgent(agent.id)
-      toast.success("Agent 已删除")
-      await onSaved()
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : "删除 Agent 失败")
-    } finally {
-      setRemoving(false)
-    }
-  }
-
-  const toggleTool = (tool: string, checked: boolean) => {
-    if (form.category !== "concierge" && requiredAgentTools.has(tool)) return
-    set(
-      "tools",
-      checked
-        ? [...new Set([...form.tools, tool])]
-        : form.tools.filter((item) => item !== tool)
-    )
-  }
-
-  const toggleSkill = (skillId: string, checked: boolean) =>
-    set(
-      "skillIds",
-      checked
-        ? [...new Set([...form.skillIds, skillId])]
-        : form.skillIds.filter((item) => item !== skillId)
-    )
-
-  const toggleKnowledgeBase = (knowledgeBaseId: string, checked: boolean) =>
-    set(
-      "knowledgeBaseIds",
-      checked
-        ? [...new Set([...form.knowledgeBaseIds, knowledgeBaseId])]
-        : form.knowledgeBaseIds.filter((item) => item !== knowledgeBaseId)
-    )
-
-  const updatePermission = <K extends keyof PermissionBoundary>(
-    key: K,
-    value: PermissionBoundary[K]
-  ) => set("permissions", { ...form.permissions, [key]: value })
-
-  const applyPosition = (positionId: string) => {
-    const position = positions.find((item) => item.id === positionId)
-    if (!position) return
-    setForm((current) => ({
-      ...current,
-      positionId: position.id,
-      departmentId: position.departmentId,
-      templateId: position.templateId,
-      description: position.description,
-      avatar: position.avatar,
-      category: position.category,
-      model: {
-        ...position.model,
-        pricing: position.model.pricing ? { ...position.model.pricing } : null,
-      },
-      systemPrompt: position.systemPrompt,
-      tools: [...position.tools],
-      skillIds: [...position.skillIds],
-      knowledgeBaseIds: [...position.knowledgeBaseIds],
-      permissions: { ...position.permissions },
-    }))
-  }
-
   return (
-    <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-4xl">
-        <form onSubmit={submit} className="contents">
-          <DialogHeader>
-            <DialogTitle>
-              {agent === "new" ? "新增员工" : `配置 ${form.name}`}
-            </DialogTitle>
-            <DialogDescription>
-              人才模板提供身份、模型和系统提示词；此处配置员工的运行能力、知识和权限。
-            </DialogDescription>
-          </DialogHeader>
-
-          <Tabs defaultValue="identity" className="min-h-0">
-            <TabsList
-              className="w-full justify-start overflow-x-auto"
-              variant="line"
-            >
-              <TabsTrigger value="identity">身份与模型</TabsTrigger>
-              <TabsTrigger value="prompt">系统提示词</TabsTrigger>
-              <TabsTrigger value="capabilities">能力与知识</TabsTrigger>
-              <TabsTrigger value="permissions">权限边界</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="identity" className="pt-4">
-              <FieldGroup>
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="agent-id">Agent ID</FieldLabel>
-                    <Input
-                      id="agent-id"
-                      value={form.id}
-                      disabled={agent !== "new"}
-                      placeholder="my-specialist"
-                      onChange={(event) => set("id", event.target.value)}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="agent-name">中文姓名</FieldLabel>
-                    <Input
-                      id="agent-name"
-                      value={form.name}
-                      onChange={(event) => set("name", event.target.value)}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="agent-english-name">
-                      英文姓名
-                    </FieldLabel>
-                    <Input
-                      id="agent-english-name"
-                      value={form.englishName}
-                      placeholder="例如：Michael Chen"
-                      onChange={(event) =>
-                        set("englishName", event.target.value)
-                      }
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="agent-position">岗位</FieldLabel>
-                    <Select
-                      value={form.positionId ?? "none"}
-                      onValueChange={(value) => applyPosition(String(value))}
-                    >
-                      <SelectTrigger id="agent-position" className="w-full">
-                        <SelectValue placeholder="选择岗位" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {positions
-                          .filter((position) => position.enabled)
-                          .map((position) => (
-                            <SelectItem key={position.id} value={position.id}>
-                              {position.name} · {position.englishName}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="agent-category">能力类别</FieldLabel>
-                    <Select
-                      value={form.category}
-                      onValueChange={(value) => set("category", String(value))}
-                    >
-                      <SelectTrigger id="agent-category" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="general">通用</SelectItem>
-                          <SelectItem value="concierge">管家</SelectItem>
-                          <SelectItem value="orchestrator">调度</SelectItem>
-                          <SelectItem value="backend">后端</SelectItem>
-                          <SelectItem value="frontend">前端</SelectItem>
-                          <SelectItem value="design">设计</SelectItem>
-                          <SelectItem value="security">安全</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="agent-department">所属部门</FieldLabel>
-                    <Input
-                      id="agent-department"
-                      value={
-                        departments.find(
-                          (department) =>
-                            department.id === selectedPosition?.departmentId
-                        )?.name ?? "请先选择岗位"
-                      }
-                      disabled
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="agent-manager">直属上级</FieldLabel>
-                    <Select
-                      value={form.managerAgentId || "none"}
-                      onValueChange={(value) =>
-                        set(
-                          "managerAgentId",
-                          value === "none" ? "" : String(value)
-                        )
-                      }
-                    >
-                      <SelectTrigger id="agent-manager" className="w-full">
-                        <SelectValue placeholder="选择直属上级" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">无直属上级</SelectItem>
-                        {employees
-                          .filter(
-                            (candidate) =>
-                              agent === "new" || candidate.id !== agent.id
-                          )
-                          .map((candidate) => (
-                            <SelectItem key={candidate.id} value={candidate.id}>
-                              {candidate.name} ·{" "}
-                              {positions.find(
-                                (position) =>
-                                  position.id === candidate.positionId
-                              )?.name ?? candidate.category}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field
-                    orientation="horizontal"
-                    className="rounded-lg border p-3"
-                  >
-                    <FieldLabel htmlFor="agent-enabled" className="flex-1">
-                      <span>启用 Agent</span>
-                      <FieldDescription>
-                        停用后不会被新任务分配。
-                      </FieldDescription>
-                    </FieldLabel>
-                    <Switch
-                      id="agent-enabled"
-                      checked={form.enabled}
-                      disabled={agent !== "new" && agent.internal}
-                      onCheckedChange={(checked) => set("enabled", checked)}
-                    />
-                  </Field>
-                </div>
-                <Field>
-                  <FieldLabel htmlFor="agent-description">职责说明</FieldLabel>
-                  <Textarea
-                    id="agent-description"
-                    rows={3}
-                    value={form.description}
-                    onChange={(event) => set("description", event.target.value)}
-                  />
-                </Field>
-                <FieldSet>
-                  <FieldLegend>模型覆盖</FieldLegend>
-                  <FieldDescription>
-                    留空即继承全局：{globalProvider || "—"} /{" "}
-                    {globalModel || "—"}
-                  </FieldDescription>
-                  <div className="grid gap-5 sm:grid-cols-2">
-                    <Field>
-                      <FieldLabel htmlFor="agent-provider">Provider</FieldLabel>
-                      <Input
-                        id="agent-provider"
-                        value={form.model.provider}
-                        disabled={Boolean(lockedTemplate)}
-                        placeholder={globalProvider || "继承全局"}
-                        onChange={(event) =>
-                          set("model", {
-                            ...form.model,
-                            provider: event.target.value,
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="agent-model">Model</FieldLabel>
-                      <Input
-                        id="agent-model"
-                        value={form.model.model}
-                        disabled={Boolean(lockedTemplate)}
-                        placeholder={globalModel || "继承全局"}
-                        onChange={(event) =>
-                          set("model", {
-                            ...form.model,
-                            model: event.target.value,
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="agent-base-url">Base URL</FieldLabel>
-                      <Input
-                        id="agent-base-url"
-                        value={form.model.baseUrl}
-                        placeholder="继承全局"
-                        onChange={(event) =>
-                          set("model", {
-                            ...form.model,
-                            baseUrl: event.target.value,
-                          })
-                        }
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="agent-thinking">Thinking</FieldLabel>
-                      <Select
-                        value={form.model.thinking || "inherit"}
-                        onValueChange={(value) =>
-                          set("model", {
-                            ...form.model,
-                            thinking: value === "inherit" ? "" : String(value),
-                          })
-                        }
-                      >
-                        <SelectTrigger id="agent-thinking" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectItem value="inherit">继承全局</SelectItem>
-                            <SelectItem value="low">low</SelectItem>
-                            <SelectItem value="medium">medium</SelectItem>
-                            <SelectItem value="high">high</SelectItem>
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  </div>
-                </FieldSet>
-                <FieldSet>
-                  <FieldLegend>价格覆盖</FieldLegend>
-                  <FieldDescription>
-                    默认继承全局模型价格；启用后，该 Agent 的新 Session
-                    使用独立价格。
-                  </FieldDescription>
-                  <Field
-                    orientation="horizontal"
-                    className="rounded-lg border p-3"
-                  >
-                    <FieldLabel
-                      htmlFor="agent-pricing-override"
-                      className="flex-1"
-                    >
-                      <span>使用独立价格</span>
-                      <FieldDescription>
-                        关闭时使用当前全局模型的四类 token 单价。
-                      </FieldDescription>
-                    </FieldLabel>
-                    <Switch
-                      id="agent-pricing-override"
-                      checked={form.model.pricing !== null}
-                      onCheckedChange={(checked) =>
-                        set("model", {
-                          ...form.model,
-                          pricing: checked ? { ...globalPricing } : null,
-                        })
-                      }
-                    />
-                  </Field>
-                </FieldSet>
-                {form.model.pricing ? (
-                  <ModelPricingFields
-                    idPrefix="agent-price"
-                    value={form.model.pricing}
-                    onChange={(pricing) =>
-                      set("model", { ...form.model, pricing })
-                    }
-                  />
-                ) : null}
-              </FieldGroup>
-            </TabsContent>
-
-            <TabsContent value="prompt" className="pt-4">
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="agent-system-prompt">
-                    系统提示词
-                  </FieldLabel>
-                  <Textarea
-                    id="agent-system-prompt"
-                    className="min-h-96 font-mono text-xs leading-5"
-                    value={form.systemPrompt}
-                    readOnly={Boolean(lockedTemplate)}
-                    onChange={(event) =>
-                      set("systemPrompt", event.target.value)
-                    }
-                  />
-                  <FieldDescription>
-                    启动 Pi RPC 时通过独立的 system prompt
-                    注入，不与任务提示词混合保存。
-                  </FieldDescription>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="agent-memo">Agent 备忘录</FieldLabel>
-                  <Textarea
-                    id="agent-memo"
-                    className="min-h-64 font-mono text-xs leading-5"
-                    maxLength={20000}
-                    value={form.memo}
-                    onChange={(event) => set("memo", event.target.value)}
-                    placeholder="记录稳定的用户/Leader 偏好、长期工作倾向、反复纠错和常见错误提醒。"
-                  />
-                  <FieldDescription>
-                    跨会话持久保存，并在新会话的第一条任务提示中注入。Agent
-                    也可以通过固有工具读取和更新。不要保存密码、令牌、敏感个人信息或一次性任务状态。
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-            </TabsContent>
-
-            <TabsContent value="capabilities" className="pt-4">
-              {agent !== "new" && agent.internal ? (
-                <Card size="sm">
-                  <CardHeader>
-                    <CardTitle>受保护的只读能力</CardTitle>
-                    <CardDescription>
-                      这个系统 Agent
-                      只接收检索服务传入的候选文档片段，实际运行时使用
-                      --no-tools，不能访问文件系统、Shell、网络或写入任何内容。
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="outline">无工具</Badge>
-                      <Badge variant="outline">无 Skills</Badge>
-                      <Badge variant="outline">无外部知识库关联</Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : (
-                <FieldGroup>
-                  <FieldSet>
-                    <FieldLegend>工具集</FieldLegend>
-                    <FieldDescription>
-                      每个 Agent 保存独立工具数组；Issue 拆分是所有 Agent
-                      必备的控制面能力。
-                    </FieldDescription>
-                    <div
-                      data-slot="checkbox-group"
-                      className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
-                    >
-                      {allTools.map((tool) => (
-                        <Field
-                          key={tool}
-                          orientation="horizontal"
-                          data-disabled={
-                            (form.category !== "concierge" &&
-                              requiredAgentTools.has(tool)) ||
-                            undefined
-                          }
-                          className="rounded-lg border p-3"
-                        >
-                          <Checkbox
-                            id={`agent-tool-${tool}`}
-                            checked={
-                              (form.category !== "concierge" &&
-                                requiredAgentTools.has(tool)) ||
-                              form.tools.includes(tool)
-                            }
-                            disabled={
-                              form.category !== "concierge" &&
-                              requiredAgentTools.has(tool)
-                            }
-                            onCheckedChange={(checked) =>
-                              toggleTool(tool, checked)
-                            }
-                          />
-                          <FieldLabel
-                            htmlFor={`agent-tool-${tool}`}
-                            className="font-mono font-normal"
-                          >
-                            {tool}
-                            {form.category !== "concierge" &&
-                            requiredAgentTools.has(tool)
-                              ? "（必备）"
-                              : ""}
-                          </FieldLabel>
-                        </Field>
-                      ))}
-                    </div>
-                  </FieldSet>
-                  <FieldSet>
-                    <FieldLegend>Skills / 方法</FieldLegend>
-                    <FieldDescription>
-                      选中的 SKILL.md 会在创建这个 Agent 的 Pi session
-                      时显式加载。
-                    </FieldDescription>
-                    <div
-                      data-slot="checkbox-group"
-                      className="grid gap-2 sm:grid-cols-2"
-                    >
-                      {skills.map((skill) => (
-                        <Field
-                          key={skill.id}
-                          orientation="horizontal"
-                          className="rounded-lg border p-3"
-                        >
-                          <Checkbox
-                            id={`agent-skill-${skill.id}`}
-                            checked={form.skillIds.includes(skill.id)}
-                            onCheckedChange={(checked) =>
-                              toggleSkill(skill.id, checked)
-                            }
-                          />
-                          <FieldLabel
-                            htmlFor={`agent-skill-${skill.id}`}
-                            className="font-normal"
-                          >
-                            <span>{skill.displayName}</span>
-                            <FieldDescription>
-                              {skill.description}
-                            </FieldDescription>
-                          </FieldLabel>
-                        </Field>
-                      ))}
-                    </div>
-                  </FieldSet>
-                  <FieldSet>
-                    <FieldLegend>关联知识库</FieldLegend>
-                    <FieldDescription>
-                      关联后会把知识库介绍注入系统提示词，并自动为这个 Agent
-                      增加只读的 aegis_search_knowledge 工具。
-                    </FieldDescription>
-                    {knowledgeBases.length === 0 ? (
-                      <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                        暂无知识库，请先在知识库页面创建并添加 Markdown 文档。
-                      </div>
-                    ) : (
-                      <div
-                        data-slot="checkbox-group"
-                        className="grid gap-2 sm:grid-cols-2"
-                      >
-                        {knowledgeBases.map((knowledgeBase) => (
-                          <Field
-                            key={knowledgeBase.id}
-                            orientation="horizontal"
-                            className="rounded-lg border p-3"
-                          >
-                            <Checkbox
-                              id={`agent-knowledge-${knowledgeBase.id}`}
-                              checked={form.knowledgeBaseIds.includes(
-                                knowledgeBase.id
-                              )}
-                              onCheckedChange={(checked) =>
-                                toggleKnowledgeBase(knowledgeBase.id, checked)
-                              }
-                            />
-                            <FieldLabel
-                              htmlFor={`agent-knowledge-${knowledgeBase.id}`}
-                              className="font-normal"
-                            >
-                              <span>{knowledgeBase.name}</span>
-                              <FieldDescription>
-                                {knowledgeBase.description}
-                              </FieldDescription>
-                            </FieldLabel>
-                          </Field>
-                        ))}
-                      </div>
-                    )}
-                  </FieldSet>
-                </FieldGroup>
-              )}
-            </TabsContent>
-
-            <TabsContent value="permissions" className="pt-4">
-              {agent !== "new" && agent.internal ? (
-                <Card size="sm">
-                  <CardHeader>
-                    <CardTitle>固定权限边界</CardTitle>
-                    <CardDescription>
-                      禁止网络、Shell 与写入，审批策略固定为
-                      none；检索进程没有可调用工具。
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex flex-wrap gap-2">
-                    <BoundaryBadge allowed={false} label="写入" />
-                    <BoundaryBadge allowed={false} label="Shell" />
-                    <BoundaryBadge allowed={false} label="网络" />
-                  </CardContent>
-                </Card>
-              ) : (
-                <FieldGroup>
-                  <Field>
-                    <FieldTitle>工作区范围</FieldTitle>
-                    <Input value="任务 Docker 容器内全部路径" disabled />
-                    <FieldDescription>
-                      任务工作区仅作为 Pi 默认目录，不限制容器内其他文件路径。
-                    </FieldDescription>
-                  </Field>
-                  <PermissionSwitch
-                    id="permission-write"
-                    label="允许写入"
-                    description="控制 edit、write 以及可识别的 shell 写入命令。"
-                    checked={form.permissions.allowWrite}
-                    onCheckedChange={(checked) =>
-                      updatePermission("allowWrite", checked)
-                    }
-                  />
-                  <PermissionSwitch
-                    id="permission-shell"
-                    label="允许 Shell"
-                    description="关闭后 bash 工具调用会被 Aegis Guard 拦截。"
-                    checked={form.permissions.allowShell}
-                    onCheckedChange={(checked) =>
-                      updatePermission("allowShell", checked)
-                    }
-                  />
-                  <PermissionSwitch
-                    id="permission-network"
-                    label="允许网络访问"
-                    description="关闭后 curl、wget、ssh、git fetch、包安装等命令会被拦截。"
-                    checked={form.permissions.allowNetwork}
-                    onCheckedChange={(checked) =>
-                      updatePermission("allowNetwork", checked)
-                    }
-                  />
-                  <Field>
-                    <FieldLabel htmlFor="permission-approval">
-                      工具调用审批
-                    </FieldLabel>
-                    <Select
-                      value={form.permissions.approvalMode || "inherit"}
-                      onValueChange={(value) =>
-                        updatePermission(
-                          "approvalMode",
-                          value === "inherit"
-                            ? ""
-                            : (String(
-                                value
-                              ) as PermissionBoundary["approvalMode"])
-                        )
-                      }
-                    >
-                      <SelectTrigger
-                        id="permission-approval"
-                        className="w-full"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="inherit">继承全局策略</SelectItem>
-                          <SelectItem value="all">
-                            所有写入与 Shell 都审批
-                          </SelectItem>
-                          <SelectItem value="risky">仅高风险 Shell</SelectItem>
-                          <SelectItem value="none">不审批</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="permission-rework-approval">
-                      Issue 返工审批
-                    </FieldLabel>
-                    <Select
-                      value={form.permissions.reworkApprovalMode || "inherit"}
-                      onValueChange={(value) =>
-                        updatePermission(
-                          "reworkApprovalMode",
-                          value === "inherit"
-                            ? ""
-                            : (String(
-                                value
-                              ) as PermissionBoundary["reworkApprovalMode"])
-                        )
-                      }
-                    >
-                      <SelectTrigger
-                        id="permission-rework-approval"
-                        className="w-full"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="inherit">继承全局策略</SelectItem>
-                          <SelectItem value="all">始终需要人工批准</SelectItem>
-                          <SelectItem value="none">
-                            自动批准并重新执行
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </FieldGroup>
-              )}
-            </TabsContent>
-          </Tabs>
-
-          <DialogFooter className="justify-between sm:justify-between">
-            <div>
-              {agent !== "new" && agent && !agent.builtin ? (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={removing || saving}
-                  onClick={() => void remove()}
-                >
-                  {removing ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : (
-                    <Trash2 data-icon="inline-start" />
-                  )}
-                  删除
-                </Button>
-              ) : null}
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-h-[88vh] max-w-3xl overflow-hidden p-0">
+        <form onSubmit={submit} className="flex max-h-[88vh] flex-col">
+          <DialogHeader className="border-b px-6 py-5"><DialogTitle>{agent === "new" ? "新建 Agent 类型" : `编辑 ${agent.name}`}</DialogTitle><DialogDescription>定义角色职责、模型、Skills、知识和权限。Coordination 与任务 Phone 由运行时自动提供；个人名字和手机不在这里配置。</DialogDescription></DialogHeader>
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="p-6">
+              <Tabs defaultValue="definition">
+                <TabsList><TabsTrigger value="definition">角色定义</TabsTrigger><TabsTrigger value="capabilities">能力</TabsTrigger><TabsTrigger value="runtime">运行权限</TabsTrigger></TabsList>
+                <TabsContent value="definition" className="pt-5"><FieldGroup><div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="agent-name">类型名称</FieldLabel><Input id="agent-name" value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="例如：红队工程师" /></Field><Field><FieldLabel htmlFor="agent-id">Agent ID</FieldLabel><Input id="agent-id" disabled={agent !== "new"} value={form.id} onChange={(event) => set("id", event.target.value)} placeholder="red-team-engineer" /></Field></div><Field><FieldLabel htmlFor="agent-description">职责边界</FieldLabel><Textarea id="agent-description" value={form.description} onChange={(event) => set("description", event.target.value)} placeholder="说明适合接收什么任务、产出什么证据。" /></Field><div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="agent-category">分类</FieldLabel><Input id="agent-category" value={form.category} onChange={(event) => set("category", event.target.value)} /></Field><Field className="flex-row items-center justify-between rounded-md border p-3"><div><FieldLabel>允许调度</FieldLabel><p className="text-xs text-muted-foreground">关闭后不会被分配新 Issue</p></div><Switch checked={form.enabled} onCheckedChange={(checked) => set("enabled", checked)} /></Field></div><Field><FieldLabel htmlFor="agent-prompt">系统提示词</FieldLabel><Textarea id="agent-prompt" className="min-h-64 font-mono text-xs" value={form.systemPrompt} onChange={(event) => set("systemPrompt", event.target.value)} /></Field></FieldGroup></TabsContent>
+                <TabsContent value="capabilities" className="space-y-6 pt-5"><div className="rounded-md border bg-muted/25 p-4 text-sm"><p className="font-medium">运行时基础能力</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">每次执行固定获得 Coordination；每个 TaskAgent 自动获得自己的 Phone。Web 与外部 MCP 由能力控制台和任务策略决定。</p><div className="mt-3 flex flex-wrap gap-1.5"><Badge variant="secondary">tool/coordination</Badge><Badge variant="secondary">phone/default</Badge></div></div><CapabilityGroup title="Skills" icon={BrainCircuit} items={(state?.skills ?? []).map((item) => item.id)} selected={form.skillIds} onToggle={(id, checked) => toggleItem("skillIds", id, checked)} /><CapabilityGroup title="知识库" icon={Database} items={(state?.knowledgeBases ?? []).map((item) => item.id)} selected={form.knowledgeBaseIds} onToggle={(id, checked) => toggleItem("knowledgeBaseIds", id, checked)} /></TabsContent>
+                <TabsContent value="runtime" className="pt-5"><FieldGroup><div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="provider">Provider</FieldLabel><Input id="provider" value={form.model.provider} onChange={(event) => set("model", { ...form.model, provider: event.target.value })} placeholder="留空继承系统默认" /></Field><Field><FieldLabel htmlFor="model">Model</FieldLabel><Input id="model" value={form.model.model} onChange={(event) => set("model", { ...form.model, model: event.target.value })} placeholder="留空继承系统默认" /></Field></div><Field><FieldLabel htmlFor="base-url">Base URL</FieldLabel><Input id="base-url" value={form.model.baseUrl} onChange={(event) => set("model", { ...form.model, baseUrl: event.target.value })} /></Field><div className="grid gap-3 sm:grid-cols-3">{([['allowNetwork','网络'],['allowShell','Shell'],['allowWrite','写入']] as const).map(([key,label]) => <label key={key} className="flex items-center justify-between rounded-md border p-3 text-sm"><span>{label}</span><Switch checked={form.permissions[key]} onCheckedChange={(checked) => set("permissions", { ...form.permissions, [key]: checked })} /></label>)}</div><Field><FieldLabel>审批策略</FieldLabel><Select value={form.permissions.approvalMode || "inherit"} onValueChange={(value) => set("permissions", { ...form.permissions, approvalMode: value === "inherit" ? "" : value as PermissionBoundary["approvalMode"] })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inherit">继承系统</SelectItem><SelectItem value="none">无需审批</SelectItem><SelectItem value="risky">仅高风险</SelectItem><SelectItem value="all">全部审批</SelectItem></SelectContent></Select></Field></FieldGroup></TabsContent>
+              </Tabs>
             </div>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-              >
-                取消
-              </Button>
-              <Button
-                type="submit"
-                disabled={
-                  saving || !form.name.trim() || !form.systemPrompt.trim()
-                }
-              >
-                {saving ? <Spinner data-icon="inline-start" /> : null}
-                {saving ? "保存中…" : "保存 Agent"}
-              </Button>
-            </div>
-          </DialogFooter>
+          </ScrollArea>
+          <DialogFooter className="border-t px-6 py-4"><Button type="button" variant="outline" onClick={onClose}>取消</Button><Button type="submit" disabled={saving}>{saving ? <Spinner data-icon="inline-start" /> : null}保存类型</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
   )
 }
 
-function PermissionSwitch({
-  id,
-  label,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  id: string
-  label: string
-  description: string
-  checked: boolean
-  onCheckedChange: (checked: boolean) => void
-}) {
-  return (
-    <Field orientation="horizontal" className="rounded-lg border p-3">
-      <FieldLabel htmlFor={id} className="flex-1">
-        <span>{label}</span>
-        <FieldDescription>{description}</FieldDescription>
-      </FieldLabel>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
-    </Field>
-  )
-}
-
-function Summary({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Bot
-  label: string
-  value: number
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-center gap-4 p-5">
-        <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
-          <Icon className="size-4" />
-        </span>
-        <div>
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function Metadata({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate text-sm font-medium">{value}</p>
-    </div>
-  )
-}
-
-function BoundaryBadge({
-  allowed,
-  label,
-}: {
-  allowed: boolean
-  label: string
-}) {
-  return (
-    <Badge variant={allowed ? "secondary" : "outline"}>
-      {label} {allowed ? "允许" : "禁止"}
-    </Badge>
-  )
-}
-
-function categoryGlyph(category: string) {
-  const className = "size-5"
-  if (category === "orchestrator") return <Route className={className} />
-  if (category === "backend") return <Server className={className} />
-  if (category === "frontend") return <Code2 className={className} />
-  if (category === "design") return <Palette className={className} />
-  if (category === "security") return <Shield className={className} />
-  if (category === "knowledge") return <Database className={className} />
-  if (category === "concierge") return <Sparkles className={className} />
-  if (category === "data") return <Database className={className} />
-  return <Wrench className={className} />
-}
-
-function blankAgent(): SaveAgentInput {
-  return {
-    id: "",
-    templateId: "",
-    name: "",
-    englishName: "",
-    description: "",
-    avatar: "bot",
-    category: "general",
-    enabled: true,
-    internal: false,
-    model: {
-      provider: "",
-      model: "",
-      baseUrl: "",
-      thinking: "",
-      pricing: null,
-    },
-    systemPrompt: "",
-    memo: "",
-    tools: [...allTools],
-    skillIds: [],
-    knowledgeBaseIds: [],
-    permissions: {
-      workspaceScope: "run_workspace",
-      allowNetwork: true,
-      allowShell: true,
-      allowWrite: true,
-      approvalMode: "none",
-      reworkApprovalMode: "none",
-    },
-    departmentId: "",
-    positionId: "",
-    managerAgentId: "",
-  }
-}
-
-function agentInput(agent: AgentDefinition): SaveAgentInput {
-  return {
-    id: agent.id,
-    templateId: agent.templateId,
-    name: agent.name,
-    englishName: agent.englishName,
-    description: agent.description,
-    avatar: agent.avatar,
-    category: agent.category,
-    enabled: agent.enabled,
-    internal: agent.internal,
-    model: { ...agent.model },
-    systemPrompt: agent.systemPrompt,
-    memo: agent.memo ?? "",
-    tools: [...agent.tools],
-    skillIds: [...agent.skillIds],
-    knowledgeBaseIds: [...agent.knowledgeBaseIds],
-    permissions: { ...agent.permissions },
-    departmentId: agent.departmentId ?? "",
-    positionId: agent.positionId ?? "",
-    managerAgentId: agent.managerAgentId ?? "",
-  }
-}
-
-function templateAgentInput(template: AgentTemplate): SaveAgentInput {
-  const input = blankAgent()
-  return {
-    ...input,
-    templateId: template.id,
-    id: template.metadata.englishName,
-    name: template.metadata.chineseName,
-    englishName: template.metadata.englishName,
-    description: template.metadata.introduction,
-    category: template.metadata.positions[0] || "general",
-    model: {
-      ...input.model,
-      provider: template.provider,
-      model: template.model,
-    },
-    systemPrompt: template.systemPrompt,
-  }
+function CapabilityGroup({ title, icon: Icon, items, selected, onToggle }: { title: string; icon: typeof Bot; items: string[]; selected: string[]; onToggle: (id: string, checked: boolean) => void }) {
+  return <section><div className="mb-3 flex items-center gap-2 text-sm font-medium"><Icon className="size-4 text-primary" />{title}<Badge variant="secondary">{selected.length}</Badge></div><div className="grid gap-2 sm:grid-cols-2">{items.map((item) => <label key={item} className="flex items-center gap-3 rounded-md border p-3 text-sm hover:bg-muted/40"><Checkbox checked={selected.includes(item)} onCheckedChange={(checked) => onToggle(item, checked === true)} /><code className="truncate text-xs">{item}</code></label>)}</div>{items.length === 0 ? <p className="text-sm text-muted-foreground">暂无可绑定项</p> : null}</section>
 }

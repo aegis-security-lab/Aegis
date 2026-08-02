@@ -1,28 +1,27 @@
 # Aegis
 
-Aegis 是一个由真实 Pi Agent 驱动的本地任务控制台。它把可复用 Agent 定义、任务发布、自动拆解、并行执行、Issues、会话调试、审批与上下文对话放进一个可观察、可干预的后台，不包含模拟执行器。
+Aegis 是一个由 Go AgentCore 驱动的本地任务控制台。它把可复用 Agent 定义、任务发布、自动拆解、并行执行、Issues、会话调试、审批与上下文对话放进一个可观察、可干预的后台，不包含模拟执行器。
 
 ## 已实现
 
-- 四步首次初始化：产品说明、Pi Runtime 探测、模型与认证、工作区与安全策略
-- 多页面后台：总览、任务、Issues、Agents、Skills、Sessions、审批中心与设置
+- 三步首次初始化：产品说明、模型与认证、工作区与安全策略；AgentCore 已内嵌，无需外部 Runtime 探测
+- 多页面后台：总览、任务、计划树、Agent 类型、能力控制台、Skills、Sessions、审批中心与设置
 - Gin HTTP API 与 SSE 实时状态流
 - SQLite + GORM 标准化持久化 Project、Issue、IssueRelation、Execution、消息、评论、审批与 Agent Wakeup
-- Pi JSONL RPC Runtime，支持真实 session、流式消息、工具调用、阶段进度和 session 统计
+- Go AgentCore Runtime，支持流式消息、并行工具调用、阶段进度、session 统计与执行期 capability 装配
 - Agent 是独立的模型覆盖、系统提示词、工具集、Skills 和权限边界组合；模型留空时继承全局配置
-- 首次启动自动创建 Orchestrator、后端工程师、前端工程师和红队攻防工程师，并为三个专业 Agent 分配不同 Skills
+- 首次启动自动创建 Orchestrator、后端工程师、前端工程师和红队攻防工程师等可复用 Agent 类型
 - Skill 管理支持标准 `SKILL.md` 的新增、编辑、ZIP/Markdown 导入、ZIP 导出与本地路径安装
 - Task 是顶层 Issue；Orchestrator 将其拆成彼此独立的子 Issues，子树调度不创建 `blocks` 依赖
-- 任意工作 Agent 都能通过真实 Pi 扩展工具递归拆分 2–8 个彼此独立的子 Issues；支持最多 4 层与幂等重试
-- 父 Issue 拆分后进入 `waiting_children` 并释放 checkout；直属子项全部结束后创建 `continuation` Execution 汇总、验证并决定完成或再次拆分
-- 顶层任务支持树级取消：在调度临界区内取消所有未完成后代与活跃/排队 Execution，终止 Pi Sessions，并关闭待审批和 Agent Wakeup；已完成历史保持不变
+- 任意工作 Agent 都能通过 AgentCore capability 递归拆分 2–8 个彼此独立的子 Issues；支持最多 4 层与幂等重试
+- 父 Agent 创建子 Issue 后继续工作；没有有价值动作时可调用 `coordinate_sleep`，心跳、评论或 Phone 消息可提前唤醒
+- 顶层任务支持树级取消：在调度临界区内取消所有未完成后代与活跃/排队 AgentCore Execution，并关闭待审批和 Agent Wakeup；已完成历史保持不变
 - Issues 页面提供可折叠层级树、直属子项进度、未完成 blocker、等待子树与汇总中状态
 - 原子 checkout 使用条件 SQL 校验状态、Agent 所有权、Execution 锁与未完成 blockers，冲突返回 409
-- 一个 Issue 可以保留多次 Execution；每次 Execution 对应独立 Pi Session、消息、事件、统计和审批
-- Issue 评论支持稳定 Agent ID mention；调度器把 mention 转成持久化 Wakeup 并启动目标 Agent 的真实 Execution
-- Agent 回复可以继续 mention 另一个 Agent，形成真实的链式协作
+- 一个 Issue 可以保留多次 Execution；每次 Execution 对应独立 AgentCore Session、消息、事件、统计和审批
+- Issue 评论和 Relay 通过任务内 `TaskAgent` 身份精确路由；同一 Agent 类型可以在一个任务中并行创建多个独立实例
 - 普通 Agent 可以通过任务树级广播同步跨 Issue 的关键发现；广播持久化后会实时投递给同一任务中正在执行的其他 Worker，并可由后续 Agent 查询历史
-- guided / autonomous 两种运行模式；工具调用与 Issue 返工使用独立审批类型和全局策略，Agent 可分别覆盖默认值
+- 唯一 `board_autonomy` 协作模式；工具调用与 Issue 返工仍使用独立审批类型和全局策略
 - Execution 停止；Issue 人工复核；运行中 Agent 对话；Session 消息和事件调试
 - React 19、Tailwind CSS v4、shadcn/ui Base Nova；桌面与移动端布局
 
@@ -30,22 +29,7 @@ Aegis 是一个由真实 Pi Agent 驱动的本地任务控制台。它把可复�
 
 - Go 1.25+
 - Node.js 22.19+
-- 一个已经构建的 Pi Coding Agent 仓库
-
-本机默认可使用：
-
-```text
-Node: /Users/patrick/.nvm/versions/node/v26.5.0/bin/node
-Pi:   /Users/patrick/Code/pi/packages/coding-agent/dist/cli.js
-```
-
-如果 Pi 尚未构建：
-
-```bash
-cd /Users/patrick/Code/pi
-npm ci --ignore-scripts
-npm run build
-```
+- Docker Desktop 或兼容的 Docker daemon（运行任务工具沙箱时需要）
 
 ## 启动
 
@@ -65,15 +49,56 @@ make dev
 
 Vite 地址为 `http://localhost:5173`，`/api` 会代理到 `http://localhost:8080`。
 
+## 独立 Agent App 模块
+
+仓库中的 [`agentapp`](agentapp/README.md) 是一个不依赖 `internal/control` 的独立 Go 模块，提供 Agent Phone、双前端协议、REF 动作，以及可替换数据源的 Board/Relay App。可以单独运行协议演示：
+
+```bash
+go run ./cmd/agentapp
+```
+
+打开 `http://localhost:8090`，左侧为人类 Web 前端，右侧为 AI 实际读取的文本前端。
+
+## 模块化 Go Agent Runtime
+
+Aegis 通过独立 Go module `github.com/z3r2ne/agentcore` 使用 Agent loop；本仓库只保留 `agenthost`、`capability`、`coordination`、`storage`、`skill`、`mcp`、`web`、`provider/openai` 与业务适配器。完整边界见 [`docs/architecture/agent-runtime-modules.md`](docs/architecture/agent-runtime-modules.md)。
+
+当前固定依赖 `agentcore v0.2.1`，不再使用本地 `replace`。如果仓库保持私有，新的开发机或 CI 需要配置私有 module 与 GitHub SSH：
+
+```bash
+go env -w GOPRIVATE=github.com/z3r2ne/*
+git config --global url."ssh://git@ssh.github.com:443/".insteadOf https://github.com/
+```
+
+- Go AgentHost 与 SQLite Coordination Runtime 始终启用，不存在旧执行链或切流 feature flag；
+- `AEGIS_COORDINATION_MODE=board_autonomy`：唯一协作模式；根 Agent 通过 Board 指派子 Issue，同时继续自己的工作；
+- `AEGIS_AGENTAPP_URL` 和 `AEGIS_AGENTAPP_TOKEN`：可把进程内 Board/Relay Agent Phone 替换为远程 Phone transport；
+- Coordination 同时持有模式决策与可靠执行。两者在代码中分层，但不会产生两套任务状态所有者。
+
+`GET /api/coordination/modes` 只返回 `board_autonomy`。Task binding、事件 inbox、effect outbox、重试、租约和定时唤醒均保存在 Aegis SQLite；Agent 使用 `coordinate_delegate` 创建并指派子 Issue，使用 `coordinate_sleep` 主动休眠。每分钟心跳会提供耗时、子 Issue 变化、进度与当前活动，评论或 Relay 消息会直接 steer 正在运行的 loop，或唤醒休眠实例。
+
+Coordination 现在也是统一能力控制平面：`capabilityPolicy` 按 Task 控制 Agent 可获得的 Skill、MCP、Phone、Web 和工具。Board/Relay 作为 Phone App 暴露，delegation 可只开放 `aegis.board`。`GET /api/coordination/capabilities` 查看已注册插件，`POST /api/coordination/capabilities/plan` 在执行前预览最终计划，`POST /api/coordination/invoke` 可由操作者主动调用指定 Agent。默认只允许 Agent 自身能力；新增插件必须显式列入 binding 的 `allowed`。详细配置见 [`coordination/README.md`](coordination/README.md)。
+
+## 可观测性与任务证据导出
+
+Aegis 启动时会启用统一的结构化日志、关联 ID、轻量 trace 和进程内指标。HTTP、Coordination、AgentHost、模型流、工具调用与 Web Search 使用同一套 `taskId`、`issueId`、`coordinationId`、`executionId`、`traceId` 关联字段。日志同时输出 JSON 到标准输出，并持久化到 `AEGIS_DATA_DIR/aegis.db` 的 `observability_logs` 表；常见 token、Authorization、API Key 以及当前和历史配置密钥会在写入前脱敏。
+
+- `GET /api/observability/metrics`：读取计数器、耗时分布和 Gauge 快照；
+- `GET /api/observability/logs?taskId=...&coordinationId=...&traceId=...&limit=500`：按关联字段查询持久化日志；
+- `GET /api/tasks/:id/export`：按 Task ID 或其任意 Issue ID 下载 `aegis.task-evidence/v1` ZIP；默认包含附件并脱敏 JSON；
+- `includeArtifacts=false`：只导出元数据，不复制附件；`redactSecrets=false`：显式关闭 JSON 脱敏。
+
+证据包包含 manifest 与逐文件 SHA-256、任务/Issue 树、所有 Execution 和完整对话、工具输入输出事件、进度/评论/验收/审批、Relay、Coordination、Agent Phone 审计、Agent/Skill/知识库快照、相关结构化日志、附件以及面向后续评价的 `evaluation_context.json`。原始附件不会改写，可能包含业务秘密；响应头和 manifest 会明确标识脱敏、完整性和活动中快照状态。详细格式见 [`docs/architecture/observability.md`](docs/architecture/observability.md)。
+
 ## Docker Worker 镜像
 
-项目根目录的 `Dockerfile` 用于构建 Agent 的固定执行镜像，镜像内包含 Node.js、Python、
-Go、Java、常用编译工具、Pi CLI，以及 `agent-browser` 浏览器自动化
-工具，镜像名统一为 `aegis-pi-worker:latest`。可以在“容器管理”
+项目根目录的 `Dockerfile` 用于构建 AgentCore 的固定工具沙箱镜像，镜像内包含 Node.js、Python、
+Go、Java、常用编译工具，以及 `agent-browser` 浏览器自动化
+工具，镜像名统一为 `aegis-worker:latest`。可以在“容器管理”
 页面点击“构建 Worker 镜像”，也可以手动执行：
 
 ```bash
-docker build -t aegis-pi-worker:latest .
+docker build -t aegis-worker:latest .
 ```
 
 也可以使用项目提供的构建脚本：
@@ -82,15 +107,14 @@ docker build -t aegis-pi-worker:latest .
 ./build-worker-image.sh
 ```
 
-脚本会检查 Docker、构建固定镜像，并启动一次临时容器验证 Node.js、Python、Go、Java、Pi CLI 和 `agent-browser`。额外参数会原样传递给
+脚本会检查 Docker、构建固定镜像，并启动一次临时容器验证 Node.js、Python、Go、Java 和 `agent-browser`。额外参数会原样传递给
 `docker build`，例如 `./build-worker-image.sh --no-cache`。
 
 也可以通过脚本参数覆盖镜像名、工具版本和目标平台：
 
 ```bash
 ./build-worker-image.sh \
-  --image aegis-pi-worker:dev \
-  --pi-version 0.80.10 \
+  --image aegis-worker:dev \
   --platform linux/arm64 \
   --pull
 ```
@@ -104,47 +128,39 @@ AEGIS_KALI_BASE_IMAGE=kalilinux/kali-rolling:latest \
 ./build-worker-image.sh
 ```
 
-Node.js、Python、Go、Java 以及常用的基础安全工具均通过 Kali 软件源安装；Pi CLI 和
+Node.js、Python、Go、Java 以及常用的基础安全工具均通过 Kali 软件源安装；
 `agent-browser` 通过 npm 安装，并默认使用 Kali 软件源提供的 Chromium；AMD64 构建还会执行其浏览器安装步骤，ARM64 则直接使用系统 Chromium，以兼容 Apple Silicon。
 
-新增容器执行环境时不需要选择镜像，只配置环境名称、宿主机工作目录、容器工作目录、网络和资源限制。
-环境启动后会创建一个常驻容器；任务只能选择运行中的容器，Execution 通过 `docker exec` 在容器内
-启动 Pi。Execution 结束不会删除环境容器，需要时可在“容器管理”页面停止。
+每个 Task 在创建时自动绑定一个专属容器和 Docker named volume，卷固定挂载为 `/workspace`。同一 Task 的根 Agent、所有子 Agent、重试和唤醒 Execution 始终复用这一个容器工作区；不同 Task 使用不同容器和卷。容器环境不再接受宿主机工作目录映射。
+
+Go AgentCore loop 属于控制平面；`bash/read/write/edit/grep/find/ls` 编码能力全部通过 `docker exec` 在对应 Task 容器内执行，且没有宿主机回退。输入附件直接写入任务卷，Agent 生成的文件默认只存在于卷内。只有显式调用 `aegis_publish_attachment` 的文件才会流式进入 Aegis 附件存储，并显示在 Issue 评论/任务证据包中。任务详情页不会浏览、复制或映射容器卷内容。
 
 ## Agent、Session 与协作
 
-Agent 是可复用定义，Issue 是工作对象，Execution 是一次执行尝试，Session 是该 Execution 的 Pi 运行实例：
+Agent 是可复用类型，TaskAgent 是任务内实例，Issue 是工作对象，Execution 是一次执行尝试，Session 是该 TaskAgent 在对应 Issue 上的持续会话：
 
-- `/agents` 编辑每个 Agent 自己的模型覆盖、系统提示词、工具、Skills 与权限边界。
+- `/agents` 编辑 Agent 类型的模型覆盖、系统提示词、Skills、知识库与权限边界。
+- `/capabilities` 查看能力注册、Agent 默认值、Task policy 和最终 Execution bundle。
 - `/skills` 管理 `SKILL.md` 能力包以及它们与 Agent 的引用关系。
-- `/sessions` 查看 Pi session ID、Execution、PID、模型快照、阶段进度、消息、事件和 token/cost 统计。
+- `/sessions` 查看 Execution、模型快照、阶段进度、完整消息、事件和 token/cost 统计。
 
-全局设置只提供默认模型；Agent 的模型字段留空时继承全局 Provider、Model、Base URL 和 Thinking。工具集不会从全局共享，每个 Agent 都保存自己的独立列表；`aegis_board`、`aegis_relay`、`aegis_create_subissues`、`aegis_report_progress` 等控制面工具是所有普通员工 Agent 的固有能力，不能移除。Agent 的普通输出只保留在员工长期会话中；需要修改 Issue 或发表评论时必须主动调用 Board，员工间异步协作统一使用 Relay。
+全局设置只提供默认模型；Agent 类型的模型字段留空时继承全局 Provider、Model、Base URL 和 Thinking。发布根任务或分派子 Issue 时，系统从任务内名字池领取一个 `TaskAgent` 身份，并为它创建独立 Session 与 Agent Phone。Phone 的页面栈、草稿、Relay 收件箱和审计记录写入 SQLite，所有读写同时校验 `taskId + taskAgentId`，任务结束后不会成为另一个任务的上下文。
 
-### Issue 评论与 Agent-to-Agent 调用
+### Board Autonomy
 
-进入任一 Issue 详情页即可查看评论线程、心跳状态并发布评论。通过页面中的 Agent 选择器插入结构化 mention，例如：
+所有工作都由 Board Issue 表示。根 TaskAgent 可使用 `coordinate_delegate` 创建并指派子 Issue；每次指派都会创建新的 TaskAgent，即使同一种 Agent 类型在同一 Task 中并行出现多次，也不会共享身份、会话或 Phone。父 TaskAgent 发出委派后继续自己的工作，不会被隐式挂起。
 
-```text
-[@红队攻防工程师](agent://red-team-engineer) 请独立复核这个结果。
-```
+没有高价值动作时，TaskAgent 可以使用 `coordinate_sleep` 保留同一 Session 并进入睡眠。每分钟持久化心跳会提供耗时、直属子 Issue 状态、进度摘要和当前活动；Board 评论与 Relay/Phone 消息通过同一个 Coordination outbox 精确 steer 运行中的 TaskAgent，或提前唤醒睡眠实例。旧睡眠定时器带代次令牌，不会误唤醒后续的新睡眠周期。
 
-调度器会持久化一条 `issue_comment_mentioned` Wakeup，并优先续接该 Issue 下该 Agent 最近的 Pi RPC session：会话仍在线时直接投递，进程已退出时使用原 session ID 恢复；只有该 Agent 从未处理过此 Issue 时才创建新的 mention Execution。目标 Agent 的回复会写回原 Issue 评论线程；回复中包含另一个有效的结构化 mention 时，会继续为下一个 Agent 创建 Wakeup。普通的 `@red-team-engineer` 文本不会触发唤醒，避免误调用。
+消息会标注发送方，属于软提示：TaskAgent 可以回复、纠偏、停止或重新指派子 Issue，也可以先继续当前工作。已经终止的 Issue 不会因为迟到评论被重新唤醒。
 
-Mention 不会改变 Issue 所有权，也不会重新打开已经完成的 Issue。这里的 Agent ID 是定义 ID，Execution ID 和 Pi Session ID 只用于运行时诊断。
+### Agent Phone
 
-已完成或待复核的 Issue 收到明确的补做、重新拆解或重新执行要求时，Agent 可以调用 `aegis_request_rework` 发起 `issue_rework` 审批。批准后 Aegis 创建新的工作 Execution、重新取得该 Issue 的 checkout，并将批准的返工要求作为新一轮 Prompt；若该类型配置为自动批准则直接启动。工具调用与 Issue 返工可分别配置全局审批策略，每个 Agent 的对应配置留空时继承全局，非空时覆盖。
+Phone 是 `agentapp` 模块提供的任务内软件运行环境。Coordination 在执行入队前以 `taskId + taskAgentId` 幂等创建或恢复 Phone，AgentHost 再把它物化成 `phone_view`、`phone_action`、`phone_back`、`phone_home` 四个工具。内置 Board/Relay App 只返回当前 Task 和当前身份有权访问的内容。
 
-### 运行时递归拆解
+SQLite 表 `agent_app_phone_sessions` 保存当前 App、页面栈和草稿，`agent_app_action_results` 保存幂等动作结果，`agent_app_audit_events` 保存完整操作审计。任务详情页按 Task 展示编队和所有独立 Phone；任务证据导出同时包含 Phone 状态与审计记录。
 
-任意 Agent 判断当前 Issue 过大时，都可以调用 Pi 中真实注册的 `aegis_create_subissues` 工具。该工具不是文本约定或模拟结果：它通过当前 Execution 独有的随机令牌调用 Gin 控制面，并在一个 SQLite 事务里完成：
-
-1. 创建带 `parentId` 和 `requestDepth` 的子 Issues；
-2. 不创建子项间或子项到父项的 `blocks` 依赖，由持久化等待与唤醒流程协调父子完成；
-3. 写入带 `requestKey` 的 `IssueDecomposition`，保证工具重试不重复创建；
-4. 将父 Issue 切换到 `waiting_children`、释放 checkout，并交还调度器。
-
-调度器只启动未被阻塞的子 Issue，遵循全局并发限制。所有直属子项进入 `done` 或 `cancelled` 后，父 Issue 不会被自动标记完成，而是启动新的 `continuation` Execution，读取子项结果、检查真实工作区并执行父级验收。子 Issue 同样可以继续调用该工具，因此形成受深度和数量边界保护的递归执行树。
+UI 与领域边界、页面到后端职责的映射见 [`docs/architecture/ui-and-domain-boundaries.md`](docs/architecture/ui-and-domain-boundaries.md)。
 
 可用环境变量：
 
@@ -153,8 +169,9 @@ Mention 不会改变 Issue 所有权，也不会重新打开已经完成的 Issu
 | `PORT` | `8080` | Gin 服务端口 |
 | `AEGIS_DATA_DIR` | `data` | SQLite 与运行时扩展目录 |
 | `AEGIS_DIST` | `dist` | 前端静态文件目录 |
+| `AEGIS_LOG_LEVEL` | `info` | JSON/SQLite 日志级别：debug、info、warn、error |
 
-也可以在初始化页选择环境变量认证。Pi 内置 Provider 的标准变量仍然有效，例如 `OPENCODE_API_KEY`。
+也可以在初始化页选择环境变量认证。AgentCore Provider 会读取对应的标准环境变量，例如 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `OPENCODE_API_KEY`。
 
 ## 验证
 
@@ -166,19 +183,18 @@ make build
 ## 结构
 
 ```text
-cmd/server/                 Gin API、SSE、静态文件托管与优雅关闭
-internal/control/models.go  Paperclip 风格的领域模型与 API DTO
-internal/control/store.go   GORM/SQLite 标准化仓库、关系图与原子 checkout
-internal/control/decomposition.go Agent 子 Issue 拆解事务、幂等键与层级边界
-internal/control/registry.go Agent/Skill 注册表、默认数据与 Skill 包处理
-internal/control/runtime.go Pi RPC、递归调度、continuation、审批、对话与 Agent Wakeup
-internal/control/aegis-guard.ts 运行时控制工具、审批、工作区与权限边界守卫
-src/pages/                  后台各业务页面和初始化流程
-src/components/             应用壳、运行对话和共享组件
-src/components/ui/          shadcn/ui Base UI 原语
-src/lib/                    API、SSE 和全局状态客户端
+../agentcore/               独立仓库：Agent loop、Tool/Skill/Interceptor 与 Session
+agenthost/                  ExecutionSpec 和 capability 物化宿主
+capability/                 能力注册、引用、Source 与快照
+coordination/               唯一协同决策和可靠执行控制面
+agentapp/                   TaskAgent Phone、Board/Relay App 与 SQLite 状态
+skill/ mcp/ web/ provider/  可插拔能力模块
+storage/ observability/     事件、Artifact、结构化日志、trace 与指标
+internal/control/           Aegis Task/Issue 领域与各模块适配器
+cmd/server/                 组合根、Gin API、SSE 与静态文件托管
+src/                        React 管理端
 ```
 
 ## 安全说明
 
-Aegis 会让 Pi 在所选工作目录中真实读写文件并执行工具。每个 Agent 的网络、Shell、写入与审批权限会由运行时守卫检查，文件路径也会限制在任务工作区内；这仍然不是操作系统级沙箱。请只选择明确授权的目录，生产部署还应增加进程级隔离、凭据托管和操作审计。
+Aegis 的 AgentCore loop 位于服务控制面，文件、Shell 与浏览器工具只通过任务专属 Docker 容器执行，不回退到宿主机工作区。每个 Agent 的网络、写入与审批权限由 capability policy 检查；请继续限制容器网络、资源与凭据，并只处理明确授权的数据。

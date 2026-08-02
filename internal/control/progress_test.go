@@ -2,6 +2,7 @@ package control
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -162,10 +163,10 @@ func TestIssueProgressModesReturnNewestFirstAndExportOverflow(t *testing.T) {
 	if len(progressResult.ProgressUpdates) != 1 || progressResult.ProgressUpdates[0].Stage != "newer stage" || !progressResult.ProgressTruncated {
 		t.Fatalf("progress result is not newest-first and bounded: %+v", progressResult)
 	}
-	if progressResult.OverflowFilePath == "" || !strings.HasPrefix(progressResult.OverflowFilePath, filepath.Join(parent.Workspace, ".aegis", "issue-progress")) {
+	if progressResult.OverflowFilePath == "" || !strings.HasPrefix(progressResult.OverflowFilePath, path.Join(TaskWorkspacePath, ".aegis", "issue-progress")) {
 		t.Fatalf("unexpected progress overflow path: %q", progressResult.OverflowFilePath)
 	}
-	exported, err := os.ReadFile(progressResult.OverflowFilePath)
+	exported, err := os.ReadFile(testTaskRuntimePath(store, parent, progressResult.OverflowFilePath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +183,7 @@ func TestIssueProgressModesReturnNewestFirstAndExportOverflow(t *testing.T) {
 	if len(messageResult.Messages) != 1 || messageResult.Messages[0].Content != "newer message" || len(messageResult.ProgressUpdates) != 0 || !messageResult.MessagesTruncated {
 		t.Fatalf("message result is not newest-first and bounded: %+v", messageResult)
 	}
-	exported, err = os.ReadFile(messageResult.OverflowFilePath)
+	exported, err = os.ReadFile(testTaskRuntimePath(store, parent, messageResult.OverflowFilePath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,11 +224,16 @@ func TestIssueProgressExportsSingleOversizedMessage(t *testing.T) {
 	if len(result.Messages) != 0 || !result.MessagesTruncated || result.OverflowFilePath == "" {
 		t.Fatalf("oversized message was not exported: %+v", result)
 	}
-	exported, err := os.ReadFile(result.OverflowFilePath)
+	exported, err := os.ReadFile(testTaskRuntimePath(store, parent, result.OverflowFilePath))
 	if err != nil || !strings.Contains(string(exported), content[:100]) {
 		t.Fatalf("oversized message export is missing: err=%v", err)
 	}
 	if _, err = manager.GetIssueProgress(sourceExecution.ID, "secret", GetIssueProgressInput{SessionID: targetExecution.ID, Mode: "invalid"}); err == nil {
 		t.Fatal("expected invalid mode to be rejected")
 	}
+}
+
+func testTaskRuntimePath(store *Store, issue Issue, modelPath string) string {
+	relative := strings.TrimPrefix(filepath.ToSlash(modelPath), TaskWorkspacePath+"/")
+	return filepath.Join(store.DataDir(), "test-task-runtime", issue.ID, filepath.FromSlash(relative))
 }

@@ -1,8 +1,6 @@
 package control
 
 import (
-	"archive/tar"
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,6 +15,7 @@ func installFakeDocker(t *testing.T) (string, string) {
 	dockerPath := filepath.Join(fakeBin, "docker")
 	logPath := filepath.Join(t.TempDir(), "docker.log")
 	statePath := filepath.Join(t.TempDir(), "state")
+	volumeStatePath := filepath.Join(t.TempDir(), "volume-state")
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 case "$1" in
@@ -37,9 +36,18 @@ case "$1" in
     command rm -f "$FAKE_DOCKER_STATE"
     ;;
   volume)
+    case "$2" in
+      inspect) if [ ! -f "$FAKE_DOCKER_VOLUME_STATE" ]; then exit 1; fi ;;
+      create) printf 'created\n' > "$FAKE_DOCKER_VOLUME_STATE" ;;
+    esac
     ;;
   cp)
     if [ -n "$FAKE_DOCKER_TAR" ]; then command cat "$FAKE_DOCKER_TAR"; fi
+    ;;
+  exec)
+    case "$5" in
+      'test -f '* ) exit 1 ;;
+    esac
     ;;
 esac
 `
@@ -49,87 +57,103 @@ esac
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_DOCKER_LOG", logPath)
 	t.Setenv("FAKE_DOCKER_STATE", statePath)
+	t.Setenv("FAKE_DOCKER_VOLUME_STATE", volumeStatePath)
 	return logPath, statePath
 }
 
-func TestContainerWorkspaceIsListedDirectlyFromDockerArchive(t *testing.T) {
-	_, statePath := installFakeDocker(t)
-	if err := os.WriteFile(statePath, []byte("exited\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var archive bytes.Buffer
-	writer := tar.NewWriter(&archive)
-	now := time.Now().Truncate(time.Second)
-	for _, header := range []*tar.Header{
-		{Name: "./nested/", Typeflag: tar.TypeDir, Mode: 0o700, ModTime: now},
-		{Name: "./nested/report.txt", Typeflag: tar.TypeReg, Mode: 0o600, Size: 6, ModTime: now},
-	} {
-		if err := writer.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
-		if header.Typeflag == tar.TypeReg {
-			if _, err := writer.Write([]byte("report")); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	archivePath := filepath.Join(t.TempDir(), "workspace.tar")
-	if err := os.WriteFile(archivePath, archive.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("FAKE_DOCKER_TAR", archivePath)
-	workspace, err := containerTaskWorkspace(ContainerInstance{
-		Name: "aegis-task-workspace", WorkspacePath: "/workspace", RuntimeStatus: "exited",
+func TestManagerCreatesPrivateTaskVolumeAtPublication(t *testing.T) {
+	logPath, _ := installFakeDocker(t)
+	store := configuredStore(t)
+	// The test provider normally skips Docker allocation. Use a product-like
+	// provider only for this Manager publication boundary; no model is called.
+	store.mu.Lock()
+	store.config.Provider = "openai-compatible"
+	store.mu.Unlock()
+	requestedWorkspace := t.TempDir()
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	task, issue, err := manager.CreateTask(CreateIssueInput{
+		Title: "private volume task", Objective: "write " + requestedWorkspace + "/report.md",
+		Priority: "medium", WorkMode: "autonomous", Workspace: requestedWorkspace,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if workspace.Root != "/workspace" || len(workspace.Entries) != 2 {
-		t.Fatalf("unexpected container workspace: %+v", workspace)
+	if task.Workspace != TaskWorkspacePath || issue.Workspace != TaskWorkspacePath || strings.Contains(issue.Objective, requestedWorkspace) || !strings.Contains(issue.Objective, TaskWorkspacePath+"/report.md") {
+		t.Fatalf("task=%+v issue=%+v", task, issue)
 	}
-	if workspace.Entries[0].Path != "nested" || workspace.Entries[0].Kind != "directory" || workspace.Entries[1].Path != "nested/report.txt" || workspace.Entries[1].Size != 6 {
-		t.Fatalf("unexpected container workspace entries: %+v", workspace.Entries)
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(data)
+	wantVolume := taskContainerVolumeName(task.ContainerID)
+	if !strings.Contains(logText, "volume create") || !strings.Contains(logText, wantVolume) {
+		t.Fatalf("Task publication did not allocate named volume %q:\n%s", wantVolume, logText)
+	}
+	if strings.Contains(logText, "run --detach") {
+		t.Fatalf("Task publication should allocate the workspace without starting the container:\n%s", logText)
 	}
 }
 
-func TestContainerWorkspaceHidesAegisRuntimeFiles(t *testing.T) {
-	_, statePath := installFakeDocker(t)
-	if err := os.WriteFile(statePath, []byte("running\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var archive bytes.Buffer
-	writer := tar.NewWriter(&archive)
-	for _, header := range []*tar.Header{
-		{Name: "./.aegis/", Typeflag: tar.TypeDir, Mode: 0o700},
-		{Name: "./.aegis/issues/issue-1/", Typeflag: tar.TypeDir, Mode: 0o700},
-		{Name: "./report.md", Typeflag: tar.TypeReg, Mode: 0o600, Size: 6},
-	} {
-		if err := writer.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
-		if header.Typeflag == tar.TypeReg {
-			_, _ = writer.Write([]byte("report"))
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	archivePath := filepath.Join(t.TempDir(), "workspace.tar")
-	if err := os.WriteFile(archivePath, archive.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("FAKE_DOCKER_TAR", archivePath)
-	workspace, err := containerTaskWorkspace(ContainerInstance{
-		Name: "aegis-task-clean", WorkspacePath: "/workspace", RuntimeStatus: "running",
-	})
+func TestWorkspaceIsolationMigrationRewritesLegacyHostPaths(t *testing.T) {
+	installFakeDocker(t)
+	store := configuredStore(t)
+	task, issue, err := store.CreateTask(CreateIssueInput{Title: "legacy task", Objective: "initial", Priority: "medium", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(workspace.Entries) != 1 || workspace.Entries[0].Path != "report.md" {
-		t.Fatalf("runtime files leaked into task workspace: %+v", workspace.Entries)
+	legacy := "/Users/example/aegis_workspace_3"
+	if err = store.db.Model(&Task{}).Where("id = ?", task.ID).Updates(map[string]any{"workspace": legacy, "objective": "clone into " + legacy + "/repo"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"workspace": legacy, "description": "inspect " + legacy + "/repo"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&ContainerProfile{}).Where("id = ?", task.ContainerProfileID).Update("workspace_path", "/work").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&ContainerInstance{}).Where("id = ?", task.ContainerID).Update("workspace_path", "/work").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = migrateTaskWorkspaceIsolation(store.db); err != nil {
+		t.Fatal(err)
+	}
+	task, _ = store.GetTask(task.ID)
+	issue, _ = store.GetIssue(issue.ID)
+	profile, _ := store.GetContainerProfile(task.ContainerProfileID)
+	container, _ := store.GetContainer(task.ContainerID)
+	if task.Workspace != TaskWorkspacePath || issue.Workspace != TaskWorkspacePath || profile.WorkspacePath != TaskWorkspacePath || container.WorkspacePath != TaskWorkspacePath {
+		t.Fatalf("migration did not normalize workspaces: task=%+v issue=%+v profile=%+v container=%+v", task, issue, profile, container)
+	}
+	if task.Objective != "clone into /workspace/repo" || issue.Description != "inspect /workspace/repo" {
+		t.Fatalf("migration retained legacy host paths: task=%q issue=%q", task.Objective, issue.Description)
+	}
+}
+
+func TestTaskWorkspaceDoesNotCopyOrBrowseContainerContents(t *testing.T) {
+	logPath, _ := installFakeDocker(t)
+	store := configuredStore(t)
+	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{Name: "private workspace", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err := store.CreateTask(CreateIssueInput{Title: "private task", Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := store.TaskWorkspace(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.Root != TaskWorkspacePath || len(workspace.Entries) != 0 {
+		t.Fatalf("container workspace contents were exposed: %+v", workspace)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "cp ") {
+		t.Fatalf("workspace endpoint copied container files:\n%s", data)
 	}
 }
 
@@ -221,6 +245,11 @@ func TestTaskCreationBindsPersistentContainerAndExecutionStartsIt(t *testing.T) 
 	}
 	if strings.Contains(string(logData), task.Workspace+":/workspace") {
 		t.Fatalf("task host workspace was mounted into the container:\n%s", logData)
+	}
+	for _, forbidden := range []string{"/aegis/sessions", "/aegis/runtime", "/aegis/skills"} {
+		if strings.Contains(string(logData), "--volume") && strings.Contains(string(logData), forbidden) {
+			t.Fatalf("container retained host bind mount %q:\n%s", forbidden, logData)
+		}
 	}
 	stopped, err := store.StopContainer(container.ID)
 	if err != nil {

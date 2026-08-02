@@ -3,15 +3,12 @@ import {
   Activity,
   Bot,
   Boxes,
-  BriefcaseBusiness,
-  Building2,
   CheckSquare2,
   ClipboardCheck,
   FileSearch,
   History,
   LibraryBig,
   ListTodo,
-  MessageCircleMore,
   MessagesSquare,
   Moon,
   Plus,
@@ -20,7 +17,6 @@ import {
   ShieldAlert,
   Sparkles,
   Sun,
-  UserRound,
   Wrench,
   type LucideIcon,
 } from "lucide-react"
@@ -75,14 +71,11 @@ const navigation: NavigationGroup[] = [
     ],
   },
   {
-    label: "团队与能力",
+    label: "Agent 与能力",
     items: [
-      { to: "/employees", label: "员工工作台", icon: UserRound },
-      { to: "/relay", label: "团队消息", icon: MessageCircleMore },
-      { to: "/agents", label: "员工管理", icon: Bot },
-      { to: "/departments", label: "组织架构", icon: Building2 },
-      { to: "/talent-library", label: "人才模板", icon: BriefcaseBusiness },
-      { to: "/skills", label: "技能", icon: Wrench },
+      { to: "/agents", label: "Agent 类型", icon: Bot },
+      { to: "/capabilities", label: "能力控制台", icon: Wrench },
+      { to: "/skills", label: "Skills", icon: Sparkles },
       { to: "/knowledge-bases", label: "知识库", icon: LibraryBig },
     ],
   },
@@ -143,8 +136,6 @@ export function AppShell() {
   )
   const workspaceRoute =
     location.pathname.startsWith("/workspace") ||
-    location.pathname.startsWith("/employees") ||
-    location.pathname.startsWith("/relay") ||
     /^\/issues\/[^/]+$/.test(location.pathname)
 
   return (

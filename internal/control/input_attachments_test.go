@@ -2,11 +2,13 @@ package control
 
 import (
 	"os"
+	"path"
 	"strings"
 	"testing"
 )
 
 func TestTaskInputAttachmentIsBoundAndMaterializedBeforeExecution(t *testing.T) {
+	dockerLog, _ := installFakeDocker(t)
 	store := configuredStore(t)
 	content := "large audit image placeholder"
 	attachment, err := store.StageInputAttachment("task", "", "target-image.tar", "application/x-tar", strings.NewReader(content))
@@ -15,7 +17,7 @@ func TestTaskInputAttachmentIsBoundAndMaterializedBeforeExecution(t *testing.T) 
 	}
 	task, issue, err := store.CreateTask(CreateIssueInput{
 		Title: "Audit uploaded image", Objective: "Report verified findings.", Priority: "high",
-		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer-002",
+		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 		AttachmentIDs: []string{attachment.ID}, Workspace: store.Config().Workspace,
 	})
 	if err != nil {
@@ -32,19 +34,27 @@ func TestTaskInputAttachmentIsBoundAndMaterializedBeforeExecution(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeAttachments, err := store.materializeInputAttachments(issue, execution, nil)
+	container, err := store.GetContainer(issue.ContainerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeAttachments, err := store.materializeInputAttachments(issue, execution, &container)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(runtimeAttachments) != 1 || runtimeAttachments[0].ID != attachment.ID {
 		t.Fatalf("unexpected runtime attachments: %+v", runtimeAttachments)
 	}
-	data, err := os.ReadFile(runtimeAttachments[0].Path)
+	wantPath := path.Join(TaskWorkspacePath, ".aegis", "input-attachments", attachment.ID, attachment.Name)
+	if runtimeAttachments[0].Path != wantPath {
+		t.Fatalf("materialized path = %q, want %q", runtimeAttachments[0].Path, wantPath)
+	}
+	data, err := os.ReadFile(dockerLog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != content {
-		t.Fatalf("materialized content = %q", data)
+	if !strings.Contains(string(data), "cp "+attachment.StoragePath+" "+container.Name+":"+wantPath) {
+		t.Fatalf("input attachment was not copied directly into the task container:\n%s", data)
 	}
 	prompt := agentInputAttachmentsSystemPrompt("base", runtimeAttachments)
 	if !strings.Contains(prompt, runtimeAttachments[0].Path) || !strings.Contains(prompt, "target-image.tar") {
@@ -55,67 +65,18 @@ func TestTaskInputAttachmentIsBoundAndMaterializedBeforeExecution(t *testing.T) 
 	// input remains discoverable and does not need another browser upload.
 	restarted, err := store.CreateIssue(CreateIssueInput{
 		Title: task.Title, Objective: task.Objective, Priority: task.Priority,
-		WorkMode: task.WorkMode, TaskSourceID: task.ID, Workspace: task.Workspace,
+		WorkMode: task.WorkMode, TaskSourceID: task.ID, Workspace: task.Workspace, AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	restartExecution, err := store.createExecution(restarted, "backend-engineer-003", "work")
+	restartExecution, err := store.createExecution(restarted, "backend-engineer", "work")
 	if err != nil {
 		t.Fatal(err)
 	}
 	reused, err := store.inputAttachmentsForExecution(restarted, restartExecution)
 	if err != nil || len(reused) != 1 || reused[0].ID != attachment.ID {
 		t.Fatalf("restarted task did not inherit its input attachment: attachments=%+v err=%v", reused, err)
-	}
-}
-
-func TestEmployeeInputAttachmentCanMoveToFirstBoardIssue(t *testing.T) {
-	store := configuredStore(t)
-	agent, err := store.executionAgent("aegis-orchestrator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	homeSession, err := store.ensureEmployeeWorkspace(agent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	home, err := store.GetIssue(homeSession.HomeIssueID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	attachment, err := store.StageInputAttachment("employee", agent.ID, "audit.oci.tar", "application/x-tar", strings.NewReader("oci image"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	execution, err := store.createExecution(home, agent.ID, "employee_chat")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = store.BindEmployeeInputAttachments(agent.ID, home.ID, execution.ID, []string{attachment.ID}); err != nil {
-		t.Fatal(err)
-	}
-	ids := store.InputAttachmentIDsForExecution(execution.ID)
-	if len(ids) != 1 || ids[0] != attachment.ID {
-		t.Fatalf("unexpected employee attachment ids: %v", ids)
-	}
-	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Team image audit", Objective: "Audit the supplied image.", Priority: "high",
-		WorkMode: "autonomous", AttachmentIDs: ids,
-		AttachmentSourceExecutionID: execution.ID, Workspace: store.Config().Workspace,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var moved InputAttachment
-	if err = store.db.First(&moved, "id = ?", attachment.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if moved.IssueID != issue.ID || moved.ExecutionID != execution.ID {
-		t.Fatalf("employee attachment was not handed to Board Issue: %+v", moved)
-	}
-	if remaining := store.InputAttachmentIDsForExecution(execution.ID); len(remaining) != 0 {
-		t.Fatalf("the same attachment could be rebound by a second Board create: %v", remaining)
 	}
 }
 

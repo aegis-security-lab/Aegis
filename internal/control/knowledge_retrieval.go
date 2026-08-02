@@ -1,18 +1,19 @@
 package control
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os/exec"
+	"os"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	openai "aegis/provider/openai"
+	"github.com/z3r2ne/agentcore"
 )
 
 const (
@@ -237,16 +238,13 @@ func (r *KeywordAIRetriever) Retrieve(ctx context.Context, request KnowledgeRetr
 	return KnowledgeSearchResult{Provider: KnowledgeProviderKeywordAI, Query: request.Query, Summary: strings.TrimSpace(ranked.Summary), Hits: hits}, nil
 }
 
-type PiKnowledgeRanker struct {
-	store     *Store
-	guardPath string
+type AgentCoreKnowledgeRanker struct{ store *Store }
+
+func NewAgentCoreKnowledgeRanker(store *Store) *AgentCoreKnowledgeRanker {
+	return &AgentCoreKnowledgeRanker{store: store}
 }
 
-func NewPiKnowledgeRanker(store *Store, guardPath string) *PiKnowledgeRanker {
-	return &PiKnowledgeRanker{store: store, guardPath: guardPath}
-}
-
-func (r *PiKnowledgeRanker) Rank(ctx context.Context, query string, candidates []KnowledgeCandidate, limit int) (KnowledgeRankResult, error) {
+func (r *AgentCoreKnowledgeRanker) Rank(ctx context.Context, query string, candidates []KnowledgeCandidate, limit int) (KnowledgeRankResult, error) {
 	if len(candidates) == 0 {
 		return KnowledgeRankResult{Summary: "没有可检索的候选文档。", Results: []KnowledgeRankedDocument{}}, nil
 	}
@@ -260,61 +258,26 @@ func (r *PiKnowledgeRanker) Rank(ctx context.Context, query string, candidates [
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	args := []string{"--mode", "rpc", "--no-session", "--no-tools", "--no-extensions", "--extension", r.guardPath, "--no-approve", "--no-skills", "--provider", cfg.Provider, "--model", cfg.Model, "--thinking", cfg.Thinking, "--system-prompt", agent.SystemPrompt}
-	command, commandArgs := piCommand(cfg, args...)
-	cmd := exec.CommandContext(ctx, command, commandArgs...)
-	cmd.Env = append(runtimeEnv(cfg, "none", agent.Permissions, ""), "AEGIS_RETRIEVAL_MODE=1")
-	stdin, err := cmd.StdinPipe()
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	if cfg.AuthMode == "environment" {
+		apiKey = strings.TrimSpace(os.Getenv(providerEnv(cfg.Provider)))
+	}
+	model, err := openai.NewModel(openai.Config{BaseURL: cfg.BaseURL, APIKey: apiKey}, cfg.Model)
 	if err != nil {
 		return KnowledgeRankResult{}, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	core, err := agentcore.New(agentcore.Config{Model: model, SystemPrompt: agent.SystemPrompt, MaxTurns: 1})
 	if err != nil {
 		return KnowledgeRankResult{}, err
 	}
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
+	result, err := core.Prompt(ctx, agentcore.State{}, []agentcore.Message{agentcore.TextMessage(agentcore.RoleUser, knowledgeRankingPrompt(query, candidates, limit))}, nil)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return KnowledgeRankResult{}, errors.New("检索模型响应超时")
+		}
 		return KnowledgeRankResult{}, err
 	}
-	defer func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		_ = cmd.Wait()
-	}()
-	prompt := knowledgeRankingPrompt(query, candidates, limit)
-	data, _ := json.Marshal(map[string]any{"id": nextID("knowledge-rpc"), "type": "prompt", "message": prompt})
-	if _, err := stdin.Write(append(data, '\n')); err != nil {
-		return KnowledgeRankResult{}, err
-	}
-	reader := bufio.NewReader(stdout)
-	var reply strings.Builder
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return KnowledgeRankResult{}, errors.New("检索模型响应超时")
-			}
-			if errors.Is(err, io.EOF) {
-				return KnowledgeRankResult{}, fmt.Errorf("Pi 提前退出: %s", strings.TrimSpace(stderr.String()))
-			}
-			return KnowledgeRankResult{}, err
-		}
-		var event map[string]any
-		if json.Unmarshal(line, &event) != nil {
-			continue
-		}
-		if event["type"] == "message_update" {
-			if delta, ok := event["assistantMessageEvent"].(map[string]any); ok && delta["type"] == "text_delta" {
-				reply.WriteString(stringValue(delta["delta"]))
-			}
-		}
-		if event["type"] == "agent_settled" {
-			return parseKnowledgeRankResult(reply.String())
-		}
-	}
+	return parseKnowledgeRankResult(lastAssistantText(result.State.Messages))
 }
 
 func knowledgeRankingPrompt(query string, candidates []KnowledgeCandidate, limit int) string {

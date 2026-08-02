@@ -19,6 +19,12 @@ func (w *trackedWriteCloser) Close() error {
 
 var _ io.WriteCloser = (*trackedWriteCloser)(nil)
 
+type trackedNativeAborter struct{ issueIDs []string }
+
+func (a *trackedNativeAborter) AbortIssue(issueID string) {
+	a.issueIDs = append(a.issueIDs, issueID)
+}
+
 func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	store := configuredStore(t)
 	task, err := store.CreateIssue(CreateIssueInput{Title: "Task", Objective: "Complete the task tree.", Priority: "high", WorkMode: "autonomous"})
@@ -33,7 +39,7 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doneChild, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Already done", Objective: "Remain complete.", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer-002"})
+	doneChild, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Already done", Objective: "Remain complete.", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +59,7 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completedExecution, err := store.createExecution(doneChild, "backend-engineer-002", "work")
+	completedExecution, err := store.createExecution(doneChild, "backend-engineer", "work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +87,8 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 		issueID: child.ID, agentID: "backend-engineer", kind: "work", stdin: stdin, cmd: &exec.Cmd{},
 	}
 	manager.sessions[activeExecution.ID] = session
+	nativeAborter := &trackedNativeAborter{}
+	manager.nativeSessions = nativeAborter
 
 	result, err := manager.CancelTask(task.ID, "operator cancelled")
 	if err != nil {
@@ -91,6 +99,9 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	}
 	if !session.closed.Load() || !stdin.closed {
 		t.Fatal("active Pi session was not closed")
+	}
+	if len(nativeAborter.issueIDs) != 4 {
+		t.Fatalf("native AgentCore sessions were not aborted for the whole task tree: %v", nativeAborter.issueIDs)
 	}
 
 	for _, id := range []string{task.ID, child.ID, grandchild.ID} {

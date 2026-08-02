@@ -1,7 +1,5 @@
 import type {
   AgentDefinition,
-  AgentTemplate,
-  AgentTemplateMetadata,
   AppState,
   Approval,
   ConciergeConversation,
@@ -13,6 +11,8 @@ import type {
   ContainerDeleteResult,
   ContainerProfileDeleteImpact,
   ContainerProfileDeleteResult,
+  CapabilityDescriptor,
+  CoordinationBinding,
   CreateIssueInput,
   CursorPage,
   Execution,
@@ -20,8 +20,6 @@ import type {
   FindingList,
   ExecutionEvent,
   ExecutionProgress,
-  EmployeeWorkspace,
-  EmployeeActivity,
   Issue,
   IssueComment,
   IssueDetail,
@@ -30,10 +28,6 @@ import type {
   KnowledgeBaseDetail,
   KnowledgeDocument,
   Message,
-  RuntimeProbe,
-  RelayConversation,
-  RelayMessage,
-  RelayThreadSummary,
   SaveConfigInput,
   SaveUncoverProviderInput,
   SessionDetail,
@@ -44,8 +38,7 @@ import type {
   ToolInterruptResult,
   TaskTimeline,
   TaskWorkspace,
-  Department,
-  Position,
+  TaskPhone,
   UncoverEngine,
   UncoverSearchInput,
   UncoverSearchResult,
@@ -62,14 +55,6 @@ export type SaveAgentInput = Omit<
   AgentDefinition,
   "builtin" | "createdAt" | "updatedAt"
 >
-export type SavePositionInput = Omit<Position, "id" | "createdAt" | "updatedAt">
-export interface SaveAgentTemplateInput {
-  provider: string
-  model: string
-  systemPrompt: string
-  note: string
-  metadata: AgentTemplateMetadata
-}
 export type SaveSkillInput = Omit<
   SkillDefinition,
   "builtin" | "createdAt" | "updatedAt"
@@ -169,11 +154,6 @@ export const sendConciergeMessage = (id: string, message: string) =>
     `/api/concierge/conversations/${encodeURIComponent(id)}/messages`,
     { method: "POST", body: JSON.stringify({ message }) }
   )
-export const probeRuntime = (nodePath: string, piPath: string) =>
-  request<RuntimeProbe>("/api/setup/probe", {
-    method: "POST",
-    body: JSON.stringify({ nodePath, piPath }),
-  })
 export const testConnection = (input: SaveConfigInput) =>
   request<ConnectionTestResult>("/api/setup/test", {
     method: "POST",
@@ -204,25 +184,6 @@ export const saveWebSearch = (config: WebSearchConfig) =>
   })
 export const fetchIssue = (id: string) =>
   request<IssueDetail>(`/api/issues/${encodeURIComponent(id)}`)
-export const fetchEmployeeWorkspace = (id: string, taskId = "") =>
-  request<EmployeeWorkspace>(
-    `/api/employees/${encodeURIComponent(id)}/workspace${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`
-  )
-export const fetchEmployeeActivity = (id: string, after: string) =>
-  request<EmployeeActivity>(
-    `/api/employees/${encodeURIComponent(id)}/activity?after=${encodeURIComponent(after)}`
-  )
-export const sendEmployeeMessage = (
-  id: string,
-  message: string,
-  attachmentIds: string[] = [],
-  taskId = ""
-) =>
-  request<Message>(`/api/employees/${encodeURIComponent(id)}/messages`, {
-    method: "POST",
-    body: JSON.stringify({ message, attachmentIds, taskId }),
-  })
-
 function uploadInputAttachment(
   path: string,
   file: File,
@@ -269,42 +230,10 @@ export const uploadTaskAttachment = (
   onProgress?: (progress: number) => void
 ) => uploadInputAttachment("/api/tasks/attachments", file, onProgress)
 
-export const uploadEmployeeAttachment = (
-  employeeId: string,
-  file: File,
-  onProgress?: (progress: number) => void
-) =>
-  uploadInputAttachment(
-    `/api/employees/${encodeURIComponent(employeeId)}/attachments`,
-    file,
-    onProgress
-  )
-
 export const deleteInputAttachment = (id: string) =>
   request<void>(`/api/input-attachments/${encodeURIComponent(id)}`, {
     method: "DELETE",
   })
-export const fetchRelayInbox = (agentId: string) =>
-  request<{ threads: RelayThreadSummary[] }>(
-    `/api/relay/agents/${encodeURIComponent(agentId)}/inbox`
-  )
-export const fetchRelayConversation = (agentId: string, threadId: string) =>
-  request<RelayConversation>(
-    `/api/relay/agents/${encodeURIComponent(agentId)}/threads/${encodeURIComponent(threadId)}`
-  )
-export const sendRelayMessage = (
-  senderId: string,
-  recipientId: string,
-  body: string,
-  issueId = ""
-) =>
-  request<RelayMessage>(
-    `/api/relay/agents/${encodeURIComponent(senderId)}/messages`,
-    {
-      method: "POST",
-      body: JSON.stringify({ recipientId, body, issueId }),
-    }
-  )
 const pageQuery = (before?: string, limit = 50) => {
   const query = new URLSearchParams({ limit: String(limit) })
   if (before) query.set("before", before)
@@ -364,6 +293,26 @@ export const updateTaskBudget = (id: string, timeBudgetMinutes: number) =>
   })
 export const fetchTaskWorkspace = (id: string) =>
   request<TaskWorkspace>(`/api/tasks/${encodeURIComponent(id)}/workspace`)
+export const fetchTaskPhones = (id: string) =>
+  request<{ phones: TaskPhone[] }>(
+    `/api/tasks/${encodeURIComponent(id)}/phones`
+  )
+
+export const fetchTaskAgents = (id: string) =>
+  request<{ agents: import("@/types").TaskAgent[] }>(
+    `/api/tasks/${encodeURIComponent(id)}/agents`
+  )
+
+export const fetchAgentNames = () =>
+  request<{ names: string[] }>("/api/agent-names")
+export const fetchCapabilityCatalog = () =>
+  request<{ enabled: boolean; capabilities: CapabilityDescriptor[] }>(
+    "/api/coordination/capabilities"
+  )
+export const fetchCoordinationBinding = (issueId: string) =>
+  request<CoordinationBinding>(
+    `/api/issues/${encodeURIComponent(issueId)}/coordination`
+  )
 export const abandonIssue = (id: string, reason = "") =>
   request<Issue>(`/api/issues/${encodeURIComponent(id)}/abandon`, {
     method: "POST",
@@ -434,66 +383,6 @@ export const updateAgent = (id: string, input: SaveAgentInput) =>
   })
 export const deleteAgent = (id: string) =>
   request<void>(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" })
-export const fetchAgentTemplates = () =>
-  request<AgentTemplate[]>("/api/agent-templates")
-export const fetchDepartments = () => request<Department[]>("/api/departments")
-export const fetchPositions = () => request<Position[]>("/api/positions")
-export const createPosition = (input: SavePositionInput) =>
-  request<Position>("/api/positions", {
-    method: "POST",
-    body: JSON.stringify(input),
-  })
-export const updatePosition = (id: string, input: SavePositionInput) =>
-  request<Position>(`/api/positions/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(input),
-  })
-export const deletePosition = (id: string) =>
-  request<void>(`/api/positions/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  })
-export const hireEmployee = (
-  positionId: string,
-  input: { name: string; englishName: string; managerAgentId: string }
-) =>
-  request<AgentDefinition>(
-    `/api/positions/${encodeURIComponent(positionId)}/employees`,
-    { method: "POST", body: JSON.stringify(input) }
-  )
-export const createDepartment = (
-  input: Omit<Department, "id" | "createdAt" | "updatedAt">
-) =>
-  request<Department>("/api/departments", {
-    method: "POST",
-    body: JSON.stringify(input),
-  })
-export const updateDepartment = (
-  id: string,
-  input: Omit<Department, "id" | "createdAt" | "updatedAt">
-) =>
-  request<Department>(`/api/departments/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(input),
-  })
-export const deleteDepartment = (id: string) =>
-  request<void>(`/api/departments/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  })
-export const createAgentTemplate = (input: SaveAgentTemplateInput) =>
-  request<AgentTemplate>("/api/agent-templates", {
-    method: "POST",
-    body: JSON.stringify(input),
-  })
-export const setAgentTemplateHidden = (id: string, hidden: boolean) =>
-  request<AgentTemplate>(
-    `/api/agent-templates/${encodeURIComponent(id)}/hidden`,
-    { method: "PATCH", body: JSON.stringify({ hidden }) }
-  )
-export const updateAgentTemplateNote = (id: string, note: string) =>
-  request<AgentTemplate>(
-    `/api/agent-templates/${encodeURIComponent(id)}/note`,
-    { method: "PATCH", body: JSON.stringify({ note }) }
-  )
 export const fetchKnowledgeBase = (id: string) =>
   request<KnowledgeBaseDetail>(`/api/knowledge-bases/${encodeURIComponent(id)}`)
 export const createKnowledgeBase = (input: SaveKnowledgeBaseInput) =>

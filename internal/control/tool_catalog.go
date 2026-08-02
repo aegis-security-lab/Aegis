@@ -14,7 +14,7 @@ func snapshotTools(names []string) []ToolSnapshot {
 				{Name: "description", Type: "string", Description: "用一句简短的话说明本次调用工具的目的和预期获得的结果。", Required: true},
 				{Name: "timeout", Type: "number", Description: "本次调用的超时限制，单位秒；默认 60 秒，需要更长时间时可显式指定。", Required: false},
 			},
-			Description: "该工具由 Pi 运行时或扩展提供，但 Aegis 没有可序列化的定义元数据。",
+			Description: "该工具由 AgentCore capability 提供，但 Aegis 没有可序列化的定义元数据。",
 		})
 	}
 	return result
@@ -58,7 +58,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 		"read": {
-			Name: "read", Label: "Read", Source: "pi_builtin",
+			Name: "read", Label: "Read", Source: "agentcore_builtin",
 			Description: "读取文本文件或受支持的图片。文本可按行偏移和数量分段读取；图片会作为多模态附件返回给模型。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("path", "string", "要读取的文件路径，可以是相对路径或绝对路径。", true),
@@ -67,7 +67,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 		"write": {
-			Name: "write", Label: "Write", Source: "pi_builtin",
+			Name: "write", Label: "Write", Source: "agentcore_builtin",
 			Description: "把完整内容写入文件。文件不存在时创建，存在时覆盖，并自动创建父目录。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("path", "string", "要写入的文件路径，可以是相对路径或绝对路径。", true),
@@ -75,7 +75,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 		"edit": {
-			Name: "edit", Label: "Edit", Source: "pi_builtin",
+			Name: "edit", Label: "Edit", Source: "agentcore_builtin",
 			Description: "使用精确文本替换编辑单个文件。每个 oldText 必须在原文件中唯一匹配，多个替换按原始内容并行定位。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("path", "string", "要编辑的文件路径，可以是相对路径或绝对路径。", true),
@@ -90,7 +90,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 		"bash": {
-			Name: "bash", Label: "Bash", Source: "pi_builtin",
+			Name: "bash", Label: "Bash", Source: "agentcore_builtin",
 			Description: "在当前 Issue 工作目录中执行 Bash 命令并返回标准输出和标准错误；可配置超时时间。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("command", "string", "需要执行的 Bash 命令。", true),
@@ -98,7 +98,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 		"grep": {
-			Name: "grep", Label: "Grep", Source: "pi_builtin",
+			Name: "grep", Label: "Grep", Source: "agentcore_builtin",
 			Description: "搜索文件内容并返回匹配行、文件路径与行号，遵循 .gitignore。支持正则、字面量、文件 Glob 和上下文行。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("pattern", "string", "正则表达式或字面量搜索内容。", true),
@@ -111,7 +111,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 		"find": {
-			Name: "find", Label: "Find", Source: "pi_builtin",
+			Name: "find", Label: "Find", Source: "agentcore_builtin",
 			Description: "按 Glob 搜索文件，返回相对于搜索目录的匹配路径并遵循 .gitignore。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("pattern", "string", "文件匹配 Glob，例如 '*.ts'、'**/*.json'。", true),
@@ -120,7 +120,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 		"ls": {
-			Name: "ls", Label: "List directory", Source: "pi_builtin",
+			Name: "ls", Label: "List directory", Source: "agentcore_builtin",
 			Description: "按字母顺序列出目录内容，包含隐藏文件，并为目录添加 '/' 后缀。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("path", "string", "需要列出的目录；默认当前目录。", false),
@@ -187,6 +187,11 @@ func toolCatalog() map[string]ToolSnapshot {
 			Name: "aegis_submit_final_result", Label: "Submit final result", Source: "aegis_extension",
 			Description: "提交针对当前 Issue 目标的独立最终交付正文，可选文件或目录会由工具直传服务端；目录会在当前运行环境打包为 ZIP。只有提交后 Worker 才能结束并进入后续验收。",
 			Parameters:  []ToolParameterSnapshot{parameter("body", "string", "针对目标的最终结果正文，最多 50000 个字符。", true), parameter("path", "string", "可选的容器内文件或目录路径。", false), parameter("name", "string", "可选附件名称。", false), parameter("attachmentDescription", "string", "可选附件说明。", false)},
+		},
+		"aegis_submit_budget_summary": {
+			Name: "aegis_submit_budget_summary", Label: "Submit budget summary", Source: "aegis_extension",
+			Description: "仅在单次 Execution 已进入预算总结阶段后提交结构化部分成果并结束当前循环；不会把 Issue 标记为正常完成。",
+			Parameters:  []ToolParameterSnapshot{parameter("body", "string", "本次已完成工作、证据、未完成项、风险、可复用产物和后续建议，最多 50000 个字符。", true)},
 		},
 		"aegis_report_progress": {
 			Name: "aegis_report_progress", Label: "Report work progress", Source: "aegis_extension",

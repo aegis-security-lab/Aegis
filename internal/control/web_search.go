@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"aegis/observability"
 )
 
 type tavilySearchResponse struct {
@@ -47,11 +50,20 @@ func normalizeWebSearchInput(input WebSearchInput) (WebSearchInput, error) {
 	return input, nil
 }
 
-func executeWebSearch(ctx context.Context, config WebSearchConfig, input WebSearchInput) (WebSearchResult, error) {
-	input, err := normalizeWebSearchInput(input)
+func executeWebSearch(ctx context.Context, config WebSearchConfig, input WebSearchInput) (result WebSearchResult, err error) {
+	input, err = normalizeWebSearchInput(input)
 	if err != nil {
 		return WebSearchResult{}, err
 	}
+	ctx, span := (&observability.Tracer{Logger: observability.Default(), Metrics: observability.DefaultMetrics()}).Start(ctx, "web.search", slog.String("engine", config.Engine), slog.String("topic", input.Topic), slog.String("depth", input.SearchDepth), slog.Int("max_results", input.MaxResults))
+	defer func() {
+		span.End(err, slog.Int("result_count", len(result.Results)), slog.Float64("provider_response_seconds", result.ResponseTime))
+		status := "ok"
+		if err != nil {
+			status = "error"
+		}
+		observability.DefaultMetrics().AddCounter("web_search_requests_total", 1, observability.Labels{"engine": config.Engine, "status": status})
+	}()
 	if strings.TrimSpace(config.Engine) != "tavily" {
 		return WebSearchResult{}, errors.New("当前仅支持 Tavily 搜索引擎")
 	}
@@ -127,6 +139,9 @@ func (s *Store) SaveWebSearchConfig(input WebSearchConfig) (WebSearchConfigView,
 	input.Enabled = true
 	now := time.Now()
 	s.config.WebSearch = input
+	if system := s.Observability(); system != nil && system.Redactor != nil {
+		system.Redactor.RegisterSecret(input.APIKey)
+	}
 	s.config.UpdatedAt = now
 	if err := s.db.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
 		return WebSearchConfigView{}, err

@@ -268,7 +268,7 @@ const createSubissuesTool = defineTool({
   label: "Create child Issues",
   description: `Atomically decompose the current Issue into durable child Issues (hard limit ${configuredMaxChildren}; the live configured limit is enforced by Aegis). A successful call from a comment-awakened Session automatically reopens a completed Issue. Use this when the work is too broad or contains independently verifiable parts. After the tool succeeds, stop working and end the turn so Aegis can schedule the children.`,
   promptSnippet:
-    "Create durable child Issues and hand control back to the Aegis scheduler",
+    "Create durable child Issues and hand control back to Aegis Coordination",
   promptGuidelines: [
     "Use aegis_create_subissues for genuinely broad or parallel work; never emulate delegation in prose.",
     "When a new operator comment adds substantial work to a completed Issue, call aegis_create_subissues to reopen it and schedule the new child tree.",
@@ -304,7 +304,7 @@ const createSubissuesTool = defineTool({
         ]),
         agentId: Type.String({
           description:
-            "Exact employeeId for one available person; never a positionId. Leave empty only for top-level scheduler routing",
+            "Exact employeeId for one available person; never a positionId. Leave empty only for top-level Coordination routing",
         }),
       }),
       { minItems: 2, maxItems: configuredMaxChildren }
@@ -356,11 +356,11 @@ const listChildIssuesTool = defineTool({
   name: "aegis_list_child_issues",
   label: "List direct child Issues",
   description:
-    "Read all direct child Issues of the current Issue in durable scheduler order, including their current status, assigned Agent, objective, result, error, and—by default—all comments. Use this when resuming a parent, reassessing completion coverage, checking a newly dispatched wave, or before deciding that the parent is complete. This is read-only and never exposes unrelated Issues or deeper descendants.",
+    "Read all direct child Issues of the current Issue in durable Coordination order, including their current status, assigned Agent, objective, result, error, and—by default—all comments. Use this when resuming a parent, reassessing completion coverage, checking a newly dispatched wave, or before deciding that the parent is complete. This is read-only and never exposes unrelated Issues or deeper descendants.",
   promptSnippet:
     "Review the current Issue's complete direct-child list and latest results",
   promptGuidelines: [
-    "Call this after child work completes or whenever the parent must reassess coverage using the latest scheduler state.",
+    "Call this after child work completes or whenever the parent must reassess coverage using the latest Coordination state.",
     "Use the returned status, objective, result, and error to identify missing coverage, insufficient detail, failed work, or a need for another bounded child wave.",
     "The tool returns direct children only. A child Agent is responsible for integrating its own descendants into its result.",
   ],
@@ -427,7 +427,7 @@ const listChildIssuesTool = defineTool({
           text:
             children.length === 0
               ? "The current Issue has no direct child Issues."
-              : `Direct child Issues (${children.length}, scheduler order):\n\n${children
+              : `Direct child Issues (${children.length}, Coordination order):\n\n${children
                   .map(
                     (child) =>
                       `## ${child.identifier} [${child.status}] ${child.title}\n- id: ${child.id}\n- executionPhase: ${child.executionPhase}\n- priority: ${child.priority}\n- agent: ${child.assigneeAgentId || "unassigned"}\n- objective: ${child.objective || "not specified"}\n- description: ${child.description || "not specified"}\n- result: ${child.result || "not recorded"}\n- error: ${child.error || "none"}\n- updatedAt: ${child.updatedAt}${params.includeComments === false ? "" : `\n\n### Comments (${child.comments?.length ?? 0})\n${(child.comments ?? []).length === 0 ? "No comments." : (child.comments ?? []).map((comment) => `- ${comment.createdAt} · ${comment.authorType}:${comment.authorId}\n  ${comment.body}${(comment.attachments ?? []).length > 0 ? `\n  Attachments: ${(comment.attachments ?? []).map((attachment) => `${attachment.name} (${attachment.mimeType})`).join(", ")}` : ""}`).join("\n")}`}`
@@ -453,7 +453,7 @@ const waitForChildIssuesTool = defineTool({
     "To await exact comment responses, set waitForAll=false and pass wakeupIds returned by the Board comment operation.",
     "Choose exactly one of waitForAll=true, childIssueIds, or wakeupIds. Do not use this merely to poll status.",
     "Estimate a realistic completion/check interval and pass it as estimatedWaitMinutes.",
-    "After a successful call, end the turn immediately. Continuing implementation would race with the durable wait and continuation scheduler.",
+    "After a successful call, end the turn immediately. Continuing implementation would race with the durable wait and Coordination continuation.",
   ],
   parameters: Type.Object({
     waitForAll: Type.Optional(
@@ -666,14 +666,14 @@ const createTaskTool = defineTool({
   name: "aegis_create_task",
   label: "Create Aegis task",
   description:
-    "Create one real top-level Aegis Task from the current concierge conversation and hand it to the scheduler. Use only when the user clearly asks Aegis to execute work; never use it for questions, discussion, or ambiguous wishes.",
+    "Create one real top-level Aegis Task from the current concierge conversation and hand it to Coordination. Use only when the user clearly asks Aegis to execute work; never use it for questions, discussion, or ambiguous wishes.",
   promptSnippet:
     "Create a real scheduled Aegis Task for an explicit user request",
   promptGuidelines: [
     "Ask a concise clarification before calling when a missing decision would materially change the requested work.",
     "Derive a concrete, verifiable objective from the requested outcome and deliverables whenever reasonably possible. Use an empty objective only when no meaningful acceptance target can be inferred; Aegis will then skip acceptance validation.",
     "Set a concise execution boundary covering authorized scope or targets, workspace restrictions, prohibited destructive actions, and required verification. Never broaden authorization beyond the operator's request.",
-    "Compare the request with the current system-provided Agent roster. Use the exact agentId when one enabled Agent is clearly appropriate; otherwise leave it empty for the scheduler.",
+    "Compare the request with the current system-provided Agent roster. Use the exact agentId when one enabled Agent is clearly appropriate; otherwise leave it empty for Coordination routing.",
     "Never claim creation succeeded unless this tool returns a Task identifier.",
   ],
   parameters: Type.Object({
@@ -751,7 +751,7 @@ const createTaskTool = defineTool({
       content: [
         {
           type: "text",
-          text: `Created Task ${payload.identifier ?? payload.id ?? ""}: ${payload.title ?? params.title}. It is now in the Aegis scheduler.${payload.id ? ` Open /tasks/${payload.id}` : ""}`,
+          text: `Created Task ${payload.identifier ?? payload.id ?? ""}: ${payload.title ?? params.title}. It is now managed by Aegis Coordination.${payload.id ? ` Open /tasks/${payload.id}` : ""}`,
         },
       ],
       details: payload,

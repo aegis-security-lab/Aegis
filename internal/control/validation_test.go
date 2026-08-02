@@ -80,16 +80,16 @@ func TestIssueWithoutObjectiveCompletesWithoutValidation(t *testing.T) {
 	}
 }
 
-func TestAcceptanceValidatorIsInternalAndReadOnly(t *testing.T) {
+func TestAcceptanceValidatorUsesWorkspaceEvidenceAndStructuredDecisions(t *testing.T) {
 	store := configuredStore(t)
 	agent, err := store.GetAgent("acceptance-validator")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !agent.Internal || !agent.Enabled || len(agent.Tools) != 0 || agent.Permissions.AllowShell || agent.Permissions.AllowNetwork || agent.Permissions.AllowWrite {
-		t.Fatalf("acceptance validator is not isolated: %+v", agent)
+	if !agent.Internal || !agent.Enabled || len(agent.Tools) != 0 || !agent.Permissions.AllowShell || agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite || agent.Permissions.WorkspaceScope != "run_workspace" {
+		t.Fatalf("acceptance validator does not have the expected workspace boundary: %+v", agent)
 	}
-	if !strings.Contains(agent.SystemPrompt, "validation attachment tools") || !strings.Contains(agent.SystemPrompt, "never require the Worker to duplicate") {
+	if !strings.Contains(agent.SystemPrompt, "ordinary read, search, and shell tools") || !strings.Contains(agent.SystemPrompt, "never require the Worker to duplicate") {
 		t.Fatalf("acceptance validator prompt does not explain attachment evidence: %s", agent.SystemPrompt)
 	}
 }
@@ -98,9 +98,9 @@ func TestValidationPromptProvidesAttachmentManifestWithoutInliningContent(t *tes
 	issue := Issue{Identifier: "AEG-0042", Title: "Security report", Description: "Produce the report.", Objective: "A complete security report is attached."}
 	prompt := validationPrompt(issue, "Report published as an attachment.", 2, []ValidationAttachmentInfo{{
 		ID: "attachment-1", Name: "security-report.md", MimeType: "text/markdown", Size: 42000,
-		Description: "Complete report", DownloadURL: "http://127.0.0.1:8080/api/attachments/attachment-1", Readable: true,
+		Description: "Complete report", Path: "/workspace/.aegis/validation-evidence/execution-1/attachment-1/security-report.md",
 	}}, "fixed", 3, false)
-	for _, expected := range []string{"attachment-1", "security-report.md", "http://127.0.0.1:8080/api/attachments/attachment-1", "aegis_read_validation_attachment", "do not require the Worker to duplicate"} {
+	for _, expected := range []string{"## Submission message", "## Published attachments", "attachment-1", "security-report.md", "/workspace/.aegis/validation-evidence/execution-1/attachment-1/security-report.md", "ordinary read", "do not require the Worker to duplicate"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("validation prompt missing %q: %s", expected, prompt)
 		}

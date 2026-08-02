@@ -24,9 +24,9 @@ import {
 } from "@/components/ui/tooltip"
 import { formatTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { AgentDefinition, Execution, Issue, IssueRelation } from "@/types"
+import type { AgentDefinition, Execution, Issue, IssueRelation, TaskAgent } from "@/types"
 
-const terminalStatuses = new Set(["done", "cancelled"])
+const terminalStatuses = new Set(["done", "failed", "budget_exceeded", "cancelled"])
 const activeExecutionStatuses = new Set([
   "queued",
   "starting",
@@ -38,6 +38,7 @@ interface IssueTreeProps {
   issues: Issue[]
   relations: IssueRelation[]
   agents: AgentDefinition[]
+  taskAgents?: TaskAgent[]
   executions?: Execution[]
   rootIds?: string[]
   mode?: "hierarchy" | "dependency"
@@ -49,6 +50,7 @@ export function IssueTree({
   issues,
   relations,
   agents,
+  taskAgents = [],
   executions = [],
   rootIds,
   mode = "hierarchy",
@@ -113,6 +115,10 @@ export function IssueTree({
   const agentMap = React.useMemo(
     () => new Map(agents.map((agent) => [agent.id, agent.name])),
     [agents]
+  )
+  const taskAgentMap = React.useMemo(
+    () => new Map(taskAgents.map((identity) => [identity.id, `${identity.name} · ${agentMap.get(identity.agentId) ?? identity.agentId}`])),
+    [agentMap, taskAgents]
   )
   const executionMap = React.useMemo(() => {
     const map = new Map<string, Execution>()
@@ -259,6 +265,7 @@ export function IssueTree({
                   issueMap={issueMap}
                   relations={relations}
                   agentMap={agentMap}
+                  taskAgentMap={taskAgentMap}
                   executionMap={executionMap}
                   mode={mode}
                   reference={row.reference}
@@ -289,6 +296,7 @@ interface TreeNodeProps {
   issueMap: Map<string, Issue>
   relations: IssueRelation[]
   agentMap: Map<string, string>
+  taskAgentMap: Map<string, string>
   executionMap: Map<string, Execution>
   mode: "hierarchy" | "dependency"
   reference: boolean
@@ -304,6 +312,7 @@ function TreeNode({
   issueMap,
   relations,
   agentMap,
+  taskAgentMap,
   executionMap,
   mode,
   reference,
@@ -387,7 +396,7 @@ function TreeNode({
         <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="font-mono text-[11px]">{issue.identifier}</span>
           <span>
-            {agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配负责人"}
+            {taskAgentMap.get(issue.assigneeTaskAgentId ?? "") ?? agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent"}
           </span>
           <span>创建者 {creatorName}</span>
           <span>创建 {formatTime(issue.createdAt)}</span>
@@ -458,6 +467,9 @@ function issueOperationalState(
       label: issue.objectiveAbandoned ? "目标已放弃" : "任务已取消",
     }
   }
+  if (issue.status === "budget_exceeded") {
+    return { kind: "failed", label: "执行预算已耗尽", detail: issue.error }
+  }
   if (issue.executionPhase === "recovering") {
     return { kind: "running", label: "重启恢复中" }
   }
@@ -483,6 +495,9 @@ function issueOperationalState(
   }
   if (issue.executionPhase === "summarizing") {
     return { kind: "running", label: "取消后总结中" }
+  }
+  if (issue.executionPhase === "budget_summarizing") {
+    return { kind: "running", label: "预算耗尽后总结中" }
   }
   if (issue.status === "in_progress") {
     if (execution?.status === "queued") {

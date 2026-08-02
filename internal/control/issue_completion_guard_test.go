@@ -125,7 +125,7 @@ func TestAgentCanCancelOnlyDirectChildAndItsSubtree(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Obsolete child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
-	grandchild, _ := store.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Nested work", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer-002"})
+	grandchild, _ := store.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Nested work", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	other, _ := store.CreateIssue(CreateIssueInput{Title: "Other task", Priority: "low", WorkMode: "autonomous"})
 	parentExecution, _ := store.createExecution(parent, "backend-engineer", "continuation")
 	parent, _ = store.CheckoutIssue(parent.ID, CheckoutIssueInput{AgentID: "backend-engineer", ExecutionID: parentExecution.ID, ExpectedStatuses: []string{"todo"}})

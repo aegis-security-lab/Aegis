@@ -90,7 +90,7 @@ export function SessionConversation({
           </EmptyMedia>
           <EmptyTitle>这个 Session 还没有消息</EmptyTitle>
           <EmptyDescription>
-            Pi 产生回复或收到用户补充要求后，对话会显示在这里。
+            AgentCore 产生回复或收到用户补充要求后，对话会显示在这里。
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

@@ -38,7 +38,7 @@ func TestTavilySearchUsesConfiguredBearerTokenAndNormalizesResponse(t *testing.T
 func TestWebSearchIsRequiredForEveryEmployeeAndSecretIsNotExposed(t *testing.T) {
 	s := configuredStore(t)
 	for _, agent := range s.Agents() {
-		if isEmployeeAgent(agent) && !slices.Contains(agent.Tools, "aegis_web_search") {
+		if isRunnableAgent(agent) && !slices.Contains(agent.Tools, "aegis_web_search") {
 			t.Fatalf("employee %s is missing aegis_web_search: %v", agent.ID, agent.Tools)
 		}
 	}

@@ -340,7 +340,7 @@ export function SessionDetailPage() {
                 </span>
               </CardTitle>
               <CardDescription>
-                这里展示该 Pi Session 中实际持久化的用户与 AI 消息。
+                这里展示该 AgentCore Session 中实际持久化的用户与 AI 消息。
               </CardDescription>
             </CardHeader>
             <CardContent className="min-h-0 flex-1 p-0">
@@ -382,7 +382,7 @@ export function SessionDetailPage() {
             <PromptCard
               icon={FileText}
               title="启动任务提示词"
-              description="创建 Session 时发送给 Pi 的第一条任务 Prompt。"
+              description="创建 Session 时发送给 AgentCore 的第一条任务 Prompt。"
               content={initialPrompt}
             />
             <PromptCard
@@ -746,7 +746,7 @@ function ToolParameterList({
 }
 
 function toolSourceLabel(source: ToolSnapshot["source"]) {
-  if (source === "pi_builtin") return "Pi 内置"
+  if (source === "agentcore_builtin") return "AgentCore 内置"
   if (source === "aegis_extension") return "Aegis 扩展"
   return "未知来源"
 }

@@ -1,8 +1,10 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,7 +110,13 @@ func (m *Manager) BoardCommandFromExecution(executionID, token string, input Boa
 		m.ReconcileIssue(updated)
 		result.Issue = &updated
 		if updated.AssigneeAgentID != "" && updated.AssigneeAgentID != issue.AssigneeAgentID {
-			m.notifyBoardAssignment(execution.AgentID, updated, "Board 更新了 Issue 委派")
+			if bridge := m.Coordination(); bridge != nil {
+				if submitErr := bridge.SubmitIssueAssigned(context.Background(), updated); submitErr != nil {
+					return result, submitErr
+				}
+			} else {
+				m.notifyBoardAssignment(execution.AgentID, updated, "Board 更新了 Issue 委派")
+			}
 		}
 		return result, nil
 	case "archive":
@@ -249,6 +257,9 @@ func (m *Manager) archiveBoardIssue(issueID, reason string) (archived Issue, err
 		session.Close()
 	}
 	m.store.notify()
+	for _, archivedID := range issueIDs {
+		m.reconcileIssueID(archivedID)
+	}
 	parentID = issue.ParentID
 	return m.store.GetIssue(issue.ID)
 }
@@ -263,8 +274,15 @@ func (m *Manager) UpdateBoardIssue(issueID string, input UpdateIssueInput) (Issu
 		return Issue{}, err
 	}
 	m.ReconcileIssue(updated)
-	if updated.AssigneeAgentID != "" && updated.AssigneeAgentID != before.AssigneeAgentID {
-		m.notifyBoardAssignment("operator", updated, "Board 更新了 Issue 委派")
+	reopenedTerminalOutcome := slices.Contains([]string{"failed", "budget_exceeded"}, before.Status) && slices.Contains([]string{"todo", "backlog"}, updated.Status)
+	if updated.AssigneeAgentID != "" && (updated.AssigneeAgentID != before.AssigneeAgentID || reopenedTerminalOutcome) {
+		if bridge := m.Coordination(); bridge != nil {
+			if err := bridge.SubmitIssueAssigned(context.Background(), updated); err != nil {
+				return Issue{}, err
+			}
+		} else {
+			m.notifyBoardAssignment("operator", updated, "Board 更新了 Issue 委派")
+		}
 	}
 	return updated, nil
 }
@@ -285,6 +303,9 @@ func (m *Manager) DeleteBoardIssue(issueID string) (DeleteIssueResult, error) {
 }
 
 func (m *Manager) notifyBoardAssignment(senderID string, issue Issue, subject string) {
+	if m.Coordination() != nil {
+		return
+	}
 	if issue.AssigneeAgentID == "" || issue.AssigneeAgentID == senderID {
 		return
 	}
@@ -294,7 +315,7 @@ func (m *Manager) notifyBoardAssignment(senderID string, issue Issue, subject st
 func (m *Manager) sendBoardRelay(senderID, recipientID string, issue Issue, subject, body string, wake bool) {
 	message, err := m.store.SendRelayMessage("app", senderID, SendRelayMessageInput{RecipientID: recipientID, Body: "**" + subject + "**\n\n" + body, IssueID: issue.ID})
 	if err == nil && wake {
-		go m.notifyEmployeeRelay(recipientID, message)
+		m.routeRelayMessage(message)
 	}
 }
 
@@ -304,25 +325,41 @@ func (m *Manager) RelayCommandFromExecution(executionID, token string, input Rel
 		return RelayCommandResult{}, err
 	}
 	result := RelayCommandResult{Action: strings.TrimSpace(input.Action)}
+	issue, err := m.store.GetIssue(execution.IssueID)
+	if err != nil {
+		return RelayCommandResult{}, err
+	}
+	root, rootErr := m.store.taskRoot(issue)
+	if rootErr != nil {
+		return RelayCommandResult{}, rootErr
+	}
+	routingID := fallback(execution.TaskAgentID, execution.AgentID)
 	switch result.Action {
 	case "directory":
-		for _, agent := range m.store.Agents() {
-			if isEmployeeAgent(agent) {
-				result.Directory = append(result.Directory, EmployeeDirectoryEntry{ID: agent.ID, Name: agent.Name, Description: agent.Description, DepartmentID: agent.DepartmentID})
-			}
+		identities, listErr := m.store.TaskAgents(root.ID)
+		if listErr != nil {
+			return RelayCommandResult{}, listErr
+		}
+		for _, identity := range identities {
+			agent, _ := m.store.GetAgent(identity.AgentID)
+			result.Directory = append(result.Directory, TaskAgentDirectoryEntry{ID: identity.ID, Name: identity.Name, AgentID: identity.AgentID, Role: agent.Name, Description: agent.Description})
 		}
 	case "inbox":
-		result.Inbox, err = m.store.RelayInbox(execution.AgentID)
+		result.Inbox, err = m.store.RelayInboxForTask(routingID, root.ID)
 	case "read":
-		conversation, readErr := m.store.RelayConversation(execution.AgentID, strings.TrimSpace(input.ThreadID), true)
+		conversation, readErr := m.store.RelayConversationForTask(routingID, strings.TrimSpace(input.ThreadID), root.ID, true)
 		err = readErr
 		result.Conversation = &conversation
 	case "send":
-		message, sendErr := m.store.SendRelayMessage("agent", execution.AgentID, SendRelayMessageInput{RecipientID: input.RecipientID, Body: input.Body, IssueID: input.IssueID})
+		recipient, recipientErr := m.store.taskAgent(root.ID, input.RecipientID)
+		if recipientErr != nil {
+			return RelayCommandResult{}, errors.New("Relay 收件人必须是当前任务中的 taskAgentId")
+		}
+		message, sendErr := m.store.SendRelayMessage("agent", routingID, SendRelayMessageInput{RecipientID: recipient.AgentID, RecipientTaskAgentID: recipient.ID, Body: input.Body, TaskID: root.ID, IssueID: fallback(input.IssueID, issue.ID)})
 		err = sendErr
 		result.Message = &message
 		if sendErr == nil {
-			go m.notifyEmployeeRelay(input.RecipientID, message)
+			m.routeRelayMessage(message)
 		}
 	default:
 		err = errors.New("Relay action 必须是 directory、inbox、read 或 send")
@@ -333,139 +370,13 @@ func (m *Manager) RelayCommandFromExecution(executionID, token string, input Rel
 func (m *Manager) SendRelayFromOperator(senderID string, input SendRelayMessageInput) (RelayMessage, error) {
 	message, err := m.store.SendRelayMessage("operator", senderID, input)
 	if err == nil {
-		go m.notifyEmployeeRelay(input.RecipientID, message)
+		m.routeRelayMessage(message)
 	}
 	return message, err
 }
 
-func (m *Manager) notifyEmployeeRelay(agentID string, message RelayMessage) {
-	prompt := fmt.Sprintf("Relay 收到一条新消息（messageId: %s，sender: %s）。你不需要立即回复；在合适的工作节点调用 aegis_relay 的 inbox/read 查看，随后可继续当前工作。", message.ID, message.SenderID)
-	taskIssueID := ""
-	if message.IssueID != "" {
-		if issue, issueErr := m.store.GetIssue(message.IssueID); issueErr == nil {
-			if root, rootErr := m.store.taskRoot(issue); rootErr == nil {
-				taskIssueID = root.ID
-			}
-		}
+func (m *Manager) routeRelayMessage(message RelayMessage) {
+	if bridge := m.Coordination(); bridge != nil {
+		go func() { _ = bridge.SubmitRelay(context.Background(), message) }()
 	}
-	m.mu.RLock()
-	var active *PiSession
-	for _, session := range m.sessions {
-		if session.agentID == agentID && !session.closed.Load() {
-			activeIssue, issueErr := m.store.GetIssue(session.issueID)
-			if issueErr != nil {
-				continue
-			}
-			root, rootErr := m.store.taskRoot(activeIssue)
-			activeTaskID := root.ID
-			if activeIssue.Hidden {
-				activeTaskID = ""
-			}
-			if rootErr != nil || activeTaskID != taskIssueID {
-				continue
-			}
-			active = session
-			break
-		}
-	}
-	m.mu.RUnlock()
-	if active != nil {
-		_, _ = m.sendSessionPrompt(active, prompt)
-		return
-	}
-	_, _ = m.SendEmployeeTaskMessage(agentID, taskIssueID, prompt)
-}
-
-func (m *Manager) SendEmployeeMessage(agentID, message string, attachmentIDs ...string) (Message, error) {
-	return m.SendEmployeeTaskMessage(agentID, "", message, attachmentIDs...)
-}
-
-func (m *Manager) SendEmployeeTaskMessage(agentID, taskIssueID, message string, attachmentIDs ...string) (Message, error) {
-	taskIssueID = strings.TrimSpace(taskIssueID)
-	if taskIssueID == "general" {
-		taskIssueID = ""
-	}
-	message = strings.TrimSpace(message)
-	attachmentIDs, err := normalizeInputAttachmentIDs(attachmentIDs)
-	if err != nil {
-		return Message{}, err
-	}
-	if message == "" && len(attachmentIDs) == 0 {
-		return Message{}, errors.New("消息不能为空")
-	}
-	if message == "" {
-		message = "请审计并处理本轮上传的附件。"
-	}
-	agent, err := m.store.executionAgent(agentID)
-	if err != nil {
-		return Message{}, err
-	}
-	m.mu.RLock()
-	for _, session := range m.sessions {
-		if session.agentID == agent.ID && !session.closed.Load() {
-			activeIssue, issueErr := m.store.GetIssue(session.issueID)
-			if issueErr != nil {
-				continue
-			}
-			activeRoot, rootErr := m.store.taskRoot(activeIssue)
-			activeTaskID := activeRoot.ID
-			if activeIssue.Hidden {
-				activeTaskID = ""
-			}
-			if rootErr != nil || activeTaskID != taskIssueID {
-				continue
-			}
-			m.mu.RUnlock()
-			if len(attachmentIDs) > 0 {
-				return Message{}, errors.New("该员工当前正在执行；请等待本轮结束后再发送附件")
-			}
-			return m.sendSessionPrompt(session, message)
-		}
-	}
-	m.mu.RUnlock()
-	var home Issue
-	if taskIssueID == "" {
-		home, err = m.employeeHomeIssue(agent)
-	} else {
-		var candidates []Issue
-		if err = m.store.db.Where("assignee_agent_id = ? AND hidden = ?", agent.ID, false).Order("updated_at desc").Find(&candidates).Error; err == nil {
-			for _, candidate := range candidates {
-				root, rootErr := m.store.taskRoot(candidate)
-				if rootErr == nil && root.ID == taskIssueID {
-					home = candidate
-					break
-				}
-			}
-		}
-		if home.ID == "" && err == nil {
-			err = errors.New("该员工在指定任务中没有会话")
-		}
-	}
-	if err != nil {
-		return Message{}, err
-	}
-	execution, err := m.store.createExecution(home, agent.ID, "employee_chat")
-	if err != nil {
-		return Message{}, err
-	}
-	if err = m.store.BindEmployeeInputAttachments(agent.ID, home.ID, execution.ID, attachmentIDs); err != nil {
-		_ = m.store.updateExecution(execution.ID, map[string]any{"status": "failed", "error": err.Error(), "finished_at": time.Now()})
-		return Message{}, err
-	}
-	if _, err = m.startSession(home, execution, agent, message); err != nil {
-		m.store.UnbindEmployeeInputAttachments(execution.ID)
-		_ = m.store.updateExecution(execution.ID, map[string]any{"status": "failed", "error": err.Error(), "finished_at": time.Now()})
-		return Message{}, err
-	}
-	var sent Message
-	err = m.store.db.Where("execution_id = ? AND role = ?", execution.ID, "user").Order("created_at desc, id desc").First(&sent).Error
-	return sent, err
-}
-
-func (m *Manager) employeeHomeIssue(agent AgentDefinition) (Issue, error) {
-	session, err := m.store.ensureEmployeeWorkspace(agent)
-	if err != nil {
-		return Issue{}, err
-	}
-	return m.store.GetIssue(session.HomeIssueID)
 }

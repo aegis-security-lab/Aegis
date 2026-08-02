@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"aegis/internal/control"
@@ -16,8 +15,7 @@ func TestFindingsAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exe, _ := os.Executable()
-	_, err = s.SaveConfig(control.SaveConfigInput{NodePath: exe, PiPath: exe, Provider: "test", Model: "m", AuthMode: "environment", Workspace: t.TempDir(), Concurrency: 1, ApprovalMode: "none"})
+	_, err = s.SaveConfig(control.SaveConfigInput{Provider: "test", Model: "m", AuthMode: "environment", Workspace: t.TempDir(), Concurrency: 1, ApprovalMode: "none"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +176,7 @@ func TestIssueAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exe, _ := os.Executable()
-	_, err = s.SaveConfig(control.SaveConfigInput{NodePath: exe, PiPath: exe, Provider: "test", Model: "m", AuthMode: "environment", Workspace: t.TempDir(), Concurrency: 1, ApprovalMode: "none"})
+	_, err = s.SaveConfig(control.SaveConfigInput{Provider: "test", Model: "m", AuthMode: "environment", Workspace: t.TempDir(), Concurrency: 1, ApprovalMode: "none"})
 	if err != nil {
 		t.Fatal(err)
 	}

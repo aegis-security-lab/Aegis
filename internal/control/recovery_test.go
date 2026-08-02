@@ -396,19 +396,3 @@ func TestRestartResumesSameValidationAttemptAndSession(t *testing.T) {
 		t.Fatalf("unexpected validation recovery prompt: %s", prompt)
 	}
 }
-
-func TestRecoveringIssueCannotBeDispatchedAsNewWork(t *testing.T) {
-	store := configuredStore(t)
-	issue, _ := store.CreateIssue(CreateIssueInput{
-		Title: "Recover only", Objective: "Resume existing work.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
-	})
-	if err := store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-		"status": "todo", "execution_phase": "recovering", "recovery_execution_id": "execution-existing",
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
-	if err := manager.dispatchIssue(issue.ID); err == nil || !strings.Contains(err.Error(), "恢复") {
-		t.Fatalf("recovering Issue was dispatched as new work: %v", err)
-	}
-}

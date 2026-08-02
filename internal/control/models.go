@@ -1,12 +1,16 @@
 package control
 
-import "time"
+import (
+	"time"
+
+	"aegis/capability"
+)
 
 type IssueBudgetConfig struct {
-	TokenLimit           *int64   `json:"tokenLimit"`
-	CostLimit            *float64 `json:"costLimit"`
-	TimeLimitMinutes     *int     `json:"timeLimitMinutes"`
-	CheckIntervalSeconds int      `json:"checkIntervalSeconds"`
+	MaxTurns           int `json:"maxTurns"`
+	ActiveTimeMinutes  int `json:"activeTimeMinutes"`
+	SummaryTurns       int `json:"summaryTurns"`
+	SummaryTimeMinutes int `json:"summaryTimeMinutes"`
 }
 
 type IssueHeartbeatConfig struct {
@@ -30,8 +34,6 @@ type WebSearchConfigView struct {
 type Config struct {
 	Configured            bool                 `json:"configured"`
 	Language              string               `json:"language"`
-	NodePath              string               `json:"nodePath"`
-	PiPath                string               `json:"piPath"`
 	Provider              string               `json:"provider"`
 	Model                 string               `json:"model"`
 	Pricing               ModelPricing         `json:"pricing"`
@@ -57,8 +59,6 @@ type Config struct {
 type ConfigView struct {
 	Configured            bool                 `json:"configured"`
 	Language              string               `json:"language"`
-	NodePath              string               `json:"nodePath"`
-	PiPath                string               `json:"piPath"`
 	Provider              string               `json:"provider"`
 	Model                 string               `json:"model"`
 	Pricing               ModelPricing         `json:"pricing"`
@@ -81,16 +81,6 @@ type ConfigView struct {
 	UpdatedAt             time.Time            `json:"updatedAt"`
 }
 
-type RuntimeProbe struct {
-	Ready       bool   `json:"ready"`
-	NodePath    string `json:"nodePath"`
-	NodeVersion string `json:"nodeVersion,omitempty"`
-	PiPath      string `json:"piPath"`
-	PiVersion   string `json:"piVersion,omitempty"`
-	AuthFound   bool   `json:"authFound"`
-	Error       string `json:"error,omitempty"`
-}
-
 type Project struct {
 	ID          string    `json:"id" gorm:"primaryKey"`
 	Key         string    `json:"key" gorm:"uniqueIndex"`
@@ -107,8 +97,6 @@ type ContainerProfile struct {
 	Name          string    `json:"name"`
 	Description   string    `json:"description" gorm:"type:text"`
 	Image         string    `json:"image"`
-	NodePath      string    `json:"nodePath"`
-	PiPath        string    `json:"piPath"`
 	WorkspacePath string    `json:"workspacePath"`
 	NetworkMode   string    `json:"networkMode"`
 	MemoryMB      int       `json:"memoryMb"`
@@ -127,8 +115,6 @@ type ContainerInstance struct {
 	TaskID             string    `json:"taskId" gorm:"uniqueIndex"`
 	Name               string    `json:"name" gorm:"uniqueIndex"`
 	Image              string    `json:"image"`
-	NodePath           string    `json:"nodePath"`
-	PiPath             string    `json:"piPath"`
 	WorkspacePath      string    `json:"workspacePath"`
 	NetworkMode        string    `json:"networkMode"`
 	MemoryMB           int       `json:"memoryMb"`
@@ -142,8 +128,6 @@ type SaveContainerProfileInput struct {
 	Name          string  `json:"name"`
 	Description   string  `json:"description"`
 	Image         string  `json:"image"`
-	NodePath      string  `json:"nodePath"`
-	PiPath        string  `json:"piPath"`
 	WorkspacePath string  `json:"workspacePath"`
 	NetworkMode   string  `json:"networkMode"`
 	MemoryMB      int     `json:"memoryMb"`
@@ -206,50 +190,54 @@ type Task struct {
 
 // Issue is the single source of truth for one run or a child execution unit.
 type Issue struct {
-	ID                      string     `json:"id" gorm:"primaryKey"`
-	Number                  int64      `json:"number" gorm:"uniqueIndex"`
-	Identifier              string     `json:"identifier" gorm:"uniqueIndex"`
-	ProjectID               string     `json:"projectId" gorm:"index"`
-	ParentID                string     `json:"parentId,omitempty" gorm:"index"`
-	TaskSourceID            string     `json:"taskSourceId,omitempty" gorm:"index"`
-	Title                   string     `json:"title"`
-	Description             string     `json:"description"`
-	Objective               string     `json:"objective" gorm:"type:text"`
-	Status                  string     `json:"status" gorm:"index"`
-	Priority                string     `json:"priority" gorm:"index"`
-	WorkMode                string     `json:"workMode"`
-	ExecutionPhase          string     `json:"executionPhase" gorm:"index"`
-	RequestDepth            int        `json:"requestDepth"`
-	AssigneeAgentID         string     `json:"assigneeAgentId,omitempty" gorm:"index"`
-	CheckoutExecutionID     string     `json:"checkoutExecutionId,omitempty" gorm:"index"`
-	CurrentExecutionID      string     `json:"currentExecutionId,omitempty" gorm:"index"`
-	ValidationExecutionID   string     `json:"validationExecutionId,omitempty" gorm:"index"`
-	ValidationMode          string     `json:"validationMode" gorm:"default:fixed"`
-	MaxValidationAttempts   int        `json:"maxValidationAttempts" gorm:"default:3"`
-	ValidationDisabled      bool       `json:"validationDisabled" gorm:"index"`
-	RecoveryExecutionID     string     `json:"recoveryExecutionId,omitempty" gorm:"index"`
-	RecoveryPhase           string     `json:"recoveryPhase,omitempty"`
-	RecoveryRequestedAt     *time.Time `json:"recoveryRequestedAt,omitempty"`
-	Workspace               string     `json:"workspace"`
-	ContainerProfileID      string     `json:"containerProfileId,omitempty" gorm:"index"`
-	ContainerID             string     `json:"containerId,omitempty" gorm:"index"`
-	Context                 string     `json:"context,omitempty"`
-	Constraints             string     `json:"constraints,omitempty"`
-	TimeBudgetMinutes       *int       `json:"timeBudgetMinutes,omitempty"`
-	HumanValidationFallback bool       `json:"humanValidationFallback"`
-	Result                  string     `json:"result,omitempty"`
-	Error                   string     `json:"error,omitempty"`
-	ObjectiveAbandoned      bool       `json:"objectiveAbandoned" gorm:"index"`
-	Hidden                  bool       `json:"-" gorm:"index"`
-	AbandonmentReason       string     `json:"abandonmentReason,omitempty" gorm:"type:text"`
-	AbandonRequestedAt      *time.Time `json:"abandonRequestedAt,omitempty"`
-	AbandonedAt             *time.Time `json:"abandonedAt,omitempty"`
-	CreatedBy               string     `json:"createdBy"`
-	StartedAt               *time.Time `json:"startedAt,omitempty"`
-	CompletedAt             *time.Time `json:"completedAt,omitempty"`
-	CancelledAt             *time.Time `json:"cancelledAt,omitempty"`
-	CreatedAt               time.Time  `json:"createdAt"`
-	UpdatedAt               time.Time  `json:"updatedAt"`
+	ID                      string           `json:"id" gorm:"primaryKey"`
+	Number                  int64            `json:"number" gorm:"uniqueIndex"`
+	Identifier              string           `json:"identifier" gorm:"uniqueIndex"`
+	ProjectID               string           `json:"projectId" gorm:"index"`
+	ParentID                string           `json:"parentId,omitempty" gorm:"index"`
+	TaskSourceID            string           `json:"taskSourceId,omitempty" gorm:"index"`
+	Title                   string           `json:"title"`
+	Description             string           `json:"description"`
+	Objective               string           `json:"objective" gorm:"type:text"`
+	Status                  string           `json:"status" gorm:"index"`
+	Priority                string           `json:"priority" gorm:"index"`
+	WorkMode                string           `json:"workMode"`
+	ExecutionPhase          string           `json:"executionPhase" gorm:"index"`
+	SleepToken              string           `json:"-" gorm:"index"`
+	RequestDepth            int              `json:"requestDepth"`
+	AssigneeAgentID         string           `json:"assigneeAgentId,omitempty" gorm:"index"`
+	AssigneeTaskAgentID     string           `json:"assigneeTaskAgentId,omitempty" gorm:"index"`
+	Capabilities            []capability.Ref `json:"capabilities,omitempty" gorm:"serializer:json;type:text"`
+	CapabilitySelection     string           `json:"capabilitySelection,omitempty"`
+	CheckoutExecutionID     string           `json:"checkoutExecutionId,omitempty" gorm:"index"`
+	CurrentExecutionID      string           `json:"currentExecutionId,omitempty" gorm:"index"`
+	ValidationExecutionID   string           `json:"validationExecutionId,omitempty" gorm:"index"`
+	ValidationMode          string           `json:"validationMode" gorm:"default:fixed"`
+	MaxValidationAttempts   int              `json:"maxValidationAttempts" gorm:"default:3"`
+	ValidationDisabled      bool             `json:"validationDisabled" gorm:"index"`
+	RecoveryExecutionID     string           `json:"recoveryExecutionId,omitempty" gorm:"index"`
+	RecoveryPhase           string           `json:"recoveryPhase,omitempty"`
+	RecoveryRequestedAt     *time.Time       `json:"recoveryRequestedAt,omitempty"`
+	Workspace               string           `json:"workspace"`
+	ContainerProfileID      string           `json:"containerProfileId,omitempty" gorm:"index"`
+	ContainerID             string           `json:"containerId,omitempty" gorm:"index"`
+	Context                 string           `json:"context,omitempty"`
+	Constraints             string           `json:"constraints,omitempty"`
+	TimeBudgetMinutes       *int             `json:"timeBudgetMinutes,omitempty"`
+	HumanValidationFallback bool             `json:"humanValidationFallback"`
+	Result                  string           `json:"result,omitempty"`
+	Error                   string           `json:"error,omitempty"`
+	ObjectiveAbandoned      bool             `json:"objectiveAbandoned" gorm:"index"`
+	Hidden                  bool             `json:"-" gorm:"index"`
+	AbandonmentReason       string           `json:"abandonmentReason,omitempty" gorm:"type:text"`
+	AbandonRequestedAt      *time.Time       `json:"abandonRequestedAt,omitempty"`
+	AbandonedAt             *time.Time       `json:"abandonedAt,omitempty"`
+	CreatedBy               string           `json:"createdBy"`
+	StartedAt               *time.Time       `json:"startedAt,omitempty"`
+	CompletedAt             *time.Time       `json:"completedAt,omitempty"`
+	CancelledAt             *time.Time       `json:"cancelledAt,omitempty"`
+	CreatedAt               time.Time        `json:"createdAt"`
+	UpdatedAt               time.Time        `json:"updatedAt"`
 }
 
 // ConciergeConversation is a user-facing, persistent chat with the built-in
@@ -298,67 +286,65 @@ type IssueRelation struct {
 }
 
 type Execution struct {
-	ID                   string         `json:"id" gorm:"primaryKey"`
-	IssueID              string         `json:"issueId" gorm:"index;index:idx_executions_issue_started,priority:1"`
-	AgentID              string         `json:"agentId" gorm:"index"`
-	Kind                 string         `json:"kind"`
-	Status               string         `json:"status" gorm:"index"`
-	Provider             string         `json:"provider"`
-	Model                string         `json:"model"`
-	Pricing              ModelPricing   `json:"pricing" gorm:"serializer:json;type:text"`
-	Thinking             string         `json:"thinking"`
-	SessionID            string         `json:"sessionId" gorm:"index"`
-	EmployeeSessionID    string         `json:"employeeSessionId,omitempty" gorm:"index"`
-	PID                  int            `json:"pid,omitempty" gorm:"column:pid"`
-	RuntimeType          string         `json:"runtimeType" gorm:"index"`
-	RuntimeID            string         `json:"runtimeId,omitempty"`
-	ContainerProfileID   string         `json:"containerProfileId,omitempty" gorm:"index"`
-	ContainerImage       string         `json:"containerImage,omitempty"`
-	CurrentTool          string         `json:"currentTool,omitempty"`
-	Checkpoint           string         `json:"checkpoint,omitempty" gorm:"type:text"`
-	CheckpointAt         *time.Time     `json:"checkpointAt,omitempty"`
-	InitialPrompt        string         `json:"initialPrompt,omitempty" gorm:"type:text"`
-	SystemPrompt         string         `json:"systemPrompt,omitempty" gorm:"type:text"`
-	ToolsSnapshot        []ToolSnapshot `json:"toolsSnapshot" gorm:"serializer:json;type:text"`
-	Result               string         `json:"result,omitempty"`
-	FinalResult          string         `json:"finalResult,omitempty" gorm:"type:text"`
-	FinalResultSubmitted bool           `json:"finalResultSubmitted"`
-	Error                string         `json:"error,omitempty"`
-	Cost                 float64        `json:"cost"`
-	Tokens               int64          `json:"tokens"`
-	InputTokens          int64          `json:"inputTokens"`
-	OutputTokens         int64          `json:"outputTokens"`
-	CacheReadTokens      int64          `json:"cacheReadTokens"`
-	CacheWriteTokens     int64          `json:"cacheWriteTokens"`
-	MessageCount         int            `json:"messageCount"`
-	StartedAt            time.Time      `json:"startedAt" gorm:"index:idx_executions_issue_started,priority:2"`
-	UpdatedAt            time.Time      `json:"updatedAt"`
-	FinishedAt           *time.Time     `json:"finishedAt,omitempty"`
+	ID                   string                `json:"id" gorm:"primaryKey"`
+	IssueID              string                `json:"issueId" gorm:"index;index:idx_executions_issue_started,priority:1"`
+	AgentID              string                `json:"agentId" gorm:"index"`
+	TaskAgentID          string                `json:"taskAgentId,omitempty" gorm:"index"`
+	Kind                 string                `json:"kind"`
+	Status               string                `json:"status" gorm:"index"`
+	Provider             string                `json:"provider"`
+	Model                string                `json:"model"`
+	Pricing              ModelPricing          `json:"pricing" gorm:"serializer:json;type:text"`
+	Thinking             string                `json:"thinking"`
+	SessionID            string                `json:"sessionId" gorm:"index"`
+	PID                  int                   `json:"pid,omitempty" gorm:"column:pid"`
+	RuntimeType          string                `json:"runtimeType" gorm:"index"`
+	RuntimeID            string                `json:"runtimeId,omitempty"`
+	ContainerProfileID   string                `json:"containerProfileId,omitempty" gorm:"index"`
+	ContainerImage       string                `json:"containerImage,omitempty"`
+	CurrentTool          string                `json:"currentTool,omitempty"`
+	Checkpoint           string                `json:"checkpoint,omitempty" gorm:"type:text"`
+	CheckpointAt         *time.Time            `json:"checkpointAt,omitempty"`
+	InitialPrompt        string                `json:"initialPrompt,omitempty" gorm:"type:text"`
+	SystemPrompt         string                `json:"systemPrompt,omitempty" gorm:"type:text"`
+	ToolsSnapshot        []ToolSnapshot        `json:"toolsSnapshot" gorm:"serializer:json;type:text"`
+	CapabilitiesSnapshot []capability.Snapshot `json:"capabilitiesSnapshot,omitempty" gorm:"serializer:json;type:text"`
+	Result               string                `json:"result,omitempty"`
+	FinalResult          string                `json:"finalResult,omitempty" gorm:"type:text"`
+	FinalResultSubmitted bool                  `json:"finalResultSubmitted"`
+	Error                string                `json:"error,omitempty"`
+	Cost                 float64               `json:"cost"`
+	Tokens               int64                 `json:"tokens"`
+	InputTokens          int64                 `json:"inputTokens"`
+	OutputTokens         int64                 `json:"outputTokens"`
+	CacheReadTokens      int64                 `json:"cacheReadTokens"`
+	CacheWriteTokens     int64                 `json:"cacheWriteTokens"`
+	MessageCount         int                   `json:"messageCount"`
+	BudgetMaxTurns       int                   `json:"budgetMaxTurns"`
+	BudgetActiveMinutes  int                   `json:"budgetActiveMinutes"`
+	BudgetSummaryTurns   int                   `json:"budgetSummaryTurns"`
+	BudgetSummaryMinutes int                   `json:"budgetSummaryMinutes"`
+	BudgetPhase          string                `json:"budgetPhase,omitempty" gorm:"index"`
+	BudgetTurnsUsed      int                   `json:"budgetTurnsUsed"`
+	BudgetSummaryUsed    int                   `json:"budgetSummaryUsed"`
+	BudgetExceededReason string                `json:"budgetExceededReason,omitempty" gorm:"type:text"`
+	BudgetExceededAt     *time.Time            `json:"budgetExceededAt,omitempty"`
+	StartedAt            time.Time             `json:"startedAt" gorm:"index:idx_executions_issue_started,priority:2"`
+	UpdatedAt            time.Time             `json:"updatedAt"`
+	FinishedAt           *time.Time            `json:"finishedAt,omitempty"`
 }
 
-// EmployeeSession is owned by one employee for one Issue. IssueID is empty
-// only for the employee's general direct-chat workspace.
-type EmployeeSession struct {
-	ID          string    `json:"id" gorm:"primaryKey"`
-	AgentID     string    `json:"agentId" gorm:"uniqueIndex:idx_employee_issue_session"`
-	IssueID     string    `json:"issueId,omitempty" gorm:"uniqueIndex:idx_employee_issue_session;index"`
-	SessionID   string    `json:"sessionId" gorm:"uniqueIndex"`
-	HomeIssueID string    `json:"homeIssueId,omitempty" gorm:"index"`
-	Status      string    `json:"status" gorm:"index"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt" gorm:"index"`
-}
-
-// EmployeeAvailability is the control-plane view used by Board assignment,
-// routing prompts, and the UI. A person is unavailable while they own any
-// non-terminal Issue or have a live execution in their fixed Session.
-type EmployeeAvailability struct {
-	AgentID                string `json:"agentId"`
-	Available              bool   `json:"available"`
-	CurrentIssueID         string `json:"currentIssueId,omitempty"`
-	CurrentIssueIdentifier string `json:"currentIssueIdentifier,omitempty"`
-	CurrentIssueTitle      string `json:"currentIssueTitle,omitempty"`
-	Activity               string `json:"activity,omitempty"`
+// TaskAgent is one task-scoped identity leased from an Agent definition. The
+// same Agent type may have many TaskAgents in one task; each gets a unique
+// human-readable alias, conversation, Phone, and audit trail.
+type TaskAgent struct {
+	ID        string    `json:"id" gorm:"primaryKey"`
+	TaskID    string    `json:"taskId" gorm:"uniqueIndex:idx_task_agent_name;index"`
+	AgentID   string    `json:"agentId" gorm:"index"`
+	Name      string    `json:"name" gorm:"uniqueIndex:idx_task_agent_name"`
+	Status    string    `json:"status" gorm:"index"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // IssueValidation is the durable hand-off between a worker Execution and the
@@ -442,10 +428,11 @@ type Message struct {
 	UpdatedAt   time.Time `json:"updatedAt" gorm:"index:idx_messages_execution_updated,priority:2"`
 }
 
-// RelayThread and RelayMessage implement the asynchronous office messenger
-// used by employees and applications such as Board.
+// RelayThread and RelayMessage implement task-scoped asynchronous messaging
+// between TaskAgents and applications such as Board.
 type RelayThread struct {
 	ID             string    `json:"id" gorm:"primaryKey"`
+	TaskID         string    `json:"taskId,omitempty" gorm:"index"`
 	Kind           string    `json:"kind" gorm:"index"`
 	Title          string    `json:"title"`
 	DirectKey      string    `json:"-" gorm:"uniqueIndex"`
@@ -463,6 +450,7 @@ type RelayMessage struct {
 	RecipientIDs []string  `json:"recipientIds" gorm:"serializer:json;type:text"`
 	Body         string    `json:"body" gorm:"type:text"`
 	IssueID      string    `json:"issueId,omitempty" gorm:"index"`
+	DeliveryKey  *string   `json:"-" gorm:"uniqueIndex"`
 	CreatedAt    time.Time `json:"createdAt" gorm:"index:idx_relay_messages_thread_created,priority:2"`
 }
 
@@ -486,32 +474,13 @@ type RelayConversation struct {
 	UnreadCount int64          `json:"unreadCount"`
 }
 
-type EmployeeWorkspace struct {
-	Agent       AgentDefinition      `json:"agent"`
-	Session     EmployeeSession      `json:"session"`
-	Sessions    []EmployeeSession    `json:"sessions"`
-	Executions  []Execution          `json:"executions"`
-	Messages    []Message            `json:"messages"`
-	Events      []ExecutionEvent     `json:"events"`
-	Attachments []IssueAttachment    `json:"attachments"`
-	Issues      []Issue              `json:"issues"`
-	Relay       []RelayThreadSummary `json:"relay"`
-	Watermark   time.Time            `json:"watermark"`
-}
-
-type EmployeeActivity struct {
-	Executions  []Execution       `json:"executions"`
-	Messages    []Message         `json:"messages"`
-	Events      []ExecutionEvent  `json:"events"`
-	Attachments []IssueAttachment `json:"attachments"`
-	Issues      []Issue           `json:"issues"`
-	Watermark   time.Time         `json:"watermark"`
-}
-
 type SendRelayMessageInput struct {
-	RecipientID string `json:"recipientId"`
-	Body        string `json:"body"`
-	IssueID     string `json:"issueId"`
+	RecipientID          string `json:"recipientId"`
+	RecipientTaskAgentID string `json:"recipientTaskAgentId,omitempty"`
+	Body                 string `json:"body"`
+	TaskID               string `json:"taskId,omitempty"`
+	IssueID              string `json:"issueId"`
+	IdempotencyKey       string `json:"-"`
 }
 
 type BoardCommandInput struct {
@@ -561,18 +530,19 @@ type RelayCommandInput struct {
 }
 
 type RelayCommandResult struct {
-	Action       string                   `json:"action"`
-	Directory    []EmployeeDirectoryEntry `json:"directory,omitempty"`
-	Inbox        []RelayThreadSummary     `json:"inbox,omitempty"`
-	Conversation *RelayConversation       `json:"conversation,omitempty"`
-	Message      *RelayMessage            `json:"message,omitempty"`
+	Action       string                    `json:"action"`
+	Directory    []TaskAgentDirectoryEntry `json:"directory,omitempty"`
+	Inbox        []RelayThreadSummary      `json:"inbox,omitempty"`
+	Conversation *RelayConversation        `json:"conversation,omitempty"`
+	Message      *RelayMessage             `json:"message,omitempty"`
 }
 
-type EmployeeDirectoryEntry struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	DepartmentID string `json:"departmentId,omitempty"`
+type TaskAgentDirectoryEntry struct {
+	ID          string `json:"taskAgentId"`
+	Name        string `json:"name"`
+	AgentID     string `json:"agentId"`
+	Role        string `json:"role"`
+	Description string `json:"description"`
 }
 type Approval struct {
 	ID          string     `json:"id" gorm:"primaryKey"`
@@ -618,9 +588,9 @@ type IssueAttachment struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
-// InputAttachment is an operator-supplied file staged before an Issue or an
-// employee chat execution starts. StoragePath is server-private; Agents only
-// receive the materialized path inside their own workspace/container.
+// InputAttachment is an operator-supplied file staged before an Issue starts.
+// StoragePath is server-private; Agents only receive the materialized path
+// inside their task workspace/container.
 type InputAttachment struct {
 	ID          string     `json:"id" gorm:"primaryKey"`
 	Scope       string     `json:"scope" gorm:"index"`
@@ -655,6 +625,7 @@ type ValidationAttachmentInfo struct {
 	Description    string                   `json:"description,omitempty"`
 	MimeType       string                   `json:"mimeType"`
 	Size           int64                    `json:"size"`
+	Path           string                   `json:"path,omitempty"`
 	DownloadURL    string                   `json:"downloadUrl"`
 	Readable       bool                     `json:"readable"`
 	ArchiveEntries []ValidationArchiveEntry `json:"archiveEntries,omitempty"`
@@ -749,9 +720,7 @@ type PermissionBoundary struct {
 }
 type AgentDefinition struct {
 	ID               string             `json:"id"`
-	TemplateID       string             `json:"templateId"`
 	Name             string             `json:"name"`
-	EnglishName      string             `json:"englishName"`
 	Description      string             `json:"description"`
 	Avatar           string             `json:"avatar"`
 	Category         string             `json:"category"`
@@ -765,113 +734,8 @@ type AgentDefinition struct {
 	SkillIDs         []string           `json:"skillIds"`
 	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds"`
 	Permissions      PermissionBoundary `json:"permissions"`
-	DepartmentID     string             `json:"departmentId,omitempty" gorm:"index"`
-	PositionID       string             `json:"positionId,omitempty" gorm:"index"`
-	ManagerAgentID   string             `json:"managerAgentId,omitempty" gorm:"index"`
 	CreatedAt        time.Time          `json:"createdAt"`
 	UpdatedAt        time.Time          `json:"updatedAt"`
-}
-
-type Department struct {
-	ID            string    `json:"id" gorm:"primaryKey"`
-	ParentID      string    `json:"parentId,omitempty" gorm:"index"`
-	Name          string    `json:"name"`
-	Code          string    `json:"code" gorm:"uniqueIndex"`
-	Description   string    `json:"description" gorm:"type:text"`
-	LeaderAgentID string    `json:"leaderAgentId,omitempty" gorm:"index"`
-	Enabled       bool      `json:"enabled"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
-}
-type SaveDepartmentInput struct {
-	ID            string `json:"id"`
-	ParentID      string `json:"parentId"`
-	Name          string `json:"name"`
-	Code          string `json:"code"`
-	Description   string `json:"description"`
-	LeaderAgentID string `json:"leaderAgentId"`
-	Enabled       *bool  `json:"enabled"`
-}
-
-// Position is an organizational role and a reusable hiring blueprint. People
-// reference a Position through AgentDefinition.PositionID; the runtime
-// configuration below is copied into a new employee and can then be adjusted
-// without changing other people in the same position.
-type Position struct {
-	ID               string             `json:"id" gorm:"primaryKey"`
-	DepartmentID     string             `json:"departmentId" gorm:"index"`
-	TemplateID       string             `json:"templateId" gorm:"index"`
-	Name             string             `json:"name"`
-	EnglishName      string             `json:"englishName"`
-	Code             string             `json:"code" gorm:"uniqueIndex"`
-	Description      string             `json:"description" gorm:"type:text"`
-	Avatar           string             `json:"avatar"`
-	Category         string             `json:"category"`
-	Model            AgentModelConfig   `json:"model" gorm:"serializer:json;type:text"`
-	SystemPrompt     string             `json:"systemPrompt" gorm:"type:text"`
-	Tools            []string           `json:"tools" gorm:"serializer:json;type:text"`
-	SkillIDs         []string           `json:"skillIds" gorm:"serializer:json;type:text"`
-	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds" gorm:"serializer:json;type:text"`
-	Permissions      PermissionBoundary `json:"permissions" gorm:"serializer:json;type:text"`
-	Enabled          bool               `json:"enabled"`
-	CreatedAt        time.Time          `json:"createdAt"`
-	UpdatedAt        time.Time          `json:"updatedAt"`
-}
-
-type SavePositionInput struct {
-	ID               string             `json:"id"`
-	DepartmentID     string             `json:"departmentId"`
-	TemplateID       string             `json:"templateId"`
-	Name             string             `json:"name"`
-	EnglishName      string             `json:"englishName"`
-	Code             string             `json:"code"`
-	Description      string             `json:"description"`
-	Avatar           string             `json:"avatar"`
-	Category         string             `json:"category"`
-	Model            AgentModelConfig   `json:"model"`
-	SystemPrompt     string             `json:"systemPrompt"`
-	Tools            []string           `json:"tools"`
-	SkillIDs         []string           `json:"skillIds"`
-	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds"`
-	Permissions      PermissionBoundary `json:"permissions"`
-	Enabled          *bool              `json:"enabled"`
-}
-
-type HireEmployeeInput struct {
-	Name           string `json:"name"`
-	EnglishName    string `json:"englishName"`
-	ManagerAgentID string `json:"managerAgentId"`
-}
-type AgentTemplateMetadata struct {
-	EnglishName  string   `json:"englishName"`
-	ChineseName  string   `json:"chineseName"`
-	Introduction string   `json:"introduction"`
-	Positions    []string `json:"positions" gorm:"serializer:json;type:text"`
-}
-type AgentTemplate struct {
-	ID           string                `json:"id" gorm:"primaryKey"`
-	Provider     string                `json:"provider" gorm:"index"`
-	Model        string                `json:"model" gorm:"index"`
-	SystemPrompt string                `json:"systemPrompt" gorm:"type:text"`
-	Note         string                `json:"note" gorm:"type:text"`
-	Metadata     AgentTemplateMetadata `json:"metadata" gorm:"embedded;embeddedPrefix:metadata_"`
-	Hidden       bool                  `json:"hidden" gorm:"index"`
-	Builtin      bool                  `json:"builtin"`
-	CreatedAt    time.Time             `json:"createdAt"`
-	UpdatedAt    time.Time             `json:"updatedAt"`
-}
-type SaveAgentTemplateInput struct {
-	Provider     string                `json:"provider"`
-	Model        string                `json:"model"`
-	SystemPrompt string                `json:"systemPrompt"`
-	Note         string                `json:"note"`
-	Metadata     AgentTemplateMetadata `json:"metadata"`
-}
-type SetAgentTemplateHiddenInput struct {
-	Hidden bool `json:"hidden"`
-}
-type UpdateAgentTemplateNoteInput struct {
-	Note string `json:"note"`
 }
 type SkillDefinition struct {
 	ID          string    `json:"id"`
@@ -887,9 +751,7 @@ type SkillDefinition struct {
 }
 type SaveAgentInput struct {
 	ID               string             `json:"id"`
-	TemplateID       string             `json:"templateId"`
 	Name             string             `json:"name"`
-	EnglishName      string             `json:"englishName"`
 	Description      string             `json:"description"`
 	Avatar           string             `json:"avatar"`
 	Category         string             `json:"category"`
@@ -902,9 +764,6 @@ type SaveAgentInput struct {
 	SkillIDs         []string           `json:"skillIds"`
 	KnowledgeBaseIDs []string           `json:"knowledgeBaseIds"`
 	Permissions      PermissionBoundary `json:"permissions"`
-	DepartmentID     string             `json:"departmentId"`
-	PositionID       string             `json:"positionId"`
-	ManagerAgentID   string             `json:"managerAgentId"`
 }
 
 type UpdateAgentMemoInput struct {
@@ -1042,25 +901,22 @@ type SessionDelta struct {
 	Watermark       time.Time           `json:"watermark"`
 }
 type StateView struct {
-	Configured           bool                   `json:"configured"`
-	Config               ConfigView             `json:"config"`
-	Runtime              RuntimeProbe           `json:"runtime"`
-	Projects             []Project              `json:"projects"`
-	ContainerProfiles    []ContainerProfile     `json:"containerProfiles"`
-	Containers           []ContainerInstance    `json:"containers"`
-	Tasks                []Task                 `json:"tasks"`
-	Issues               []Issue                `json:"issues"`
-	Relations            []IssueRelation        `json:"relations"`
-	Executions           []Execution            `json:"executions"`
-	Approvals            []Approval             `json:"approvals"`
-	Agents               []AgentDefinition      `json:"agents"`
-	EmployeeAvailability []EmployeeAvailability `json:"employeeAvailability"`
-	Departments          []Department           `json:"departments"`
-	Positions            []Position             `json:"positions"`
-	Skills               []SkillDefinition      `json:"skills"`
-	KnowledgeBases       []KnowledgeBase        `json:"knowledgeBases"`
-	Sessions             []SessionSummary       `json:"sessions"`
-	UpdatedAt            time.Time              `json:"updatedAt"`
+	Configured        bool                `json:"configured"`
+	Config            ConfigView          `json:"config"`
+	Projects          []Project           `json:"projects"`
+	ContainerProfiles []ContainerProfile  `json:"containerProfiles"`
+	Containers        []ContainerInstance `json:"containers"`
+	Tasks             []Task              `json:"tasks"`
+	Issues            []Issue             `json:"issues"`
+	Relations         []IssueRelation     `json:"relations"`
+	Executions        []Execution         `json:"executions"`
+	Approvals         []Approval          `json:"approvals"`
+	Agents            []AgentDefinition   `json:"agents"`
+	TaskAgents        []TaskAgent         `json:"taskAgents"`
+	Skills            []SkillDefinition   `json:"skills"`
+	KnowledgeBases    []KnowledgeBase     `json:"knowledgeBases"`
+	Sessions          []SessionSummary    `json:"sessions"`
+	UpdatedAt         time.Time           `json:"updatedAt"`
 }
 
 const KnowledgeProviderKeywordAI = "keyword_ai"
@@ -1124,30 +980,34 @@ type KnowledgeSearchResult struct {
 }
 
 type CreateIssueInput struct {
-	ProjectID               string   `json:"projectId"`
-	ParentID                string   `json:"parentId"`
-	Title                   string   `json:"title"`
-	Description             string   `json:"description"`
-	Objective               string   `json:"objective"`
-	Priority                string   `json:"priority"`
-	Status                  string   `json:"status"`
-	WorkMode                string   `json:"workMode"`
-	AssigneeAgentID         string   `json:"assigneeAgentId"`
-	Workspace               string   `json:"workspace"`
-	ContainerProfileID      string   `json:"containerProfileId"`
-	ContainerID             string   `json:"containerId"`
-	Context                 string   `json:"context"`
-	Constraints             string   `json:"constraints"`
-	TimeBudgetMinutes       *int     `json:"timeBudgetMinutes"`
-	HumanValidationFallback bool     `json:"humanValidationFallback"`
-	BlockedBy               []string `json:"blockedBy"`
-	TaskSourceID            string   `json:"taskSourceId"`
-	AttachmentIDs           []string `json:"attachmentIds" gorm:"-"`
-	// AttachmentSourceExecutionID is internal-only. It lets an employee hand
-	// files from the current direct-chat turn to the first Board Issue they
+	ProjectID               string           `json:"projectId"`
+	ParentID                string           `json:"parentId"`
+	Title                   string           `json:"title"`
+	Description             string           `json:"description"`
+	Objective               string           `json:"objective"`
+	Priority                string           `json:"priority"`
+	Status                  string           `json:"status"`
+	WorkMode                string           `json:"workMode"`
+	AssigneeAgentID         string           `json:"assigneeAgentId"`
+	AssigneeTaskAgentID     string           `json:"assigneeTaskAgentId,omitempty"`
+	Capabilities            []capability.Ref `json:"capabilities,omitempty"`
+	CapabilitySelection     string           `json:"capabilitySelection,omitempty"`
+	Workspace               string           `json:"workspace"`
+	ContainerProfileID      string           `json:"containerProfileId"`
+	ContainerID             string           `json:"containerId"`
+	Context                 string           `json:"context"`
+	Constraints             string           `json:"constraints"`
+	TimeBudgetMinutes       *int             `json:"timeBudgetMinutes"`
+	HumanValidationFallback bool             `json:"humanValidationFallback"`
+	BlockedBy               []string         `json:"blockedBy"`
+	TaskSourceID            string           `json:"taskSourceId"`
+	AttachmentIDs           []string         `json:"attachmentIds" gorm:"-"`
+	// AttachmentSourceExecutionID is internal-only. It lets an Agent hand files
+	// from a task-creation turn to the first Board Issue it
 	// create without exposing another binding primitive through the API.
 	AttachmentSourceExecutionID string `json:"-" gorm:"-"`
 	CreatedBy                   string `json:"-" gorm:"-"`
+	RequestedID                 string `json:"-" gorm:"-"`
 }
 
 type ChildIssueInfo struct {
@@ -1288,8 +1148,6 @@ type CreateRelationInput struct {
 
 type SaveConfigInput struct {
 	Language              string               `json:"language"`
-	NodePath              string               `json:"nodePath"`
-	PiPath                string               `json:"piPath"`
 	Provider              string               `json:"provider"`
 	Model                 string               `json:"model"`
 	Pricing               ModelPricing         `json:"pricing"`
@@ -1341,6 +1199,7 @@ type WebSearchResult struct {
 
 // Finding represents a security finding discovered during reconnaissance or vulnerability analysis.
 type Finding struct {
+	AuditLevel       string    `json:"auditLevel,omitempty"`
 	ID               string    `json:"id" gorm:"primaryKey"`
 	Domain           string    `json:"domain" gorm:"index"`
 	Category         string    `json:"category" gorm:"index"`

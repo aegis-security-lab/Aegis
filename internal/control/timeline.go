@@ -61,10 +61,25 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 	for _, agent := range s.Agents() {
 		agentNames[agent.ID] = agent.Name
 	}
+	taskAgentNames := make(map[string]string)
+	var taskAgents []TaskAgent
+	if err := s.db.Where("task_id = ?", task.ID).Find(&taskAgents).Error; err != nil {
+		return TaskTimeline{}, err
+	}
+	for _, identity := range taskAgents {
+		label := identity.Name
+		if role := agentNames[identity.AgentID]; role != "" {
+			label += " · " + role
+		}
+		taskAgentNames[identity.ID] = label
+	}
 	actor := func(id string) (string, string) {
 		id = strings.TrimSpace(id)
 		if id == "" || id == "operator" {
 			return "operator", "操作员"
+		}
+		if name := taskAgentNames[id]; name != "" {
+			return "agent", name
 		}
 		if name := agentNames[id]; name != "" {
 			return "agent", name
@@ -102,7 +117,11 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 	executionByID := make(map[string]Execution, len(executions))
 	for _, execution := range executions {
 		executionByID[execution.ID] = execution
-		actorType, actorName := actor(execution.AgentID)
+		actorID := execution.TaskAgentID
+		if actorID == "" {
+			actorID = execution.AgentID
+		}
+		actorType, actorName := actor(actorID)
 		kind := executionKindLabel(execution.Kind)
 		startTitle := actorName + " 开始" + kind
 		startStatus := "running"
@@ -113,7 +132,7 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 		appendEvent(TaskTimelineEvent{
 			ID: "execution-started:" + execution.ID, Kind: "execution",
 			IssueID: execution.IssueID, ExecutionID: execution.ID,
-			ActorType: actorType, ActorID: execution.AgentID, ActorName: actorName,
+			ActorType: actorType, ActorID: actorID, ActorName: actorName,
 			Title: startTitle, Summary: issueByID[execution.IssueID].Title,
 			Detail: strings.TrimSpace(strings.Join([]string{execution.Provider + "/" + execution.Model, "Session " + execution.SessionID}, " · ")),
 			Status: startStatus, CreatedAt: execution.StartedAt,
@@ -134,7 +153,7 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 		appendEvent(TaskTimelineEvent{
 			ID: "execution-result:" + execution.ID, Kind: "result",
 			IssueID: execution.IssueID, ExecutionID: execution.ID,
-			ActorType: actorType, ActorID: execution.AgentID, ActorName: actorName,
+			ActorType: actorType, ActorID: actorID, ActorName: actorName,
 			Title: title, Summary: truncate(result, 220), Detail: result,
 			Status: execution.Status, CreatedAt: *execution.FinishedAt,
 		})
@@ -202,11 +221,15 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 	}
 	for _, approval := range approvals {
 		execution := executionByID[approval.ExecutionID]
-		actorType, actorName := actor(execution.AgentID)
+		actorID := execution.TaskAgentID
+		if actorID == "" {
+			actorID = execution.AgentID
+		}
+		actorType, actorName := actor(actorID)
 		appendEvent(TaskTimelineEvent{
 			ID: "approval-created:" + approval.ID, Kind: "approval",
 			IssueID: approval.IssueID, ExecutionID: approval.ExecutionID,
-			ActorType: actorType, ActorID: execution.AgentID, ActorName: actorName,
+			ActorType: actorType, ActorID: actorID, ActorName: actorName,
 			Title: actorName + " 发起审批", Summary: approval.Title,
 			Detail: approval.Detail, Status: approval.Status, CreatedAt: approval.CreatedAt,
 		})
@@ -231,14 +254,18 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 			continue
 		}
 		execution := executionByID[event.ExecutionID]
-		actorType, actorName := actor(execution.AgentID)
+		actorID := execution.TaskAgentID
+		if actorID == "" {
+			actorID = execution.AgentID
+		}
+		actorType, actorName := actor(actorID)
 		if execution.ID == "" {
 			actorType, actorName = "system", "Aegis"
 		}
 		appendEvent(TaskTimelineEvent{
 			ID: "event:" + event.ID, Kind: kind, IssueID: event.IssueID,
 			ExecutionID: event.ExecutionID, ActorType: actorType,
-			ActorID: execution.AgentID, ActorName: actorName,
+			ActorID: actorID, ActorName: actorName,
 			Title: event.Title, Summary: truncate(strings.TrimSpace(event.Detail), 220),
 			Detail: strings.TrimSpace(event.Detail), Status: event.Status, CreatedAt: event.CreatedAt,
 		})

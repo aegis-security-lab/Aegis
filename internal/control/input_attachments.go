@@ -52,7 +52,7 @@ func (s *Store) StageInputAttachment(scope, ownerID, name, mimeType string, sour
 		return InputAttachment{}, errors.New("附件用途无效")
 	}
 	if scope == "employee" {
-		if _, err := s.assignableEmployee(ownerID); err != nil {
+		if _, err := s.assignableAgentType(ownerID); err != nil {
 			return InputAttachment{}, errors.New("附件接收员工不存在")
 		}
 	} else {
@@ -253,62 +253,15 @@ func (s *Store) materializeInputAttachments(issue Issue, execution Execution, co
 		}
 		var destination string
 		if container == nil {
-			destination = filepath.Join(issue.Workspace, ".aegis", "input-attachments", attachment.ID, attachment.Name)
-			if err = materializeHostInputAttachment(attachment, destination); err != nil {
-				return nil, fmt.Errorf("准备输入附件 %s 失败: %w", attachment.Name, err)
-			}
-		} else {
-			destination = path.Join(container.WorkspacePath, ".aegis", "input-attachments", attachment.ID, attachment.Name)
-			if err = materializeContainerInputAttachment(attachment, *container, destination); err != nil {
-				return nil, fmt.Errorf("准备容器输入附件 %s 失败: %w", attachment.Name, err)
-			}
+			return nil, errors.New("输入附件必须写入任务容器，拒绝使用宿主机工作区")
+		}
+		destination = path.Join(container.WorkspacePath, ".aegis", "input-attachments", attachment.ID, attachment.Name)
+		if err = materializeContainerInputAttachment(attachment, *container, destination); err != nil {
+			return nil, fmt.Errorf("准备容器输入附件 %s 失败: %w", attachment.Name, err)
 		}
 		result = append(result, runtimeInputAttachment{InputAttachment: attachment, Path: destination})
 	}
 	return result, nil
-}
-
-func materializeHostInputAttachment(attachment InputAttachment, destination string) error {
-	if info, err := os.Stat(destination); err == nil && info.Size() == attachment.Size {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-		return err
-	}
-	temporary := destination + ".partial"
-	_ = os.Remove(temporary)
-	if err := os.Link(attachment.StoragePath, temporary); err != nil {
-		source, openErr := os.Open(attachment.StoragePath)
-		if openErr != nil {
-			return openErr
-		}
-		defer source.Close()
-		target, createErr := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if createErr != nil {
-			return createErr
-		}
-		written, copyErr := io.Copy(target, source)
-		closeErr := target.Close()
-		if copyErr != nil || closeErr != nil || written != attachment.Size {
-			_ = os.Remove(temporary)
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-			return errors.New("附件复制不完整")
-		}
-	}
-	if err := os.Chmod(temporary, 0o600); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := os.Rename(temporary, destination); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	return nil
 }
 
 func materializeContainerInputAttachment(attachment InputAttachment, container ContainerInstance, destination string) error {

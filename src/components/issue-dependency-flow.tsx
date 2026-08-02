@@ -38,7 +38,7 @@ const nodeWidth = 288
 const nodeHeight = 116
 const horizontalGap = 96
 const verticalGap = 34
-const terminalStatuses = new Set(["done", "cancelled"])
+const terminalStatuses = new Set(["done", "failed", "budget_exceeded", "cancelled"])
 const activeExecutionStatuses = new Set([
   "queued",
   "starting",
@@ -389,6 +389,8 @@ function dependencyNodeDetail(
   if (issue.executionPhase === "waiting_children") return "等待直属子 Issue 完成"
   if (issue.executionPhase === "validating") return "验收 Agent 正在核验目标"
   if (issue.executionPhase === "resuming") return "正在汇总子树结果"
+  if (issue.executionPhase === "budget_summarizing") return "Execution 预算耗尽，正在受限总结"
+  if (issue.status === "budget_exceeded") return "Execution 已超出预算，等待父 Issue 判断"
   if (execution?.currentTool) return `正在调用 ${execution.currentTool}`
   if (execution && activeExecutionStatuses.has(execution.status)) {
     return `Execution ${execution.status}`

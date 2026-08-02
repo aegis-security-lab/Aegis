@@ -9,7 +9,6 @@ import {
   Radar,
   ShieldCheck,
   Sparkles,
-  TerminalSquare,
 } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
@@ -41,13 +40,12 @@ import {
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { completeSetup, probeRuntime, testConnection } from "@/lib/api"
+import { completeSetup, testConnection } from "@/lib/api"
 import { useAppState } from "@/lib/state"
 import type { SaveConfigInput } from "@/types"
 
 const steps = [
   { title: "欢迎", description: "了解 Aegis", icon: Sparkles },
-  { title: "Pi Runtime", description: "连接本机 Pi", icon: TerminalSquare },
   { title: "模型", description: "认证与推理", icon: KeyRound },
   { title: "工作区", description: "权限与执行", icon: FolderCode },
 ]
@@ -62,21 +60,19 @@ const modelDefaults: Record<string, string> = {
 }
 
 export function SetupPage() {
-  const { state, setState } = useAppState()
+  const { setState } = useAppState()
   const navigate = useNavigate()
   const [step, setStep] = React.useState(0)
-  const [busy, setBusy] = React.useState<"probe" | "test" | "save" | null>(null)
+  const [busy, setBusy] = React.useState<"test" | "save" | null>(null)
   const [accepted, setAccepted] = React.useState(false)
   const [form, setForm] = React.useState<SaveConfigInput>(() => ({
     language: "zh",
-    nodePath: state?.runtime.nodePath ?? "",
-    piPath: state?.runtime.piPath ?? "",
     provider: "anthropic",
     model: modelDefaults.anthropic,
     pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     baseUrl: "",
     thinking: "medium",
-    authMode: state?.runtime.authFound ? "pi_auth" : "api_key",
+    authMode: "api_key",
     apiKey: "",
     workspace: "",
     concurrency: 3,
@@ -88,10 +84,10 @@ export function SetupPage() {
     maxChildrenPerRequest: 100,
     maxDirectChildren: 100,
     issueBudget: {
-      tokenLimit: null,
-      costLimit: null,
-      timeLimitMinutes: 10,
-      checkIntervalSeconds: 60,
+      maxTurns: 100,
+      activeTimeMinutes: 20,
+      summaryTurns: 10,
+      summaryTimeMinutes: 3,
     },
     issueHeartbeat: {
       intervalSeconds: 60,
@@ -109,21 +105,6 @@ export function SetupPage() {
     value: SaveConfigInput[K]
   ) => {
     setForm((current) => ({ ...current, [key]: value }))
-  }
-
-  const handleProbe = async () => {
-    setBusy("probe")
-    try {
-      const probe = await probeRuntime(form.nodePath, form.piPath)
-      update("nodePath", probe.nodePath)
-      update("piPath", probe.piPath)
-      if (probe.ready) toast.success(`Pi ${probe.piVersion} 已就绪`)
-      else toast.error(probe.error ?? "Pi runtime 检测失败")
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : "检测失败")
-    } finally {
-      setBusy(null)
-    }
   }
 
   const handleTest = async () => {
@@ -159,12 +140,11 @@ export function SetupPage() {
   }
 
   const nextDisabled =
-    (step === 1 && (!form.nodePath || !form.piPath)) ||
-    (step === 2 &&
+    (step === 1 &&
       (!form.provider ||
         !form.model ||
         (form.authMode === "api_key" && !form.apiKey))) ||
-    (step === 3 && (!form.workspace || !accepted))
+    (step === 2 && (!form.workspace || !accepted))
 
   return (
     <div className="relative min-h-svh overflow-hidden bg-muted/30 px-4 py-8 sm:px-6 lg:py-12">
@@ -176,7 +156,7 @@ export function SetupPage() {
         <div>
           <p className="font-semibold tracking-tight">Aegis</p>
           <p className="text-xs text-muted-foreground">
-            Pi Agent Control Plane
+            AgentCore Control Plane
           </p>
         </div>
       </div>
@@ -237,25 +217,14 @@ export function SetupPage() {
           <CardContent className="flex-1 px-6 py-7 sm:px-8">
             {step === 0 ? <WelcomeStep /> : null}
             {step === 1 ? (
-              <RuntimeStep
-                form={form}
-                update={update}
-                onProbe={handleProbe}
-                busy={busy === "probe"}
-                ready={state?.runtime.ready ?? false}
-                error={state?.runtime.error}
-              />
-            ) : null}
-            {step === 2 ? (
               <ModelStep
                 form={form}
                 update={update}
                 onTest={handleTest}
                 busy={busy === "test"}
-                authFound={state?.runtime.authFound ?? false}
               />
             ) : null}
-            {step === 3 ? (
+            {step === 2 ? (
               <WorkspaceStep
                 form={form}
                 update={update}
@@ -304,11 +273,11 @@ function WelcomeStep() {
         <Bot className="size-7" />
       </div>
       <h2 className="max-w-lg text-3xl font-semibold tracking-tight">
-        让真实 Pi Agents 在可观察、可干预的控制平面里工作。
+        让原生 AgentCore 在可观察、可干预的控制平面里工作。
       </h2>
       <p className="mt-4 max-w-xl text-sm leading-7 text-muted-foreground">
-        Aegis 会启动本机 Pi RPC 进程，把任务拆成 Issues，分配并发
-        Worker，并实时呈现模型输出、工具调用、费用与审批。这里没有模拟执行器。
+        Aegis 直接在服务进程中运行 Go AgentCore，把任务拆成 Issues，分配并发
+        Worker，并通过任务专属 Docker 容器执行工具，实时呈现模型输出、调用、费用与审批。
       </p>
       <div className="mt-8 grid gap-3 sm:grid-cols-3">
         {[
@@ -343,78 +312,16 @@ interface StepProps {
   ) => void
 }
 
-function RuntimeStep({
-  form,
-  update,
-  onProbe,
-  busy,
-  ready,
-  error,
-}: StepProps & {
-  onProbe: () => void
-  busy: boolean
-  ready: boolean
-  error?: string
-}) {
-  return (
-    <div>
-      <p className="mb-6 max-w-xl text-sm leading-6 text-muted-foreground">
-        Aegis 通过 Node.js 启动 Pi 的 RPC
-        CLI。已经检测到源码构建时会自动填入路径，你也可以指定其他本机版本。
-      </p>
-      <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor="node-path">Node.js 可执行文件</FieldLabel>
-          <Input
-            id="node-path"
-            value={form.nodePath}
-            onChange={(event) => update("nodePath", event.target.value)}
-            placeholder="/opt/homebrew/bin/node"
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="pi-path">Pi CLI 入口</FieldLabel>
-          <Input
-            id="pi-path"
-            value={form.piPath}
-            onChange={(event) => update("piPath", event.target.value)}
-            placeholder="~/Code/pi/packages/coding-agent/dist/cli.js"
-          />
-          <FieldDescription>
-            可填写构建后的 cli.js，或全局 pi 可执行文件。
-          </FieldDescription>
-        </Field>
-      </FieldGroup>
-      <div className="mt-6 flex items-center gap-3">
-        <Button
-          variant="outline"
-          onClick={onProbe}
-          disabled={busy || !form.nodePath || !form.piPath}
-        >
-          {busy ? <Spinner /> : <Radar />}检测 Runtime
-        </Button>
-        {ready ? (
-          <span className="text-sm text-emerald-600">Runtime 已就绪</span>
-        ) : error ? (
-          <span className="text-sm text-destructive">{error}</span>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
 function ModelStep({
   form,
   update,
   onTest,
   busy,
-  authFound,
-}: StepProps & { onTest: () => void; busy: boolean; authFound: boolean }) {
+}: StepProps & { onTest: () => void; busy: boolean }) {
   return (
     <div>
       <p className="mb-6 max-w-xl text-sm leading-6 text-muted-foreground">
-        模型名称直接传给 Pi，因此支持当前 Pi 版本的全部
-        Provider。连接测试会发出一次真实请求并可能产生少量费用。
+        模型由 AgentCore Provider 适配器直接连接。连接测试会发出一次真实请求并可能产生少量费用。
       </p>
       <FieldGroup>
         <div className="grid gap-5 sm:grid-cols-2">
@@ -457,8 +364,7 @@ function ModelStep({
             placeholder="https://api.example.com/v1"
           />
           <FieldDescription>
-            留空使用 Pi 内置地址；填写后由 Aegis 扩展覆盖该 Provider 的
-            endpoint。
+            留空使用 Provider 默认地址；填写后 AgentCore 会连接该 endpoint。
           </FieldDescription>
         </Field>
         <ModelPricingFields
@@ -499,9 +405,6 @@ function ModelStep({
               <SelectContent>
                 <SelectItem value="api_key">API Key</SelectItem>
                 <SelectItem value="environment">环境变量</SelectItem>
-                {authFound ? (
-                  <SelectItem value="pi_auth">Pi 已有登录</SelectItem>
-                ) : null}
               </SelectContent>
             </Select>
           </Field>
@@ -518,8 +421,7 @@ function ModelStep({
               placeholder="密钥仅写入本机 SQLite"
             />
             <FieldDescription>
-              密钥不会通过状态 API 返回，Pi 子进程通过对应 Provider
-              环境变量接收。
+              密钥不会通过状态 API 返回，由 AgentCore Provider 在服务进程内读取。
             </FieldDescription>
           </Field>
         ) : null}
@@ -547,8 +449,8 @@ function WorkspaceStep({
   return (
     <div>
       <p className="mb-6 max-w-xl text-sm leading-6 text-muted-foreground">
-        Pi
-        进程拥有当前用户权限。请把默认工作区限制在你信任的代码目录，并选择工具审批级别。
+        AgentCore 控制面运行在 Aegis 服务中，文件与命令工具在任务专属 Docker
+        容器中执行。请限制可信工作区并选择工具审批级别。
       </p>
       <FieldGroup>
         <Field>
@@ -657,7 +559,7 @@ function WorkspaceStep({
           <AlertTitle>安全说明</AlertTitle>
           <AlertDescription>
             “引导模式”任务始终审批所有写入和
-            shell；“自治模式”使用上面的默认策略。Pi 不提供操作系统级沙箱。
+            shell；“自治模式”使用上面的默认策略。Docker 容器提供任务级执行隔离。
           </AlertDescription>
         </Alert>
         <Field orientation="horizontal">
@@ -667,7 +569,7 @@ function WorkspaceStep({
             onCheckedChange={setAccepted}
           />
           <FieldLabel htmlFor="accept-risk" className="font-normal">
-            我了解 Pi 以当前用户权限执行，并确认只把可信工作目录交给 Aegis。
+            我了解 AgentCore 会通过任务容器执行工具，并确认只把可信工作目录交给 Aegis。
           </FieldLabel>
         </Field>
       </FieldGroup>

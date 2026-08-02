@@ -1,5 +1,6 @@
 import * as React from "react"
 import {
+  CircleStop,
   Copy,
   ListTodo,
   MoreHorizontal,
@@ -11,6 +12,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
+import { CancelTaskDialog } from "@/components/cancel-task-dialog"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -41,10 +43,16 @@ import type { Issue, Task } from "@/types"
 type TaskFilter = "all" | "active" | "review" | "done" | "attention"
 
 export function TasksPage() {
-  const { state } = useAppState()
+  const { state, refresh } = useAppState()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [restarting, setRestarting] = React.useState<string | null>(null)
+  const [cancelTarget, setCancelTarget] = React.useState<{
+    root: Issue
+    title: string
+    totalIssues: number
+    activeExecutions: number
+  } | null>(null)
   const query = searchParams.get("q") ?? ""
   const filterParam = searchParams.get("status")
   const filter: TaskFilter = isTaskFilter(filterParam) ? filterParam : "all"
@@ -82,7 +90,9 @@ export function TasksPage() {
       }
       if (filter === "review") return row.latest.status === "in_review"
       if (filter === "done") return row.latest.status === "done"
-      return ["blocked", "failed", "cancelled"].includes(row.latest.status)
+      return ["blocked", "failed", "budget_exceeded", "cancelled"].includes(
+        row.latest.status
+      )
     })
     .sort((left, right) =>
       right.task.updatedAt.localeCompare(left.task.updatedAt)
@@ -311,6 +321,22 @@ export function TasksPage() {
                             <RotateCcw />
                             重新启动
                           </DropdownMenuItem>
+                          {row.latest && !isTerminalTask(row.latest.status) ? (
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() =>
+                                setCancelTarget({
+                                  root: row.latest!,
+                                  title: row.task.title,
+                                  totalIssues: row.issueCount,
+                                  activeExecutions: row.active,
+                                })
+                              }
+                            >
+                              <CircleStop />
+                              取消任务
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -321,6 +347,19 @@ export function TasksPage() {
           )}
         </CardContent>
       </Card>
+      {cancelTarget ? (
+        <CancelTaskDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setCancelTarget(null)
+          }}
+          rootIssueId={cancelTarget.root.id}
+          taskTitle={cancelTarget.title}
+          totalIssues={cancelTarget.totalIssues}
+          activeExecutions={cancelTarget.activeExecutions}
+          onCancelled={() => refresh()}
+        />
+      ) : null}
     </div>
   )
 }
@@ -342,7 +381,7 @@ function taskRow(
     (issue) =>
       issue.id !== latest?.id &&
       issueIDs.has(issue.id) &&
-      ["done", "cancelled"].includes(issue.status)
+      ["done", "failed", "budget_exceeded", "cancelled"].includes(issue.status)
   ).length
   const progress = descendants
     ? Math.round((completed / descendants) * 100)
@@ -361,13 +400,23 @@ function taskRow(
     (total, execution) => total + execution.cost,
     0
   )
-  return { task, runs, latest, progress, active, cost }
+  return {
+    task,
+    runs,
+    latest,
+    progress,
+    active,
+    cost,
+    issueCount: issueIDs.size,
+  }
+}
+
+function isTerminalTask(status: Issue["status"]) {
+  return ["done", "failed", "budget_exceeded", "cancelled"].includes(status)
 }
 
 function isTaskFilter(value: string | null): value is TaskFilter {
-  return ["all", "active", "review", "done", "attention"].includes(
-    value ?? ""
-  )
+  return ["all", "active", "review", "done", "attention"].includes(value ?? "")
 }
 
 function taskTreeIssueIDs(rootID: string, issues: Issue[]) {

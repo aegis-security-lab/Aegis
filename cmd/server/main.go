@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -16,7 +18,13 @@ import (
 	"syscall"
 	"time"
 
+	"aegis/agentapp"
+	phonecap "aegis/agentapp/agentcoreadapter"
+	"aegis/capability"
+	"aegis/coordination"
 	"aegis/internal/control"
+	"aegis/observability"
+	observabilitysqlite "aegis/observability/sqlitestore"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,38 +33,193 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	systemObservability, err := control.EnableObservability(store, os.Stdout, envOr("AEGIS_LOG_LEVEL", "info"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	manager, err := control.NewManager(store)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer manager.Close()
-	cfg := store.Config()
-	store.SetRuntimeProbe(control.DetectRuntime(cfg.NodePath, cfg.PiPath))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	workerID := envOr("AEGIS_WORKER_ID", "control-worker")
+	phoneURL := strings.TrimSpace(os.Getenv("AEGIS_AGENTAPP_URL"))
+	hostOptions := control.NativeHostOptions{
+		Coordination: control.ManagerCoordinationClient{Manager: manager},
+		Sources: []control.NativeCapabilitySource{{
+			Kind: capability.KindTool, Name: "validation", Source: control.NativeValidationSource{Manager: manager},
+		}, {
+			Kind: capability.KindTool, Name: "concierge", Source: control.NativeConciergeSource{Manager: manager},
+		}},
+	}
+	var taskPhone control.TaskPhoneClient
+	if phoneURL != "" {
+		phoneClient := &agentapp.Client{BaseURL: phoneURL, Token: os.Getenv("AEGIS_AGENTAPP_TOKEN")}
+		hostOptions.Phone = &phonecap.Source{Client: phoneClient, InstalledApps: []string{"aegis.board", "aegis.relay"}}
+		taskPhone = phoneClient
+	} else {
+		_, phoneClient, phoneErr := control.NewControlAgentPhone(manager)
+		if phoneErr != nil {
+			log.Fatal(phoneErr)
+		}
+		hostOptions.Phone = &phonecap.Source{Client: phoneClient, InstalledApps: []string{"aegis.board", "aegis.relay"}}
+		taskPhone = phoneClient
+	}
+	manager.SetAgentPhoneClient(taskPhone)
+	host, err := control.NewNativeAgentHost(store, hostOptions)
+	if err != nil {
+		log.Fatal(err)
+	}
+	nativeDelivery := control.NewNativeSessionDelivery(manager)
+	manager.SetNativeAgentRuntime(host, nativeDelivery)
+	capabilityPlanner := &coordination.CapabilityPlanner{Catalog: host.Capabilities}
+	issueRunner := control.NativeIssueRunner{Manager: manager, Host: host, Sessions: nativeDelivery}
+	nativeCoordination := &control.NativeCoordinationRuntime{Manager: manager, Host: host, PhoneEnabled: true, Planner: capabilityPlanner}
+	runner := control.CoordinationRunner{Issues: issueRunner, Subagents: nativeCoordination}
+	coordinationMode := strings.TrimSpace(os.Getenv("AEGIS_COORDINATION_MODE"))
+	if coordinationMode == "" {
+		coordinationMode = "board_autonomy"
+	}
+	coordinationBridge, err := control.NewCoordinationBridge(manager, control.CoordinationBridgeOptions{
+		WorkerID: workerID, DefaultMode: coordinationMode, Delivery: nativeDelivery,
+		Subagents: nativeCoordination, Executor: runner, Planner: capabilityPlanner, PhoneEnabled: true,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	manager.SetCoordination(coordinationBridge)
+	nativeCoordination.Bridge = coordinationBridge
+	defer coordinationBridge.Close()
 	router := buildRouter(store, manager, envOr("AEGIS_DIST", "dist"))
 	// Input attachments can be multi-gigabyte audit images. Keep the header
 	// timeout, but do not terminate a healthy streaming request after 30 seconds.
 	server := &http.Server{Addr: ":" + envOr("PORT", "8080"), Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	go func() {
-		log.Printf("Aegis listening on %s", server.Addr)
+		systemObservability.Logger.Info(ctx, "server.listen", slog.String("address", server.Addr))
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
 		}
 	}()
+	coordinationBridge.Start(ctx)
 	<-ctx.Done()
 	manager.BeginShutdown()
+	coordinationBridge.Close()
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdown)
 }
 
+func observabilityMiddleware(store *control.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		requestID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
+		if requestID == "" {
+			requestID = observability.NewID(12)
+		}
+		traceID := strings.TrimSpace(c.GetHeader("X-Trace-ID"))
+		if traceID == "" {
+			traceID = observability.NewID(16)
+		}
+		ctx := observability.WithScope(c.Request.Context(), observability.Scope{TraceID: traceID, RequestID: requestID, Component: "server.http"})
+		c.Request = c.Request.WithContext(ctx)
+		c.Header("X-Request-ID", requestID)
+		c.Header("X-Trace-ID", traceID)
+		logger := observability.Default()
+		logger.Debug(ctx, "http.request.start", slog.String("method", c.Request.Method), slog.String("path", c.Request.URL.Path), slog.String("remote_ip", c.ClientIP()))
+		c.Next()
+		route := c.FullPath()
+		if route == "" {
+			route = c.Request.URL.Path
+		}
+		duration := time.Since(started)
+		status := c.Writer.Status()
+		attrs := []slog.Attr{slog.String("method", c.Request.Method), slog.String("route", route), slog.Int("status", status), slog.Int64("response_bytes", int64(c.Writer.Size())), slog.Float64("duration_ms", float64(duration.Microseconds())/1000)}
+		if len(c.Errors) > 0 {
+			attrs = append(attrs, slog.String("error", c.Errors.String()))
+		}
+		switch {
+		case status >= 500:
+			logger.Error(ctx, "http.request.end", attrs...)
+		case status >= 400:
+			logger.Warn(ctx, "http.request.end", attrs...)
+		default:
+			logger.Info(ctx, "http.request.end", attrs...)
+		}
+		if system := store.Observability(); system != nil {
+			labels := observability.Labels{"method": c.Request.Method, "route": route, "status": strconv.Itoa(status)}
+			system.Metrics.AddCounter("http_requests_total", 1, labels)
+			system.Metrics.ObserveHistogram("http_request_duration_ms", float64(duration.Microseconds())/1000, observability.Labels{"method": c.Request.Method, "route": route})
+		}
+	}
+}
+
 func buildRouter(store *control.Store, manager *control.Manager, dist string) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(observabilityMiddleware(store), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "time": time.Now()}) })
+	api.GET("/observability/metrics", func(c *gin.Context) {
+		if system := store.Observability(); system != nil {
+			c.JSON(http.StatusOK, system.Metrics.Snapshot())
+			return
+		}
+		c.JSON(http.StatusOK, observability.MetricSnapshot{Counters: map[string]float64{}, Gauges: map[string]float64{}, Histograms: map[string]observability.Distribution{}})
+	})
+	api.GET("/observability/logs", func(c *gin.Context) {
+		system := store.Observability()
+		if system == nil || system.Logs == nil {
+			c.JSON(http.StatusOK, gin.H{"logs": []any{}})
+			return
+		}
+		limit, parseErr := parseIntQuery(c.Query("limit"), 500)
+		if parseErr != nil {
+			writeError(c, http.StatusBadRequest, parseErr)
+			return
+		}
+		if limit > 5000 {
+			limit = 5000
+		}
+		logs, queryErr := system.Logs.Query(c.Request.Context(), observabilitysqlite.Filter{TaskID: strings.TrimSpace(c.Query("taskId")), CoordinationID: strings.TrimSpace(c.Query("coordinationId")), TraceID: strings.TrimSpace(c.Query("traceId")), Limit: limit})
+		if queryErr != nil {
+			writeError(c, http.StatusInternalServerError, queryErr)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"logs": logs})
+	})
+	if coordinationBridge := manager.Coordination(); coordinationBridge != nil {
+		api.GET("/coordination/executions/:id", func(c *gin.Context) {
+			execution, err := coordinationBridge.Execution(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				writeError(c, http.StatusNotFound, err)
+				return
+			}
+			c.JSON(http.StatusOK, execution)
+		})
+		api.GET("/coordination/executions/:id/events", func(c *gin.Context) {
+			after, err := strconv.ParseUint(fallbackQuery(c.Query("after"), "0"), 10, 64)
+			if err != nil {
+				writeError(c, http.StatusBadRequest, errors.New("invalid event cursor"))
+				return
+			}
+			limit, err := parseIntQuery(c.Query("limit"), 100)
+			if err != nil {
+				writeError(c, http.StatusBadRequest, err)
+				return
+			}
+			if limit > 500 {
+				limit = 500
+			}
+			events, err := coordinationBridge.ExecutionEvents(c.Request.Context(), c.Param("id"), after, limit)
+			if err != nil {
+				writeError(c, http.StatusInternalServerError, err)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"events": events})
+		})
+	}
 	api.GET("/container-profiles", func(c *gin.Context) { c.JSON(http.StatusOK, store.ContainerProfiles()) })
 	api.GET("/containers", func(c *gin.Context) { c.JSON(http.StatusOK, store.Containers()) })
 	api.POST("/container-profiles/image/build", func(c *gin.Context) {
@@ -156,74 +319,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		c.JSON(http.StatusOK, gin.H{"ready": true})
 	})
 	api.GET("/state", func(c *gin.Context) { c.JSON(200, store.State()) })
-	api.GET("/employees/:id/workspace", func(c *gin.Context) {
-		workspace, err := store.EmployeeWorkspace(c.Param("id"), c.Query("taskId"))
-		if err != nil {
-			writeError(c, http.StatusNotFound, err)
-			return
-		}
-		c.JSON(http.StatusOK, workspace)
-	})
-	api.GET("/employees/:id/activity", func(c *gin.Context) {
-		after, err := time.Parse(time.RFC3339Nano, c.Query("after"))
-		if err != nil {
-			writeError(c, http.StatusBadRequest, errors.New("invalid activity watermark"))
-			return
-		}
-		activity, err := store.EmployeeActivity(c.Param("id"), after)
-		if err != nil {
-			writeError(c, http.StatusNotFound, err)
-			return
-		}
-		c.JSON(http.StatusOK, activity)
-	})
-	api.POST("/employees/:id/messages", func(c *gin.Context) {
-		var in struct {
-			Message       string   `json:"message"`
-			AttachmentIDs []string `json:"attachmentIds"`
-			TaskID        string   `json:"taskId"`
-		}
-		if !bindJSON(c, &in) {
-			return
-		}
-		message, err := manager.SendEmployeeTaskMessage(c.Param("id"), in.TaskID, in.Message, in.AttachmentIDs...)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusCreated, message)
-	})
-	api.POST("/employees/:id/attachments", func(c *gin.Context) {
-		receiveInputAttachment(c, store, "employee", c.Param("id"))
-	})
-	api.GET("/relay/agents/:id/inbox", func(c *gin.Context) {
-		items, err := store.RelayInbox(c.Param("id"))
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"threads": items})
-	})
-	api.GET("/relay/agents/:id/threads/:threadId", func(c *gin.Context) {
-		conversation, err := store.RelayConversation(c.Param("id"), c.Param("threadId"), c.Query("markRead") != "false")
-		if err != nil {
-			writeError(c, http.StatusNotFound, err)
-			return
-		}
-		c.JSON(http.StatusOK, conversation)
-	})
-	api.POST("/relay/agents/:id/messages", func(c *gin.Context) {
-		var in control.SendRelayMessageInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		message, err := manager.SendRelayFromOperator(c.Param("id"), in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusCreated, message)
-	})
 	api.GET("/events", func(c *gin.Context) { streamState(c, store) })
 	api.GET("/tools/uncover/status", func(c *gin.Context) {
 		status, err := store.UncoverStatus()
@@ -330,6 +425,93 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(200, v)
 	})
+	api.GET("/coordination/modes", func(c *gin.Context) {
+		bridge := manager.Coordination()
+		if bridge == nil {
+			c.JSON(http.StatusOK, gin.H{"enabled": false, "modes": []any{}})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"enabled": true, "directSubagents": bridge.DirectSubagentsAvailable(), "modes": bridge.Modes()})
+	})
+	api.POST("/coordination/invoke", func(c *gin.Context) {
+		bridge := manager.Coordination()
+		if bridge == nil {
+			writeError(c, http.StatusServiceUnavailable, errors.New("coordination runtime is disabled"))
+			return
+		}
+		var input coordination.AgentInvocation
+		if !bindJSON(c, &input) {
+			return
+		}
+		receipt, err := bridge.InvokeAgent(c.Request.Context(), input)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, receipt)
+	})
+	api.GET("/coordination/capabilities", func(c *gin.Context) {
+		bridge := manager.Coordination()
+		if bridge == nil {
+			c.JSON(http.StatusOK, gin.H{"enabled": false, "capabilities": []any{}})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"enabled": true, "capabilities": bridge.CapabilityCatalog()})
+	})
+	api.POST("/coordination/capabilities/plan", func(c *gin.Context) {
+		bridge := manager.Coordination()
+		if bridge == nil {
+			writeError(c, http.StatusServiceUnavailable, errors.New("coordination runtime is disabled"))
+			return
+		}
+		var input struct {
+			IssueID string                 `json:"issueId"`
+			Child   coordination.ChildWork `json:"child"`
+		}
+		if !bindJSON(c, &input) {
+			return
+		}
+		decision, err := bridge.PreviewAgentCapabilities(c.Request.Context(), input.IssueID, input.Child)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, decision)
+	})
+	api.GET("/issues/:id/coordination", func(c *gin.Context) {
+		bridge := manager.Coordination()
+		if bridge == nil {
+			writeError(c, http.StatusServiceUnavailable, errors.New("coordination runtime is disabled"))
+			return
+		}
+		binding, err := bridge.BindingForIssue(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, binding)
+	})
+	api.PUT("/issues/:id/coordination", func(c *gin.Context) {
+		bridge := manager.Coordination()
+		if bridge == nil {
+			writeError(c, http.StatusServiceUnavailable, errors.New("coordination runtime is disabled"))
+			return
+		}
+		var input struct {
+			Mode    string          `json:"mode"`
+			Version string          `json:"version"`
+			Config  json.RawMessage `json:"config"`
+		}
+		if !bindJSON(c, &input) {
+			return
+		}
+		binding, err := bridge.BindIssue(c.Request.Context(), c.Param("id"), input.Mode, input.Version, input.Config)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, binding)
+	})
 	api.GET("/issues/:id/comments", func(c *gin.Context) {
 		v, err := store.IssueCommentsPage(c.Param("id"), c.Query("before"), detailLimit(c))
 		if err != nil {
@@ -377,6 +559,75 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.JSON(http.StatusOK, v)
+	})
+	api.GET("/tasks/:id/phones", func(c *gin.Context) {
+		phones, err := manager.TaskPhones(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"phones": phones})
+	})
+	api.GET("/tasks/:id/agents", func(c *gin.Context) {
+		items, err := store.TaskAgents(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"agents": items})
+	})
+	api.GET("/agent-names", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"names": control.TaskAgentNameCatalog()})
+	})
+	api.GET("/tasks/:id/export", func(c *gin.Context) {
+		includeArtifacts, err := parseBoolQuery(c.Query("includeArtifacts"), true)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, err)
+			return
+		}
+		redactSecrets, err := parseBoolQuery(c.Query("redactSecrets"), true)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, err)
+			return
+		}
+		temp, err := os.CreateTemp("", "aegis-task-evidence-*.zip")
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		name := temp.Name()
+		defer func() {
+			_ = temp.Close()
+			_ = os.Remove(name)
+		}()
+		_ = temp.Chmod(0o600)
+		manifest, err := manager.WriteTaskEvidence(c.Request.Context(), c.Param("id"), temp, control.TaskExportOptions{IncludeArtifacts: includeArtifacts, RedactSecrets: redactSecrets})
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, control.ErrTaskEvidenceNotFound) {
+				status = http.StatusNotFound
+			}
+			writeError(c, status, err)
+			return
+		}
+		info, err := temp.Stat()
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		if _, err = temp.Seek(0, io.SeekStart); err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		filename := "aegis-task-" + archiveFilenamePart(c.Param("id")) + "-evidence.zip"
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+		c.DataFromReader(http.StatusOK, info.Size(), "application/zip", temp, map[string]string{
+			"Content-Disposition":             disposition,
+			"X-Content-Type-Options":          "nosniff",
+			"X-Aegis-Evidence-Complete":       strconv.FormatBool(manifest.Complete),
+			"X-Aegis-Evidence-Redacted":       strconv.FormatBool(manifest.RedactionEnabled),
+			"X-Aegis-Evidence-Schema-Version": manifest.SchemaVersion,
+		})
 	})
 	api.POST("/tasks/:id/restart", func(c *gin.Context) {
 		v, err := manager.RestartTask(c.Param("id"))
@@ -1083,128 +1334,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	})
 
 	api.GET("/agents", func(c *gin.Context) { c.JSON(200, store.Agents()) })
-	api.GET("/departments", func(c *gin.Context) { c.JSON(http.StatusOK, store.Departments()) })
-	api.POST("/departments", func(c *gin.Context) {
-		var in control.SaveDepartmentInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		v, err := store.SaveDepartment(in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusCreated, v)
-	})
-	api.PUT("/departments/:id", func(c *gin.Context) {
-		var in control.SaveDepartmentInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		in.ID = c.Param("id")
-		v, err := store.SaveDepartment(in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusOK, v)
-	})
-	api.DELETE("/departments/:id", func(c *gin.Context) {
-		if err := store.DeleteDepartment(c.Param("id")); err != nil {
-			writeError(c, http.StatusConflict, err)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
-	api.GET("/positions", func(c *gin.Context) { c.JSON(http.StatusOK, store.Positions()) })
-	api.POST("/positions", func(c *gin.Context) {
-		var in control.SavePositionInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		v, err := store.SavePosition(in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusCreated, v)
-	})
-	api.PUT("/positions/:id", func(c *gin.Context) {
-		var in control.SavePositionInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		in.ID = c.Param("id")
-		v, err := store.SavePosition(in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusOK, v)
-	})
-	api.DELETE("/positions/:id", func(c *gin.Context) {
-		if err := store.DeletePosition(c.Param("id")); err != nil {
-			writeError(c, http.StatusConflict, err)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
-	api.POST("/positions/:id/employees", func(c *gin.Context) {
-		var in control.HireEmployeeInput
-		if !bindJSON(c, &in) {
-			return
-		}
-		v, err := store.HireEmployee(c.Param("id"), in)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusCreated, v)
-	})
-	api.GET("/agent-templates", func(c *gin.Context) { c.JSON(200, store.AgentTemplates()) })
-	api.POST("/agent-templates", func(c *gin.Context) {
-		var in control.SaveAgentTemplateInput
-		if c.ShouldBindJSON(&in) != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid template input"})
-			return
-		}
-		v, err := store.SaveAgentTemplate(in)
-		if err != nil {
-			status := http.StatusBadRequest
-			if errors.Is(err, control.ErrAgentTemplateIDConflict) {
-				status = http.StatusConflict
-			}
-			c.JSON(status, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusCreated, v)
-	})
-	api.PATCH("/agent-templates/:id/hidden", func(c *gin.Context) {
-		var in control.SetAgentTemplateHiddenInput
-		if c.ShouldBindJSON(&in) != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hidden input"})
-			return
-		}
-		v, err := store.SetAgentTemplateHidden(c.Param("id"), in.Hidden)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, v)
-	})
-	api.PATCH("/agent-templates/:id/note", func(c *gin.Context) {
-		var in control.UpdateAgentTemplateNoteInput
-		if c.ShouldBindJSON(&in) != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid note input"})
-			return
-		}
-		v, err := store.UpdateAgentTemplateNote(c.Param("id"), in.Note)
-		if err != nil {
-			writeError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		c.JSON(http.StatusOK, v)
-	})
 	api.POST("/agents", func(c *gin.Context) {
 		var in control.SaveAgentInput
 		if !bindJSON(c, &in) {
@@ -1393,18 +1522,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 		c.Data(200, "application/zip", data)
 	})
-	api.POST("/setup/probe", func(c *gin.Context) {
-		var in struct {
-			NodePath string `json:"nodePath"`
-			PiPath   string `json:"piPath"`
-		}
-		if !bindJSON(c, &in) {
-			return
-		}
-		p := control.DetectRuntime(strings.TrimSpace(in.NodePath), strings.TrimSpace(in.PiPath))
-		store.SetRuntimeProbe(p)
-		c.JSON(200, p)
-	})
 	api.POST("/setup/test", func(c *gin.Context) {
 		var in control.SaveConfigInput
 		if !bindJSON(c, &in) {
@@ -1451,8 +1568,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			writeError(c, 422, err)
 			return
 		}
-		cfg := store.Config()
-		store.SetRuntimeProbe(control.DetectRuntime(cfg.NodePath, cfg.PiPath))
 		c.JSON(200, store.State())
 	}
 	api.POST("/setup/complete", saveConfig)
@@ -1562,6 +1677,33 @@ func parseIntQuery(v string, defaultVal int) (int, error) {
 		return 0, errors.New("invalid integer")
 	}
 	return i, nil
+}
+
+func parseBoolQuery(value string, defaultValue bool) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultValue, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, errors.New("invalid boolean")
+	}
+	return parsed, nil
+}
+
+func archiveFilenamePart(value string) string {
+	value = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, strings.TrimSpace(value))
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func detailLimit(c *gin.Context) int {

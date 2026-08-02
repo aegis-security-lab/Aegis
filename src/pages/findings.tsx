@@ -49,6 +49,14 @@ import type { Finding } from "@/types"
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"] as const
 type Severity = (typeof SEVERITY_ORDER)[number]
 
+const AUDIT_LEVEL_BY_SEVERITY: Record<Severity, string> = {
+  critical: "A",
+  high: "B",
+  medium: "C",
+  low: "E",
+  info: "I",
+}
+
 const SEVERITY_LABEL: Record<Severity, string> = {
   critical: "严重",
   high: "高危",
@@ -439,6 +447,10 @@ export function FindingsPage() {
                     <span className="truncate text-sm font-medium">
                       {finding.title}
                     </span>
+                    <AuditLevelBadge
+                      auditLevel={finding.auditLevel}
+                      severity={finding.severity}
+                    />
                     <SeverityBadge severity={finding.severity} />
                   </div>
                   <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
@@ -624,6 +636,23 @@ function FilterSelect({
         </SelectContent>
       </Select>
     </div>
+  )
+}
+
+function AuditLevelBadge({
+  auditLevel,
+  severity,
+}: {
+  auditLevel?: string
+  severity: string
+}) {
+  const sev = isSeverity(severity) ? severity : "info"
+  const level = auditLevel || AUDIT_LEVEL_BY_SEVERITY[sev]
+
+  return (
+    <Badge variant="outline" className="font-semibold tabular-nums">
+      {level}级
+    </Badge>
   )
 }
 

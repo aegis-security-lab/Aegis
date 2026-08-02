@@ -32,7 +32,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { probeRuntime, saveSettings, testConnection, testWebSearch } from "@/lib/api"
+import { saveSettings, testConnection, testWebSearch } from "@/lib/api"
 import { useAppState } from "@/lib/state"
 import type { SaveConfigInput, WebSearchInput, WebSearchResult } from "@/types"
 
@@ -47,7 +47,7 @@ const providers = [
 export function SettingsPage() {
   const { state, setState } = useAppState()
   const config = state!.config
-  const [busy, setBusy] = React.useState<"save" | "probe" | "test" | null>(null)
+  const [busy, setBusy] = React.useState<"save" | "test" | null>(null)
   const [searchBusy, setSearchBusy] = React.useState(false)
   const [searchResult, setSearchResult] = React.useState<WebSearchResult | null>(null)
   const [searchInput, setSearchInput] = React.useState<WebSearchInput>({ query: "latest AI agent news", topic: "general", searchDepth: "basic", includeAnswer: true, maxResults: 5 })
@@ -69,22 +69,10 @@ export function SettingsPage() {
       setState(next)
       setForm(fromConfig(next.config))
       toast.success("设置已保存", {
-        description: "新配置将用于之后启动的 Pi sessions。",
+        description: "新配置将用于之后启动的 AgentCore executions。",
       })
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "保存失败")
-    } finally {
-      setBusy(null)
-    }
-  }
-  const probe = async () => {
-    setBusy("probe")
-    try {
-      const result = await probeRuntime(form.nodePath, form.piPath)
-      if (result.ready) toast.success(`Pi ${result.piVersion} 已就绪`)
-      else toast.error(result.error)
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : "检测失败")
     } finally {
       setBusy(null)
     }
@@ -120,7 +108,7 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="System"
         title="设置"
-        description="配置 Pi runtime、Provider、默认工作区与全局安全策略。"
+        description="配置 AgentCore、Provider、默认工作区与全局安全策略。"
         actions={
           <Button type="submit" disabled={busy !== null}>
             {busy === "save" ? <Spinner /> : <Save />}保存设置
@@ -135,7 +123,7 @@ export function SettingsPage() {
           {(
             [
               ["general", "全局配置"],
-              ["runtime", "Pi Runtime"],
+              ["runtime", "AgentCore"],
               ["model", "模型与认证"],
               ["search", "Web 搜索"],
               ["workspace", "工作区"],
@@ -186,47 +174,22 @@ export function SettingsPage() {
                     <Radar className="size-4" />
                   </span>
                   <div>
-                    <CardTitle>Pi Runtime</CardTitle>
+                    <CardTitle>AgentCore Runtime</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      本机 RPC 进程入口
+                      内嵌 Go 控制面
                     </p>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="settings-node">
-                      Node.js 路径
-                    </FieldLabel>
-                    <Input
-                      id="settings-node"
-                      value={form.nodePath}
-                      onChange={(event) =>
-                        update("nodePath", event.target.value)
-                      }
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="settings-pi">Pi CLI 路径</FieldLabel>
-                    <Input
-                      id="settings-pi"
-                      value={form.piPath}
-                      onChange={(event) => update("piPath", event.target.value)}
-                    />
-                  </Field>
-                </FieldGroup>
+                <Alert>
+                  <ShieldCheck />
+                  <AlertTitle>AgentCore 已内嵌</AlertTitle>
+                  <AlertDescription>
+                    Agent 循环、模型调用、工具策略和调度都在 Aegis 服务进程中运行；无需 Node.js 或外部 Agent CLI。文件和命令工具通过任务专属 Docker 容器执行。
+                  </AlertDescription>
+                </Alert>
               </CardContent>
-              <CardFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={probe}
-                  disabled={busy !== null}
-                >
-                  {busy === "probe" ? <Spinner /> : <Radar />}重新检测
-                </Button>
-              </CardFooter>
             </Card>
             <div className={section === "search" ? "grid min-h-[560px] gap-5 xl:grid-cols-[180px_minmax(320px,0.9fr)_minmax(360px,1.1fr)]" : "hidden"}>
               <Card>
@@ -310,7 +273,7 @@ export function SettingsPage() {
                   <div>
                     <CardTitle>模型与认证</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      直接传递给 Pi CLI
+                      由 AgentCore Provider 直接连接
                     </p>
                   </div>
                 </div>
@@ -357,7 +320,7 @@ export function SettingsPage() {
                       onChange={(event) =>
                         update("baseUrl", event.target.value)
                       }
-                      placeholder="留空使用 Pi 内置 endpoint"
+                      placeholder="留空使用 Provider 默认 endpoint"
                     />
                   </Field>
                   <ModelPricingFields
@@ -405,7 +368,6 @@ export function SettingsPage() {
                         <SelectContent>
                           <SelectItem value="api_key">API Key</SelectItem>
                           <SelectItem value="environment">环境变量</SelectItem>
-                          <SelectItem value="pi_auth">Pi 已有登录</SelectItem>
                         </SelectContent>
                       </Select>
                     </Field>
@@ -477,9 +439,9 @@ export function SettingsPage() {
                     <Gauge className="size-4" />
                   </span>
                   <div>
-                    <CardTitle>Issue 执行预算</CardTitle>
+                    <CardTitle>子 Issue 单次 Execution 预算</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      仅对根 Issue 生效；任一预算达到后会总结现有成果并放弃根目标
+                      每次重新执行都会获得新预算；Task 总时钟墙预算独立计算且不会重置
                     </p>
                   </div>
                 </div>
@@ -487,88 +449,87 @@ export function SettingsPage() {
               <CardContent>
                 <FieldGroup>
                   <Field>
-                    <FieldLabel htmlFor="settings-budget-tokens">
-                      Token 预算
+                    <FieldLabel htmlFor="settings-budget-turns">
+                      正常工作轮数
                     </FieldLabel>
                     <Input
-                      id="settings-budget-tokens"
+                      id="settings-budget-turns"
                       type="number"
                       min={1}
-                      placeholder="留空表示不限制"
-                      value={form.issueBudget.tokenLimit ?? ""}
+                      max={1000}
+                      value={form.issueBudget.maxTurns}
                       onChange={(event) =>
                         update("issueBudget", {
                           ...form.issueBudget,
-                          tokenLimit: event.target.value === "" ? null : Number(event.target.value),
+                          maxTurns: Number(event.target.value),
                         })
                       }
                     />
                     <FieldDescription>
-                      只统计根 Issue 当前这一次 Execution 的 Token；评论唤醒、返工、继续执行或手动重启产生新 Execution 后重新计数，子 Issue 不会单独触发预算。
+                      默认 100 轮。达到上限后不再继续正常工作，立即切换到受限总结阶段。
                     </FieldDescription>
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-budget-cost">
-                      价格成本预算（美元）
+                    <FieldLabel htmlFor="settings-budget-active-time">
+                      正常工作时间（分钟）
                     </FieldLabel>
                     <Input
-                      id="settings-budget-cost"
+                      id="settings-budget-active-time"
                       type="number"
-                      min={0.000001}
-                      step="0.000001"
-                      placeholder="留空表示不限制"
-                      value={form.issueBudget.costLimit ?? ""}
+                      min={1}
+                      max={1440}
+                      value={form.issueBudget.activeTimeMinutes}
                       onChange={(event) =>
                         update("issueBudget", {
                           ...form.issueBudget,
-                          costLimit: event.target.value === "" ? null : Number(event.target.value),
+                          activeTimeMinutes: Number(event.target.value),
                         })
                       }
                     />
                     <FieldDescription>
-                      只统计根 Issue 当前这一次 Execution 按模型价格快照计算的成本；新 Execution 会重新计数。
+                      默认 20 分钟，只计算当前 Execution；新 Execution 从零开始。
                     </FieldDescription>
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-budget-time">
-                      时间预算（分钟）
+                    <FieldLabel htmlFor="settings-budget-summary-turns">
+                      总结最多轮数
                     </FieldLabel>
                     <Input
-                      id="settings-budget-time"
+                      id="settings-budget-summary-turns"
                       type="number"
                       min={1}
-                      placeholder="留空表示不限制"
-                      value={form.issueBudget.timeLimitMinutes ?? ""}
+                      max={100}
+                      value={form.issueBudget.summaryTurns}
                       onChange={(event) =>
                         update("issueBudget", {
                           ...form.issueBudget,
-                          timeLimitMinutes: event.target.value === "" ? null : Number(event.target.value),
+                          summaryTurns: Number(event.target.value),
                         })
                       }
                     />
                     <FieldDescription>
-                      默认 10 分钟；只计算根 Issue 当前这一次 Execution 的运行时间。等待期间不会消耗，新 Execution 会获得完整的新预算。
+                      默认最多 10 轮。总结阶段禁用委派、写入和正常交付等扩展型工具。
                     </FieldDescription>
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-budget-poll">
-                      预算轮询间隔（秒）
+                    <FieldLabel htmlFor="settings-budget-summary-time">
+                      总结时间上限（分钟）
                     </FieldLabel>
                     <Input
-                      id="settings-budget-poll"
+                      id="settings-budget-summary-time"
                       type="number"
                       min={1}
-                      max={3600}
-                      value={form.issueBudget.checkIntervalSeconds}
+                      max={60}
+                      value={form.issueBudget.summaryTimeMinutes}
                       onChange={(event) =>
                         update("issueBudget", {
                           ...form.issueBudget,
-                          checkIntervalSeconds: Number(event.target.value),
+                          summaryTimeMinutes: Number(event.target.value),
                         })
                       }
                     />
                     <FieldDescription>
-                      默认每 60 秒检查一次。三个预算都留空时不执行预算检查。
+                      默认 3 分钟；与总结轮数任一先达到即结束，并把 Issue 标记为超出预算。
                     </FieldDescription>
                   </Field>
                 </FieldGroup>
@@ -809,9 +770,9 @@ export function SettingsPage() {
             </Alert>
             <Alert variant="destructive">
               <ShieldCheck />
-              <AlertTitle>Pi 没有内置沙箱</AlertTitle>
+              <AlertTitle>工具在任务容器中隔离</AlertTitle>
               <AlertDescription>
-                审批扩展是操作门禁，不是系统级隔离。请只配置可信目录。
+                AgentCore 位于控制面；Shell、文件与浏览器工具进入任务专属 Docker 容器。仍请只配置可信目录并限制容器网络和资源。
               </AlertDescription>
             </Alert>
           </div>
@@ -826,8 +787,6 @@ function fromConfig(
 ): SaveConfigInput {
   return {
     language: config.language || "zh",
-    nodePath: config.nodePath,
-    piPath: config.piPath,
     provider: config.provider,
     model: config.model,
     pricing: config.pricing,
@@ -845,10 +804,10 @@ function fromConfig(
     maxChildrenPerRequest: config.maxChildrenPerRequest || 100,
     maxDirectChildren: config.maxDirectChildren || 100,
     issueBudget: config.issueBudget ?? {
-      tokenLimit: null,
-      costLimit: null,
-      timeLimitMinutes: 10,
-      checkIntervalSeconds: 60,
+      maxTurns: 100,
+      activeTimeMinutes: 20,
+      summaryTurns: 10,
+      summaryTimeMinutes: 3,
     },
     issueHeartbeat: config.issueHeartbeat ?? {
       intervalSeconds: 60,

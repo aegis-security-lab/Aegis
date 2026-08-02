@@ -2,7 +2,6 @@ import * as React from "react"
 
 import {
   deleteInputAttachment,
-  uploadEmployeeAttachment,
   uploadTaskAttachment,
 } from "@/lib/api"
 import type { InputAttachment } from "@/types"
@@ -21,11 +20,8 @@ export interface PendingInputAttachment {
   error?: string
 }
 
-export function useInputAttachments(
-  scope: "task" | "employee",
-  employeeId = ""
-) {
-  const scopeKey = `${scope}:${employeeId}`
+export function useInputAttachments() {
+  const scopeKey = "task"
   const [bucket, setBucket] = React.useState<{
     key: string
     items: PendingInputAttachment[]
@@ -105,12 +101,7 @@ export function useInputAttachments(
       setItems((current) => [...current, ...additions])
       for (const item of additions) {
         if (item.state === "error") continue
-        const upload =
-          scope === "task"
-            ? uploadTaskAttachment
-            : (file: File, onProgress: (progress: number) => void) =>
-                uploadEmployeeAttachment(employeeId, file, onProgress)
-        void upload(item.file, (progress) => {
+        void uploadTaskAttachment(item.file, (progress) => {
           if (scopeKeyRef.current === uploadKey) {
             updateItem(item.clientId, { progress })
           }
@@ -137,7 +128,7 @@ export function useInputAttachments(
           })
       }
     },
-    [employeeId, scope, setItems, updateItem]
+    [setItems, updateItem]
   )
 
   const remove = React.useCallback(

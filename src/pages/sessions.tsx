@@ -38,14 +38,14 @@ export function SessionsPage() {
       <PageHeader
         eyebrow="Runtime observability"
         title="Sessions"
-        description="查看每次 Pi Execution 的完整对话、工具事件和运行信息。"
+        description="查看每次 AgentCore Execution 的完整对话、工具事件和运行信息。"
       />
       <Card>
         <CardHeader className="gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <CardTitle>Pi 会话</CardTitle>
+            <CardTitle>AgentCore 会话</CardTitle>
             <CardDescription>
-              每个 Issue 中的每个 Agent 对应一个当前 Pi
+              每个 Issue 中的每个 Agent 对应一个当前 AgentCore
               Session，多次执行会继续同一段对话。
             </CardDescription>
           </div>

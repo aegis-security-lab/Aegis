@@ -141,18 +141,11 @@ func (m *Manager) heartbeatPrompt(issue Issue, wakeup AgentWakeup) (string, erro
 		return "", err
 	}
 	waitLabel := "直属子 Issues 尚未结束"
-	budgetSummary := "此 Issue 不是根 Issue，不受全局 Issue 执行预算限制"
+	budgetSummary := "此子 Issue 的单次 Execution 预算会在 AgentCore loop 内独立计数；重新执行会获得新预算，但不会重置 Task 总时钟墙预算"
 	if issue.ParentID == "" {
-		budget := budgetForIssue(m.store.Config(), issue)
-		usage, _ := m.issueBudgetUsage(issue.ID, time.Now())
-		budgetSummary = "根 Issue 未设置时间预算（无限制）"
-		if budget.TimeLimitMinutes != nil {
-			limit := time.Duration(*budget.TimeLimitMinutes) * time.Minute
-			remaining := limit - usage.Duration
-			if remaining < 0 {
-				remaining = 0
-			}
-			budgetSummary = fmt.Sprintf("本次 Execution 预算 %s；已运行 %s；剩余 %s", formatHeartbeatDuration(limit), formatHeartbeatDuration(usage.Duration), formatHeartbeatDuration(remaining))
+		budgetSummary = "Task 未设置总时钟墙预算（无限制）"
+		if limit, elapsed, remaining, configured := taskWallClockRemaining(issue, time.Now()); configured {
+			budgetSummary = fmt.Sprintf("Task 总时钟墙预算 %s；从创建起已过 %s；剩余 %s（等待和重新执行均不重置）", formatHeartbeatDuration(limit), formatHeartbeatDuration(elapsed), formatHeartbeatDuration(remaining))
 		}
 	}
 

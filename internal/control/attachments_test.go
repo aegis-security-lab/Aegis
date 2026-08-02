@@ -15,7 +15,7 @@ func TestUploadedAttachmentIsStoredAndBoundToCompletionComment(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Generate report", Objective: "A verified report is generated.", Priority: "medium", WorkMode: "autonomous",
-		AssigneeAgentID: "backend-engineer-002", Workspace: store.Config().Workspace,
+		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestValidationAgentCanReadOnlySourceExecutionAttachmentsInChunks(t *testing
 
 	otherIssue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Other report", Objective: "Keep unrelated evidence isolated.", Priority: "low", WorkMode: "autonomous",
-		AssigneeAgentID: "backend-engineer-002", Workspace: store.Config().Workspace,
+		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,9 +226,8 @@ func TestWriteOutputIsNotReadByServerWithoutExplicitUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(issue.Workspace, "output.csv")
-	if err := os.WriteFile(path, []byte("status\nverified\n"), 0o600); err != nil {
-		t.Fatal(err)
+	if issue.Workspace != TaskWorkspacePath {
+		t.Fatalf("task workspace = %q, want %q", issue.Workspace, TaskWorkspacePath)
 	}
 	store.startToolEvent("exec-write", issue.ID, "call-write", "write", map[string]any{"path": "output.csv"})
 	store.finishToolEvent("exec-write", issue.ID, "call-write", "write", map[string]any{"text": "written"}, false)
@@ -270,8 +269,8 @@ exit 99
 	}
 	container := ContainerInstance{
 		ID: nextID("container"), ContainerProfileID: "profile-direct", TaskID: nextID("task"),
-		Name: "aegis-task-direct", Image: WorkerContainerImage, NodePath: "node",
-		PiPath: "/usr/local/bin/pi", WorkspacePath: "/workspace", NetworkMode: "bridge",
+		Name: "aegis-task-direct", Image: WorkerContainerImage,
+		WorkspacePath: "/workspace", NetworkMode: "bridge",
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	if err = store.db.Create(&container).Error; err != nil {

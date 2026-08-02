@@ -9,7 +9,9 @@ import (
 	"mime"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -150,11 +152,31 @@ func (m *Manager) ValidationAttachments(executionID, token string) ([]Validation
 	return m.validationAttachmentInfos(validation.SourceExecutionID)
 }
 
+func (m *Manager) nativeValidationAttachments(executionID string) ([]ValidationAttachmentInfo, error) {
+	validation, err := m.activeValidationForExecution(executionID)
+	if err != nil {
+		return nil, err
+	}
+	return m.validationAttachmentInfos(validation.SourceExecutionID)
+}
+
 func (m *Manager) ReadValidationAttachment(executionID, token, attachmentID, archivePath string, offset int64, limit int) (ValidationAttachmentChunk, error) {
 	validation, err := m.validationAttachmentContext(executionID, token)
 	if err != nil {
 		return ValidationAttachmentChunk{}, err
 	}
+	return m.readValidationAttachment(validation, attachmentID, archivePath, offset, limit)
+}
+
+func (m *Manager) nativeReadValidationAttachment(executionID, attachmentID, archivePath string, offset int64, limit int) (ValidationAttachmentChunk, error) {
+	validation, err := m.activeValidationForExecution(executionID)
+	if err != nil {
+		return ValidationAttachmentChunk{}, err
+	}
+	return m.readValidationAttachment(validation, attachmentID, archivePath, offset, limit)
+}
+
+func (m *Manager) readValidationAttachment(validation IssueValidation, attachmentID, archivePath string, offset int64, limit int) (ValidationAttachmentChunk, error) {
 	attachmentID = strings.TrimSpace(attachmentID)
 	var attachment IssueAttachment
 	if attachmentID == "" || m.store.db.First(&attachment, "id = ? AND issue_id = ? AND execution_id = ?", attachmentID, validation.IssueID, validation.SourceExecutionID).Error != nil {
@@ -201,6 +223,10 @@ func (m *Manager) validationAttachmentContext(executionID, token string) (IssueV
 	if session == nil || session.kind != "validation" || token == "" || !secureEqual(token, session.controlToken) {
 		return IssueValidation{}, errors.New("invalid validation execution control token")
 	}
+	return m.activeValidationForExecution(executionID)
+}
+
+func (m *Manager) activeValidationForExecution(executionID string) (IssueValidation, error) {
 	var validation IssueValidation
 	if err := m.store.db.First(&validation, "validation_execution_id = ? AND status = ?", executionID, "running").Error; err != nil {
 		return IssueValidation{}, errors.New("active validation not found")
@@ -220,15 +246,58 @@ func (m *Manager) validationAttachmentInfos(sourceExecutionID string) ([]Validat
 	return infos, nil
 }
 
+func (m *Manager) materializeValidationAttachments(sourceExecutionID string, container ContainerInstance) ([]ValidationAttachmentInfo, error) {
+	var attachments []IssueAttachment
+	if err := m.store.db.Where("execution_id = ?", sourceExecutionID).Order("created_at asc").Find(&attachments).Error; err != nil {
+		return nil, err
+	}
+	infos := make([]ValidationAttachmentInfo, 0, len(attachments))
+	for _, attachment := range attachments {
+		if info, err := os.Stat(attachment.StoragePath); err != nil || info.Size() != attachment.Size {
+			return nil, fmt.Errorf("验收附件 %s 在服务端不存在或不完整", attachment.Name)
+		}
+		destination := validationAttachmentRuntimePath(attachment)
+		if err := materializeContainerValidationAttachment(attachment, container, destination); err != nil {
+			return nil, fmt.Errorf("准备验收附件 %s 失败: %w", attachment.Name, err)
+		}
+		info := m.validationAttachmentInfo(attachment)
+		info.Path = destination
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
+func validationAttachmentRuntimePath(attachment IssueAttachment) string {
+	return path.Join(TaskWorkspacePath, ".aegis", "validation-evidence", attachment.ExecutionID, attachment.ID, attachment.Name)
+}
+
+func materializeContainerValidationAttachment(attachment IssueAttachment, container ContainerInstance, destination string) error {
+	check := exec.Command("docker", "exec", container.Name, "sh", "-c", `test -f "$1" && test "$(wc -c < "$1")" -eq "$2"`, "aegis-validation-check", destination, strconv.FormatInt(attachment.Size, 10))
+	if check.Run() == nil {
+		return nil
+	}
+	dir := path.Dir(destination)
+	if output, err := exec.Command("docker", "exec", container.Name, "mkdir", "-p", dir).CombinedOutput(); err != nil {
+		return fmt.Errorf("创建容器验收附件目录失败: %s", strings.TrimSpace(string(output)))
+	}
+	temporary := destination + ".partial"
+	if output, err := exec.Command("docker", "cp", attachment.StoragePath, container.Name+":"+temporary).CombinedOutput(); err != nil {
+		return fmt.Errorf("复制验收附件到容器失败: %s", strings.TrimSpace(string(output)))
+	}
+	if output, err := exec.Command("docker", "exec", container.Name, "sh", "-c", `mv "$1" "$2" && chmod 0444 "$2"`, "aegis-validation-copy", temporary, destination).CombinedOutput(); err != nil {
+		_ = exec.Command("docker", "exec", container.Name, "rm", "-f", temporary).Run()
+		return fmt.Errorf("完成容器验收附件写入失败: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func (m *Manager) validationAttachmentInfo(attachment IssueAttachment) ValidationAttachmentInfo {
 	info := ValidationAttachmentInfo{
 		ID: attachment.ID, Name: attachment.Name, Description: attachment.Description,
 		MimeType: attachment.MimeType, Size: attachment.Size,
+		Path:        validationAttachmentRuntimePath(attachment),
 		DownloadURL: strings.TrimRight(m.controlURL, "/") + "/api/attachments/" + attachment.ID,
 		Readable:    validationAttachmentReadable(attachment),
-	}
-	if strings.EqualFold(filepath.Ext(attachment.Name), ".zip") {
-		info.ArchiveEntries = m.validationArchiveEntries(attachment)
 	}
 	return info
 }

@@ -10,11 +10,12 @@ import (
 func TestStateAndSessionListsOmitHeavyExecutionContent(t *testing.T) {
 	s := configuredStore(t)
 	issue, err := s.CreateIssue(CreateIssueInput{
-		Title:     "Inspect compact state",
-		Objective: "Keep list payloads small while preserving detail data.",
-		Context:   strings.Repeat("context", 2_000),
-		Priority:  "medium",
-		WorkMode:  "guided",
+		Title:           "Inspect compact state",
+		Objective:       "Keep list payloads small while preserving detail data.",
+		Context:         strings.Repeat("context", 2_000),
+		Priority:        "medium",
+		WorkMode:        "guided",
+		AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,10 +73,11 @@ func TestStateAndSessionListsOmitHeavyExecutionContent(t *testing.T) {
 func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 	s := configuredStore(t)
 	issue, err := s.CreateIssue(CreateIssueInput{
-		Title:     "Inspect event pagination",
-		Objective: "Return a bounded event summary and preserve full event details.",
-		Priority:  "medium",
-		WorkMode:  "guided",
+		Title:           "Inspect event pagination",
+		Objective:       "Return a bounded event summary and preserve full event details.",
+		Priority:        "medium",
+		WorkMode:        "guided",
+		AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +168,7 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 func TestDetailCursorPagesAndSessionDelta(t *testing.T) {
 	s := configuredStore(t)
 	issue, err := s.CreateIssue(CreateIssueInput{
-		Title: "Paginated activity", Objective: "Keep large histories bounded.", Priority: "medium", WorkMode: "guided",
+		Title: "Paginated activity", Objective: "Keep large histories bounded.", Priority: "medium", WorkMode: "guided", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Agent Phone Studio</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --studio-canvas: #0b0d10;
+      --studio-panel: #101318;
+      --studio-raised: #171b21;
+      --studio-line: rgba(255, 255, 255, .09);
+      --studio-ink: #f4f5f7;
+      --studio-muted: #8e97a3;
+      --phone-metal: #202329;
+      --phone-rim: #08090b;
+      --screen-paper: #f2f2f7;
+      --screen-raised: #ffffff;
+      --screen-ink: #111114;
+      --screen-muted: #71717a;
+      --screen-line: rgba(17, 17, 20, .09);
+      --wallpaper: #38475f;
+      --board-blue: #2475e8;
+      --relay-green: #20a568;
+      --focus-blue: #69a7ff;
+      --danger-red: #e5484d;
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      background: var(--studio-canvas);
+      color: var(--studio-ink);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    * { box-sizing: border-box; }
+    button, input { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; min-width: 320px; background: var(--studio-canvas); }
+
+    .studio-bar {
+      min-height: 64px;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid var(--studio-line);
+      background: rgba(11, 13, 16, .92);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .studio-brand { min-width: 180px; }
+    .studio-brand strong { display: block; font-size: 15px; letter-spacing: -.01em; }
+    .studio-brand span { color: var(--studio-muted); font-size: 11px; }
+    .session-form { display: flex; align-items: center; gap: 8px; }
+    .studio-input, .studio-select {
+      width: 188px;
+      height: 36px;
+      padding: 0 11px;
+      color: var(--studio-ink);
+      background: #080a0d;
+      border: 1px solid var(--studio-line);
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .studio-select { width: 232px; color-scheme: dark; }
+    .studio-input:focus, .studio-select:focus { border-color: var(--focus-blue); box-shadow: 0 0 0 3px rgba(105, 167, 255, .14); }
+    .studio-button {
+      min-height: 36px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 8px;
+      color: #0b0d10;
+      background: #f1f3f5;
+      font-weight: 650;
+      cursor: pointer;
+      transition: transform 120ms cubic-bezier(.23, 1, .32, 1), background 150ms ease;
+    }
+    .studio-button:hover { background: #ffffff; }
+    .studio-button:active { transform: scale(.97); }
+    .studio-button:focus-visible { outline: 3px solid rgba(105, 167, 255, .4); outline-offset: 2px; }
+    .session-chip {
+      margin-left: auto;
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--studio-muted);
+      font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .studio-layout {
+      min-height: calc(100vh - 64px);
+      display: grid;
+      grid-template-columns: minmax(520px, 58%) minmax(390px, 42%);
+    }
+    .device-stage {
+      padding: 40px 32px 56px;
+      display: grid;
+      place-items: start center;
+      background: var(--studio-canvas);
+      overflow: auto;
+    }
+    .device-column { display: grid; justify-items: center; gap: 16px; }
+    .device-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--studio-muted);
+      font-size: 12px;
+    }
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #33c779; box-shadow: 0 0 0 4px rgba(51, 199, 121, .11); }
+
+    .phone-hardware {
+      width: 420px;
+      height: 860px;
+      padding: 10px;
+      position: relative;
+      border-radius: 58px;
+      background: var(--phone-metal);
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, .14) inset,
+        0 0 0 2px #050608,
+        0 28px 70px rgba(0, 0, 0, .5),
+        0 7px 18px rgba(0, 0, 0, .55);
+    }
+    .phone-hardware::before,
+    .phone-hardware::after {
+      content: "";
+      position: absolute;
+      left: -3px;
+      width: 3px;
+      border-radius: 2px 0 0 2px;
+      background: #353941;
+      box-shadow: -1px 0 0 #090a0c;
+    }
+    .phone-hardware::before { top: 150px; height: 88px; }
+    .phone-hardware::after { top: 258px; height: 62px; }
+    .power-button { position: absolute; right: -3px; top: 190px; width: 3px; height: 104px; border-radius: 0 2px 2px 0; background: #353941; box-shadow: 1px 0 0 #090a0c; }
+    .phone-screen {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+      border-radius: 49px;
+      background: var(--wallpaper);
+      color: var(--screen-ink);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, .04) inset;
+    }
+    .dynamic-island {
+      width: 126px;
+      height: 36px;
+      position: absolute;
+      z-index: 15;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      border-radius: 22px;
+      background: #000;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, .04);
+    }
+    .dynamic-island::after { content: ""; position: absolute; right: 15px; top: 13px; width: 8px; height: 8px; border-radius: 50%; background: #09121e; box-shadow: 0 0 0 1px #182536 inset; }
+    .status-bar {
+      height: 58px;
+      padding: 14px 24px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      z-index: 12;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+    .status-time { width: 72px; text-align: center; }
+    .status-icons { width: 72px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+    .cell-bars { height: 11px; display: flex; align-items: flex-end; gap: 2px; }
+    .cell-bars i { display: block; width: 3px; border-radius: 1px; background: currentColor; }
+    .cell-bars i:nth-child(1) { height: 4px; }.cell-bars i:nth-child(2) { height: 6px; }.cell-bars i:nth-child(3) { height: 8px; }.cell-bars i:nth-child(4) { height: 10px; }
+    .wifi { width: 13px; height: 10px; border: 2px solid currentColor; border-left-color: transparent; border-right-color: transparent; border-bottom-color: transparent; border-radius: 50%; position: relative; }
+    .wifi::after { content: ""; position: absolute; width: 3px; height: 3px; border-radius: 50%; background: currentColor; left: 3px; top: 5px; }
+    .battery { width: 21px; height: 10px; border: 1px solid currentColor; border-radius: 3px; padding: 1px; position: relative; }
+    .battery::before { content: ""; position: absolute; right: -3px; top: 3px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: currentColor; opacity: .7; }
+    .battery::after { content: ""; display: block; width: 80%; height: 100%; border-radius: 1px; background: currentColor; }
+
+    .phone-content { height: calc(100% - 58px); position: relative; overflow: hidden; }
+    .phone-view { height: 100%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding-bottom: 72px; }
+    .phone-view::-webkit-scrollbar { display: none; }
+    .phone-view.home-view { padding: 24px 22px 100px; color: #fff; }
+    .home-header { margin: 26px 4px 34px; }
+    .home-eyebrow { font-size: 13px; opacity: .72; }
+    .home-title { margin-top: 2px; font-size: 29px; line-height: 1.1; font-weight: 720; letter-spacing: -.035em; text-wrap: balance; }
+    .app-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px 16px; }
+    .app-launcher { min-width: 0; border: 0; padding: 0; color: #fff; background: transparent; cursor: pointer; display: grid; justify-items: center; gap: 7px; }
+    .app-launcher:focus-visible { outline: 3px solid rgba(255, 255, 255, .8); outline-offset: 5px; border-radius: 16px; }
+    .app-launcher:active .app-icon { transform: scale(.94); }
+    .app-icon {
+      width: 62px;
+      height: 62px;
+      display: grid;
+      place-items: center;
+      position: relative;
+      border-radius: 15px;
+      color: #fff;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, .28) inset, 0 7px 15px rgba(0, 0, 0, .2);
+      transition: transform 130ms cubic-bezier(.23, 1, .32, 1);
+    }
+    .app-icon.board { background: var(--board-blue); }
+    .app-icon.relay { background: var(--relay-green); }
+    .app-icon.generic { background: #6f7480; }
+    .board-glyph { width: 31px; height: 30px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+    .board-glyph i { display: block; border-radius: 3px; background: rgba(255, 255, 255, .94); }
+    .board-glyph i:first-child { grid-row: span 2; }
+    .relay-glyph { width: 33px; height: 27px; border-radius: 14px; background: #fff; position: relative; }
+    .relay-glyph::after { content: ""; position: absolute; left: 5px; bottom: -4px; width: 10px; height: 10px; background: #fff; transform: skewY(-34deg); border-radius: 2px; }
+    .relay-glyph i { position: absolute; z-index: 1; top: 12px; width: 4px; height: 4px; border-radius: 50%; background: var(--relay-green); }
+    .relay-glyph i:nth-child(1) { left: 8px; }.relay-glyph i:nth-child(2) { left: 15px; }.relay-glyph i:nth-child(3) { left: 22px; }
+    .app-name { max-width: 78px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; text-shadow: 0 1px 3px rgba(0, 0, 0, .45); }
+    .home-dock { position: absolute; z-index: 5; left: 18px; right: 18px; bottom: 22px; min-height: 82px; padding: 10px 16px 13px; display: flex; align-items: center; justify-content: space-around; border-radius: 27px; background: rgba(238, 243, 248, .18); box-shadow: 0 0 0 1px rgba(255, 255, 255, .13) inset; backdrop-filter: blur(20px); }
+    .dock-item { width: 55px; height: 55px; border-radius: 14px; display: grid; place-items: center; background: rgba(255, 255, 255, .88); color: #29364a; font-size: 21px; font-weight: 750; box-shadow: 0 5px 12px rgba(0, 0, 0, .16); }
+
+    .app-view { background: var(--screen-paper); color: var(--screen-ink); }
+    .app-nav { min-height: 88px; padding: 12px 16px 10px; position: sticky; top: 0; z-index: 5; background: rgba(242, 242, 247, .94); backdrop-filter: blur(18px); border-bottom: 1px solid var(--screen-line); }
+    .app-nav-row { min-height: 34px; display: grid; grid-template-columns: 72px 1fr 72px; align-items: center; }
+    .nav-control { min-width: 44px; min-height: 44px; border: 0; padding: 0 4px; color: var(--board-blue); background: transparent; cursor: pointer; font-size: 14px; }
+    .nav-control:first-child { text-align: left; }.nav-control:last-child { text-align: right; }
+    .nav-control:focus-visible { outline: 3px solid rgba(36, 117, 232, .24); border-radius: 8px; }
+    .nav-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 15px; font-weight: 680; letter-spacing: -.01em; }
+    .app-summary { padding: 2px 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--screen-muted); font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
+    .app-body { padding: 18px 16px 96px; }
+    .section-block { margin-bottom: 22px; }
+    .section-title { margin: 0 14px 7px; color: var(--screen-muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    .ios-group { overflow: hidden; border-radius: 13px; background: var(--screen-raised); box-shadow: 0 0 0 1px rgba(17, 17, 20, .035); }
+    .ios-row { width: 100%; min-height: 54px; padding: 10px 13px; border: 0; border-bottom: 1px solid var(--screen-line); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; color: var(--screen-ink); background: transparent; text-align: left; }
+    .ios-row:last-child { border-bottom: 0; }
+    button.ios-row { cursor: pointer; transition: background 120ms ease; }
+    button.ios-row:hover { background: rgba(17, 17, 20, .035); }
+    button.ios-row:active { background: rgba(17, 17, 20, .07); }
+    button.ios-row:focus-visible { position: relative; z-index: 1; outline: 3px solid rgba(36, 117, 232, .25); outline-offset: -3px; }
+    .row-copy { min-width: 0; }
+    .row-label { display: block; font-size: 14px; font-weight: 520; line-height: 1.3; text-wrap: pretty; }
+    .row-detail { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--screen-muted); font-size: 11px; }
+    .row-ref { color: var(--screen-muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .chevron { color: #b7b7bd; font-size: 22px; line-height: 1; }
+    .ios-field { display: block; padding: 10px 13px 12px; border-bottom: 1px solid var(--screen-line); }
+    .ios-field:last-child { border-bottom: 0; }
+    .field-label { display: block; margin-bottom: 6px; color: var(--screen-muted); font-size: 11px; }
+    .phone-input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid rgba(17, 17, 20, .12); border-radius: 9px; outline: none; color: var(--screen-ink); background: #ececf1; transition: border-color 150ms ease, box-shadow 150ms ease; }
+    .phone-input:focus { border-color: var(--board-blue); box-shadow: 0 0 0 3px rgba(36, 117, 232, .12); }
+    .primary-action { width: 100%; min-height: 46px; margin-top: 10px; border: 0; border-radius: 11px; color: #fff; background: var(--board-blue); font-weight: 650; cursor: pointer; transition: transform 120ms cubic-bezier(.23, 1, .32, 1), filter 120ms ease; }
+    .primary-action:hover { filter: brightness(1.05); }.primary-action:active { transform: scale(.98); }.primary-action:focus-visible { outline: 3px solid rgba(36, 117, 232, .25); outline-offset: 2px; }
+    .empty-row { min-height: 80px; display: grid; place-items: center; color: var(--screen-muted); font-size: 13px; }
+
+    .ai-lens { position: absolute; z-index: 10; left: 50%; bottom: 19px; transform: translateX(-50%); max-width: 248px; height: 28px; padding: 0 11px; display: flex; align-items: center; gap: 7px; border-radius: 15px; color: rgba(255, 255, 255, .82); background: rgba(4, 6, 9, .75); backdrop-filter: blur(12px); font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; box-shadow: 0 0 0 1px rgba(255, 255, 255, .08); }
+    .lens-eye { width: 12px; height: 8px; border: 1px solid currentColor; border-radius: 50%; position: relative; flex: 0 0 auto; }
+    .lens-eye::after { content: ""; position: absolute; width: 3px; height: 3px; border-radius: 50%; background: currentColor; left: 4px; top: 2px; }
+    .lens-revision { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .home-indicator { position: absolute; z-index: 16; bottom: 6px; left: 50%; width: 132px; height: 5px; transform: translateX(-50%); border-radius: 3px; background: currentColor; color: rgba(255, 255, 255, .9); mix-blend-mode: difference; }
+
+    .inspector { min-width: 0; padding: 28px; border-left: 1px solid var(--studio-line); background: var(--studio-panel); overflow: auto; }
+    .inspector-stack { display: grid; gap: 24px; }
+    .inspector-panel { min-width: 0; }
+    .inspector-head { margin-bottom: 18px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+    .inspector-kicker { color: var(--focus-blue); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; }
+    .inspector h1 { margin: 6px 0 0; font-size: 20px; line-height: 1.2; letter-spacing: -.025em; }
+    .revision-chip { max-width: 190px; overflow: hidden; text-overflow: ellipsis; padding: 6px 8px; border: 1px solid var(--studio-line); border-radius: 6px; color: var(--studio-muted); font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    .text-browser { min-height: 320px; max-height: 48vh; margin: 0; padding: 18px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 10px; color: #cbd2dc; background: #090b0e; box-shadow: 0 0 0 1px var(--studio-line); font: 12px/1.62 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
+    .inspector-note { margin: 12px 2px 0; color: var(--studio-muted); font-size: 11px; text-wrap: pretty; }
+    .log-head { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .log-title { display: flex; align-items: center; gap: 9px; }
+    .log-title h2 { margin: 0; font-size: 14px; letter-spacing: -.01em; }
+    .log-live { width: 7px; height: 7px; border-radius: 50%; background: #33c779; box-shadow: 0 0 0 4px rgba(51, 199, 121, .1); }
+    .log-counts { color: var(--studio-muted); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .system-log { min-height: 220px; max-height: 350px; overflow: auto; border-radius: 10px; background: #090b0e; box-shadow: 0 0 0 1px var(--studio-line); }
+    .log-empty { min-height: 220px; display: grid; place-items: center; padding: 24px; color: var(--studio-muted); font-size: 12px; text-align: center; }
+    .log-entry { min-height: 66px; padding: 11px 13px; display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 10px; align-items: start; border-bottom: 1px solid rgba(255, 255, 255, .055); }
+    .log-entry:last-child { border-bottom: 0; }
+    .log-status { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--studio-muted); }
+    .log-entry.success .log-status { background: #33c779; }
+    .log-entry.error .log-status { background: var(--danger-red); box-shadow: 0 0 0 3px rgba(229, 72, 77, .1); }
+    .log-copy { min-width: 0; }
+    .log-action { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e5e8ed; font-size: 12px; font-weight: 600; }
+    .log-context { margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .log-error { margin-top: 4px; color: #ff8b8f; font-size: 11px; line-height: 1.35; text-wrap: pretty; }
+    .log-time { color: #6f7884; font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+    .phone-loading { height: 100%; display: grid; place-items: center; padding: 40px; color: rgba(255,255,255,.75); text-align: center; }
+    .phone-loading strong { display: block; margin-bottom: 5px; color: #fff; font-size: 18px; }
+
+    @media (max-width: 980px) {
+      .studio-layout { grid-template-columns: 1fr; }
+      .inspector { border-left: 0; border-top: 1px solid var(--studio-line); }
+      .session-chip { display: none; }
+    }
+    @media (max-width: 540px) {
+      .studio-bar { padding: 12px 14px; flex-wrap: wrap; }
+      .studio-brand { width: 100%; }
+      .session-form { width: 100%; }.studio-input { flex: 1; width: auto; }
+      .device-stage { padding: 24px 8px 38px; }
+      .device-column { width: 100%; }
+      .phone-hardware { width: min(420px, calc(100vw - 22px)); height: min(860px, calc((100vw - 22px) * 2.0476)); border-radius: clamp(42px, 13.8vw, 58px); }
+      .phone-screen { border-radius: clamp(36px, 11.7vw, 49px); }
+      .inspector { padding: 22px 14px; }.inspector-head { align-items: flex-start; flex-direction: column; gap: 10px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="studio-bar">
+    <div class="studio-brand"><strong>Agent Phone Studio</strong><span>Human view + AI text browser</span></div>
+    <div class="session-form">
+      <input class="studio-input" id="agent" value="demo-agent" aria-label="Agent ID" autocomplete="off" onchange="loadRecentSessions()">
+      <button class="studio-button" type="button" onclick="start()">New phone</button>
+      <select class="studio-input studio-select" id="recent" aria-label="Recent phones"><option value="">No saved phones</option></select>
+      <button class="studio-button" type="button" onclick="resumePhone()">Resume</button>
+    </div>
+    <span id="session" class="session-chip">No active session</span>
+  </header>
+
+  <div class="studio-layout">
+    <main class="device-stage">
+      <div class="device-column">
+        <div class="device-label"><i class="live-dot"></i><span>Human preview · interactive</span></div>
+        <div class="phone-hardware" aria-label="Agent phone preview">
+          <i class="power-button"></i>
+          <div class="phone-screen">
+            <div class="dynamic-island" aria-hidden="true"></div>
+            <div class="status-bar" aria-hidden="true">
+              <span class="status-time" id="clock">9:41</span>
+              <span class="status-icons"><span class="cell-bars"><i></i><i></i><i></i><i></i></span><i class="wifi"></i><i class="battery"></i></span>
+            </div>
+            <div class="phone-content" id="visual">
+              <div class="phone-loading"><div><strong>Agent Phone</strong>Start a session to install Board and Relay.</div></div>
+            </div>
+            <div class="ai-lens"><i class="lens-eye"></i><span class="lens-revision" id="lens">AI lens · waiting for page</span></div>
+            <i class="home-indicator" aria-hidden="true"></i>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <aside class="inspector">
+      <div class="inspector-stack">
+        <section class="inspector-panel">
+          <div class="inspector-head">
+            <div><div class="inspector-kicker">AI TEXT FRONTEND</div><h1>What the agent sees</h1></div>
+            <span class="revision-chip" id="revision">No page revision</span>
+          </div>
+          <pre class="text-browser" id="text">Start a phone session. The exact text page, REF indices, and available navigation actions will appear here.</pre>
+          <p class="inspector-note">The phone and text browser operate on the same page revision. Every interactive row in the phone maps to a REF visible here.</p>
+        </section>
+        <section class="inspector-panel" aria-labelledby="system-log-title">
+          <div class="log-head">
+            <div class="log-title"><i class="log-live"></i><h2 id="system-log-title">System log</h2></div>
+            <span class="log-counts" id="log-counts">0 events</span>
+          </div>
+          <div class="system-log" id="system-log" aria-live="polite">
+            <div class="log-empty">Phone operations, successful results, and errors will appear here.</div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    let page = null;
+    let session = '';
+
+    function updateClock() {
+      const now = new Date();
+      document.querySelector('#clock').textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+    updateClock();
+    setInterval(updateClock, 30000);
+    loadRecentSessions();
+
+    async function start() {
+      const button = document.querySelector('.studio-button');
+      button.disabled = true;
+      button.textContent = 'Starting…';
+      try {
+        const response = await fetch('/phone/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agentId: document.querySelector('#agent').value, scopes: ['*'] })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || 'Could not start phone');
+        session = result.phoneSessionId;
+        page = result.page;
+        document.querySelector('#session').textContent = session;
+        render();
+        await fetchLogs();
+        await loadRecentSessions();
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        button.disabled = false;
+        button.textContent = 'New phone';
+      }
+    }
+
+    async function loadRecentSessions() {
+      const agentID = document.querySelector('#agent').value.trim();
+      const select = document.querySelector('#recent');
+      if (!agentID) {
+        select.innerHTML = '<option value="">Enter an Agent ID</option>';
+        return;
+      }
+      try {
+        const response = await fetch('/phone/sessions?agentId=' + encodeURIComponent(agentID));
+        if (!response.ok) return;
+        const result = await response.json();
+        const options = (result.sessions || []).map(item => {
+          const location = item.activeAppId ? item.activeAppId + ' · ' + item.currentPageId : 'Home';
+          return '<option value="' + esc(item.id) + '">' + esc(location + ' · ' + new Date(item.updatedAt).toLocaleString()) + '</option>';
+        }).join('');
+        select.innerHTML = options || '<option value="">No saved phones</option>';
+      } catch (_) {}
+    }
+
+    async function resumePhone() {
+      const selected = document.querySelector('#recent').value;
+      if (!selected) return;
+      try {
+        const response = await fetch('/phone/sessions/' + encodeURIComponent(selected) + '/page');
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || 'Could not resume phone');
+        session = selected;
+        page = result;
+        document.querySelector('#session').textContent = session;
+        render();
+        await fetchLogs();
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
+    async function act(action, ref, args = {}) {
+      if (!page || !session) return;
+      try {
+        const response = await fetch('/phone/actions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+          body: JSON.stringify({ phoneSessionId: session, pageRevision: page.pageRevision, action, ref, arguments: args })
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          if (result.page) page = result.page;
+          throw new Error(result.message || 'Action failed');
+        }
+        page = result.page;
+        render();
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        await fetchLogs();
+      }
+    }
+
+    async function fetchLogs() {
+      if (!session) return;
+      try {
+        const response = await fetch('/phone/sessions/' + encodeURIComponent(session) + '/logs?limit=100');
+        if (!response.ok) return;
+        const result = await response.json();
+        renderLogs(result.events || []);
+      } catch (_) {
+        // The log panel is diagnostic and must never interrupt Phone actions.
+      }
+    }
+
+    function actionLabel(event) {
+      if (event.action === 'start') return 'Phone session started';
+      const names = { open_app: 'Opened app', click: 'Clicked control', input: 'Entered text', select: 'Selected option', toggle: 'Changed toggle', submit: 'Submitted form', back: 'Went back', home: 'Returned home', refresh: 'Refreshed page', scroll: 'Scrolled content', swipe: 'Performed swipe', long_press: 'Long-pressed control', drag: 'Dragged item', load_more: 'Loaded more content' };
+      return names[event.action] || event.action || 'Unknown operation';
+    }
+
+    function renderLogs(events) {
+      const errors = events.filter(event => event.result === 'error').length;
+      document.querySelector('#log-counts').textContent = events.length + ' events · ' + errors + ' errors';
+      if (!events.length) {
+        document.querySelector('#system-log').innerHTML = '<div class="log-empty">No operations recorded for this Phone session.</div>';
+        return;
+      }
+      document.querySelector('#system-log').innerHTML = events.map(event => {
+        const time = new Date(event.occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const context = [event.appId, event.pageId, event.ref, event.errorCode].filter(Boolean).join(' · ');
+        const error = event.errorMessage ? '<div class="log-error">' + esc(event.errorMessage) + '</div>' : '';
+        return '<article class="log-entry ' + esc(event.result) + '"><i class="log-status"></i><div class="log-copy"><div class="log-action">' + esc(actionLabel(event)) + '</div><div class="log-context">' + esc(context) + '</div>' + error + '</div><time class="log-time">' + esc(time) + '</time></article>';
+      }).join('');
+    }
+
+    function showError(message) {
+      const visual = document.querySelector('#visual');
+      visual.insertAdjacentHTML('afterbegin', '<div style="position:absolute;z-index:20;left:16px;right:16px;top:12px;padding:11px 13px;border-radius:10px;color:#fff;background:#b4232a;font-size:12px">' + esc(message) + '</div>');
+      setTimeout(() => visual.firstElementChild?.remove(), 3200);
+    }
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+    }
+
+    function appKind(label) {
+      const value = String(label).toLowerCase();
+      if (value.includes('board')) return 'board';
+      if (value.includes('relay')) return 'relay';
+      return 'generic';
+    }
+
+    function appGlyph(kind) {
+      if (kind === 'board') return '<span class="board-glyph"><i></i><i></i><i></i></span>';
+      if (kind === 'relay') return '<span class="relay-glyph"><i></i><i></i><i></i></span>';
+      return '<span style="font-size:22px;font-weight:750">A</span>';
+    }
+
+    function renderHome() {
+      const apps = page.refs.filter(ref => ref.kind === 'app');
+      const launchers = apps.map(ref => {
+        const kind = appKind(ref.label);
+        return '<button class="app-launcher" type="button" onclick="act(\'' + ref.actions[0] + '\',\'' + ref.ref + '\')">' +
+          '<span class="app-icon ' + kind + '">' + appGlyph(kind) + '</span>' +
+          '<span class="app-name">' + esc(ref.label) + '</span></button>';
+      }).join('');
+      return '<div class="phone-view home-view">' +
+        '<div class="home-header"><div class="home-eyebrow">' + esc(page.summary) + '</div><div class="home-title">' + esc(page.metadata?.appName || 'Agent Phone') + '</div></div>' +
+        '<div class="app-grid">' + launchers + '</div></div>' +
+        '<div class="home-dock" aria-hidden="true"><span class="dock-item">⌘</span><span class="dock-item">···</span><span class="dock-item">AI</span></div>';
+    }
+
+    function renderLine(line) {
+      const ref = page.refs.find(candidate => candidate.ref === line.ref);
+      if (ref?.kind === 'input') {
+        return '<label class="ios-field"><span class="field-label">' + esc(line.label) + ' · ' + esc(line.ref) + '</span>' +
+          '<input class="phone-input" aria-label="' + esc(line.label) + '" onchange="act(\'input\',\'' + ref.ref + '\',{value:this.value})"></label>';
+      }
+      if (ref) {
+        const isSubmit = ref.actions[0] === 'submit';
+        if (isSubmit) return '<button class="primary-action" type="button" onclick="act(\'submit\',\'' + ref.ref + '\')">' + esc(line.label) + ' <span class="row-ref">' + esc(line.ref) + '</span></button>';
+        const contextAction = ref.actions.includes('long_press') ? ' oncontextmenu="event.preventDefault();act(\'long_press\',\'' + ref.ref + '\')"' : '';
+        return '<button class="ios-row" type="button" onclick="act(\'' + ref.actions[0] + '\',\'' + ref.ref + '\')"' + contextAction + '><span class="row-copy"><span class="row-label">' + esc(line.label) + '</span><span class="row-detail">' + esc(line.detail) + '</span></span><span><span class="row-ref">' + esc(line.ref) + '</span><span class="chevron">›</span></span></button>';
+      }
+      return '<div class="ios-row"><span class="row-copy"><span class="row-label">' + esc(line.label) + '</span><span class="row-detail">' + esc(line.detail) + '</span></span></div>';
+    }
+
+    function renderApp() {
+      const back = page.refs.find(ref => ref.ref === '@back');
+      const home = page.refs.find(ref => ref.ref === '@home');
+      const sections = page.sections.map(section => {
+        const lines = section.lines.length ? section.lines.map(renderLine).join('') : '<div class="empty-row">Nothing here yet</div>';
+        return '<section class="section-block"><h2 class="section-title">' + esc(section.title) + '</h2><div class="ios-group">' + lines + '</div></section>';
+      }).join('');
+      return '<div class="phone-view app-view"><nav class="app-nav"><div class="app-nav-row">' +
+        (back ? '<button class="nav-control" type="button" onclick="act(\'back\',\'@back\')">‹ Back</button>' : '<span></span>') +
+        '<div class="nav-title">' + esc(page.title) + '</div>' +
+        (home ? '<button class="nav-control" type="button" onclick="act(\'home\',\'@home\')">Home</button>' : '<span></span>') +
+        '</div><div class="app-summary">' + esc(page.summary) + '</div></nav><div class="app-body">' + sections + '</div></div>';
+    }
+
+    function render() {
+      document.querySelector('#text').textContent = page.text;
+      document.querySelector('#revision').textContent = page.pageRevision;
+      document.querySelector('#lens').textContent = 'AI lens · ' + page.pageRevision;
+      document.querySelector('#visual').innerHTML = page.pageId === 'phone.home' ? renderHome() : renderApp();
+    }
+  </script>
+</body>
+</html>

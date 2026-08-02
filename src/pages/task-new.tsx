@@ -39,7 +39,6 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -61,14 +60,6 @@ const priorities: CreateIssueInput["priority"][] = [
   "low",
 ]
 
-const workModeItems: Array<{
-  label: string
-  value: CreateIssueInput["workMode"]
-}> = [
-  { label: "引导模式", value: "guided" },
-  { label: "自治模式", value: "autonomous" },
-]
-
 const categoryLabels: Record<string, string> = {
   orchestrator: "调度",
   backend: "后端",
@@ -86,7 +77,7 @@ export function TaskNewPage() {
     ?.clone
   const [busy, setBusy] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
-  const attachments = useInputAttachments("task")
+  const attachments = useInputAttachments()
   const [form, setForm] = React.useState<CreateIssueInput>({
     projectId: clone?.projectId ?? state?.projects[0]?.id,
     title: clone?.title ?? "",
@@ -95,7 +86,7 @@ export function TaskNewPage() {
     priority: clone?.priority ?? "high",
     assigneeAgentId: clone?.assigneeAgentId,
     containerProfileId: clone?.containerProfileId,
-    workMode: clone?.workMode ?? "guided",
+    workMode: "autonomous",
     workspace: state?.config.workspace ?? "",
     context: clone?.context ?? "",
     constraints:
@@ -105,15 +96,10 @@ export function TaskNewPage() {
     humanValidationFallback: clone?.humanValidationFallback,
   })
 
-  const enabledEmployees = (state?.agents ?? []).filter(
+  const enabledAgentTypes = (state?.agents ?? []).filter(
     (agent) =>
       agent.enabled && !agent.internal && agent.category !== "concierge"
   )
-  const availability = new Map(
-    (state?.employeeAvailability ?? []).map((item) => [item.agentId, item])
-  )
-  const isAvailable = (agentId: string) =>
-    availability.get(agentId)?.available ?? true
   const enabledContainerProfiles = (state?.containerProfiles ?? []).filter(
     (profile) => profile.enabled
   )
@@ -122,18 +108,14 @@ export function TaskNewPage() {
       (profile) => profile.name.toLowerCase() === "default"
     ) ?? enabledContainerProfiles[0]
   const defaultAgent =
-    enabledEmployees.find((agent) => agent.id === "aegis-orchestrator") ??
-    enabledEmployees[0]
+    enabledAgentTypes.find((agent) => agent.id === "aegis-orchestrator") ??
+    enabledAgentTypes[0]
   const selectedAgentId = form.assigneeAgentId || defaultAgent?.id || ""
-  const selectedAgent = enabledEmployees.find(
+  const selectedAgent = enabledAgentTypes.find(
     (agent) => agent.id === selectedAgentId
   )
-  const selectedAvailability = availability.get(selectedAgentId)
-  const positions = (state?.positions ?? []).filter(
-    (position) => position.enabled
-  )
-  const agentItems = enabledEmployees.map((agent) => ({
-    label: `${agent.name} · ${positions.find((position) => position.id === agent.positionId)?.name ?? categoryLabels[agent.category] ?? agent.category}${isAvailable(agent.id) ? "" : " · 其他任务工作中（将新建会话）"}`,
+  const agentItems = enabledAgentTypes.map((agent) => ({
+    label: `${agent.name} · ${categoryLabels[agent.category] ?? agent.category}`,
     value: agent.id,
   }))
   const priorityItems = priorities.map((priority) => ({
@@ -149,7 +131,7 @@ export function TaskNewPage() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!selectedAgentId) {
-      toast.error("请选择一名可用员工")
+      toast.error("请选择一个 Agent 类型")
       return
     }
     if (!defaultContainerProfile) {
@@ -181,7 +163,7 @@ export function TaskNewPage() {
       <PageHeader
         eyebrow="New task"
         title="发布任务"
-        description="把顶层任务指派给一名具体员工；岗位仅用于分类，不能作为负责人。"
+        description="选择根 Agent 类型。发布后系统会创建任务内临时身份、独立会话和独立手机。"
         actions={
           <Button
             variant="ghost"
@@ -372,17 +354,17 @@ export function TaskNewPage() {
         <div className="flex flex-col gap-5 xl:sticky xl:top-20">
           <Card>
             <CardHeader>
-              <CardTitle>任务负责人</CardTitle>
+              <CardTitle>根 Agent</CardTitle>
               <CardDescription>
-                新任务可选择任意已启用员工；正在工作的员工会使用新的任务会话。
+                这里选择可复用的 Agent 类型，不是在全局员工名册中挑选某个人。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field
-                  data-invalid={enabledEmployees.length === 0 || undefined}
+                  data-invalid={enabledAgentTypes.length === 0 || undefined}
                 >
-                  <FieldLabel htmlFor="task-agent">负责人</FieldLabel>
+                  <FieldLabel htmlFor="task-agent">根 Agent 类型</FieldLabel>
                   <Select
                     items={agentItems}
                     value={selectedAgentId}
@@ -393,58 +375,23 @@ export function TaskNewPage() {
                     <SelectTrigger
                       id="task-agent"
                       className="w-full"
-                      aria-invalid={enabledEmployees.length === 0 || undefined}
+                      aria-invalid={enabledAgentTypes.length === 0 || undefined}
                     >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
-                      {positions.map((position) => {
-                        const people = enabledEmployees.filter(
-                          (agent) => agent.positionId === position.id
-                        )
-                        if (people.length === 0) return null
-                        return (
-                          <SelectGroup key={position.id}>
-                            <SelectLabel>
-                              {position.name} · {people.length} 人
-                            </SelectLabel>
-                            {people.map((agent) => {
-                              const status = availability.get(agent.id)
-                              return (
-                                <SelectItem key={agent.id} value={agent.id}>
-                                  {agent.name} · {agent.englishName}
-                                  {!isAvailable(agent.id)
-                                    ? ` · 其他任务工作中${status?.currentIssueIdentifier ? `（${status.currentIssueIdentifier}）` : ""}，将新建会话`
-                                    : ""}
-                                </SelectItem>
-                              )
-                            })}
-                          </SelectGroup>
-                        )
-                      })}
-                      {enabledEmployees.some((agent) => !agent.positionId) ? (
-                        <SelectGroup>
-                          <SelectLabel>未分配岗位</SelectLabel>
-                          {enabledEmployees
-                            .filter((agent) => !agent.positionId)
-                            .map((agent) => (
-                              <SelectItem key={agent.id} value={agent.id}>
-                                {agent.name} ·{" "}
-                                {categoryLabels[agent.category] ??
-                                  agent.category}
-                              </SelectItem>
-                            ))}
-                        </SelectGroup>
-                      ) : null}
+                      {enabledAgentTypes.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name} · {categoryLabels[agent.category] ?? agent.category}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    {enabledEmployees.length === 0
-                      ? "当前没有已启用员工。"
-                      : selectedAvailability && !selectedAvailability.available
-                        ? `${selectedAgent?.name ?? "该员工"}正在处理 ${selectedAvailability.currentIssueIdentifier ?? "其他任务"}；发布后会为本任务创建独立会话。`
-                        : selectedAgent?.description ||
-                          "该员工会直接执行任务，并可按组织关系委派直属下属。"}
+                    {enabledAgentTypes.length === 0
+                      ? "当前没有已启用的 Agent 类型。"
+                      : selectedAgent?.description ||
+                        "发布后系统会为根 Issue 创建任务内临时身份、独立会话和独立手机。"}
                   </FieldDescription>
                 </Field>
                 <Field orientation="horizontal">
@@ -472,9 +419,9 @@ export function TaskNewPage() {
                         selectedAgent.category}
                     </Badge>
                     <Badge variant="outline">
-                      {selectedAgent.tools.length} 个工具
+                      {selectedAgent.skillIds.length} 个 Skills
                     </Badge>
-                    <Badge variant="outline">支持拆分 Issues</Badge>
+                    <Badge variant="outline">独立 Phone</Badge>
                   </Field>
                 ) : null}
               </FieldGroup>
@@ -483,33 +430,17 @@ export function TaskNewPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>执行策略</CardTitle>
+              <CardTitle>执行与协作</CardTitle>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="task-work-mode">工作模式</FieldLabel>
-                  <Select
-                    items={workModeItems}
-                    value={form.workMode}
-                    onValueChange={(value) =>
-                      update("workMode", value as CreateIssueInput["workMode"])
-                    }
-                  >
-                    <SelectTrigger id="task-work-mode" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="guided">引导模式</SelectItem>
-                        <SelectItem value="autonomous">自治模式</SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                  <FieldLabel>Board Autonomy</FieldLabel>
+                  <div className="rounded-md border bg-muted/25 px-3 py-3 text-sm">
+                    <div className="flex items-center gap-2 font-medium"><Route className="size-4 text-primary" />唯一协作模式</div>
+                  </div>
                   <FieldDescription>
-                    {form.workMode === "guided"
-                      ? "子 Issue 完成后进入人工复核。"
-                      : "依赖满足后自动推进并完成父任务。"}
+                    根 Agent 可创建并分派子 Issue，同时继续工作；一分钟心跳会汇总进度，评论与手机消息可直接引导或唤醒运行中的 Agent。
                   </FieldDescription>
                 </Field>
                 <Field>
@@ -554,11 +485,11 @@ export function TaskNewPage() {
                           : undefined
                       )
                     }}
-                    placeholder="使用全局配置"
+                    placeholder="留空表示不限制"
                   />
                   <FieldDescription>
-                    留空使用设置中的全局预算；填写后仅本任务根 Issue
-                    使用该预算，优先级高于全局时间预算，子 Issue 不重复计时。
+                    整个 Task 从创建时开始计算；等待、休眠及重新执行子
+                    Issue 均不会重置。子 Issue 的单次 Execution 预算在设置中单独配置。
                   </FieldDescription>
                 </Field>
               </FieldGroup>
@@ -569,15 +500,16 @@ export function TaskNewPage() {
             <Route />
             <AlertTitle>动态 Issue 树</AlertTitle>
             <AlertDescription>
-              所选 Agent 发现任务过大时，可创建 2–8 个带依赖关系的子
-              Issues；调度器随后分配并执行它们。
+                  根 Agent 发现任务过大时，可通过 Board 创建并指派子
+                  Issues。每个受派实例会领取新的临时名、会话和 Phone，父 Agent
+                  同时继续推进集成工作。
             </AlertDescription>
           </Alert>
           <Alert>
             <ShieldCheck />
             <AlertTitle>真实执行</AlertTitle>
             <AlertDescription>
-              发布后会启动本机 Pi 进程，并可能修改工作目录文件、产生模型费用。
+              发布后会启动 AgentCore execution，并通过任务容器修改文件、调用工具和产生模型费用。
             </AlertDescription>
           </Alert>
         </div>

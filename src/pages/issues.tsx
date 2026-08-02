@@ -17,6 +17,7 @@ const statuses: IssueStatus[] = [
   "in_review",
   "blocked",
   "failed",
+  "budget_exceeded",
   "done",
   "cancelled",
 ]
@@ -28,6 +29,7 @@ const statusLabels: Record<IssueStatus, string> = {
   in_review: "待复核",
   blocked: "阻塞",
   failed: "失败",
+  budget_exceeded: "超出预算",
   done: "已完成",
   cancelled: "已取消",
 }
@@ -112,6 +114,7 @@ export function IssuesPage() {
             issues={displayedIssues}
             relations={state?.relations ?? []}
             agents={state?.agents ?? []}
+            taskAgents={state?.taskAgents ?? []}
             executions={state?.executions ?? []}
           />
         </Card>
