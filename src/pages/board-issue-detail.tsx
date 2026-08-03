@@ -5,6 +5,7 @@ import {
   Link2,
   MessageSquareText,
   Pencil,
+  Plus,
   Send,
   Trash2,
 } from "lucide-react"
@@ -13,8 +14,8 @@ import { toast } from "sonner"
 
 import { IssueCommentsList } from "@/components/issue-comments-list"
 import { IssueAgentActivity } from "@/components/issue-agent-activity"
+import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { MarkdownContent } from "@/components/markdown-content"
-import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -61,27 +62,26 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  createIssue,
   createIssueComment,
   deleteIssue,
   fetchIssue,
   updateIssue,
 } from "@/lib/api"
 import { formatTime } from "@/lib/format"
+import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
+import { issueWorkflowStatus } from "@/lib/issue-workflow"
 import { useAppState } from "@/lib/state"
-import type { IssueDetail, IssueStatus } from "@/types"
+import type { CreateIssueInput, IssueDetail, IssueStatus } from "@/types"
 
 const issueStatuses: IssueStatus[] = [
-  "backlog",
   "todo",
   "in_progress",
   "in_review",
-  "blocked",
-  "failed",
-  "budget_exceeded",
   "done",
   "cancelled",
 ]
-const issuePriorities = ["critical", "high", "medium", "low"] as const
+const issuePriorities = ["high", "middle", "low"] as const
 
 type IssueEditForm = {
   title: string
@@ -90,6 +90,22 @@ type IssueEditForm = {
   priority: (typeof issuePriorities)[number]
   status: IssueStatus
   assigneeAgentId: string
+}
+
+type ChildIssueForm = {
+  title: string
+  description: string
+  objective: string
+  priority: CreateIssueInput["priority"]
+  assigneeAgentId: string
+}
+
+const emptyChildIssue: ChildIssueForm = {
+  title: "",
+  description: "",
+  objective: "",
+  priority: "middle",
+  assigneeAgentId: "",
 }
 
 export function BoardIssueDetailPage() {
@@ -101,12 +117,15 @@ export function BoardIssueDetailPage() {
   const [busy, setBusy] = React.useState(false)
   const [editOpen, setEditOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
+  const [createOpen, setCreateOpen] = React.useState(false)
+  const [childForm, setChildForm] =
+    React.useState<ChildIssueForm>(emptyChildIssue)
   const [editForm, setEditForm] = React.useState<IssueEditForm>({
     title: "",
     description: "",
     objective: "",
-    priority: "medium",
-    status: "backlog",
+    priority: "middle",
+    status: "todo",
     assigneeAgentId: "",
   })
   const load = React.useCallback(
@@ -132,7 +151,16 @@ export function BoardIssueDetailPage() {
         <Spinner />
       </div>
     )
-  const { issue } = detail
+  const issue =
+    state?.issues.find((candidate) => candidate.id === detail.issue.id) ??
+    detail.issue
+  const runtime = issueRuntimeOrUnavailable(
+    issueRuntimeMap([
+      ...(detail.runtime ? [detail.runtime] : []),
+      ...(state?.issueRuntimes ?? []),
+    ]),
+    issue.id
+  )
   const assignee = state?.agents.find(
     (agent) => agent.id === issue.assigneeAgentId
   )
@@ -152,7 +180,7 @@ export function BoardIssueDetailPage() {
       description: issue.description,
       objective: issue.objective,
       priority: issue.priority,
-      status: issue.status,
+      status: issueWorkflowStatus(issue.status),
       assigneeAgentId: issue.assigneeAgentId ?? "",
     })
     setEditOpen(true)
@@ -161,14 +189,17 @@ export function BoardIssueDetailPage() {
     if (!editForm.title.trim() || busy) return
     setBusy(true)
     try {
-      const updated = await updateIssue(issue.id, {
+      const input: Partial<typeof issue> = {
         title: editForm.title.trim(),
         description: editForm.description,
         objective: editForm.objective,
         priority: editForm.priority,
-        status: editForm.status,
         assigneeAgentId: editForm.assigneeAgentId,
-      })
+      }
+      if (editForm.status !== issueWorkflowStatus(issue.status)) {
+        input.status = editForm.status
+      }
+      const updated = await updateIssue(issue.id, input)
       setDetail((current) =>
         current ? { ...current, issue: updated } : current
       )
@@ -192,6 +223,38 @@ export function BoardIssueDetailPage() {
     } finally {
       setBusy(false)
       setDeleteOpen(false)
+    }
+  }
+  const createChildIssue = async () => {
+    if (!childForm.title.trim() || busy) return
+    setBusy(true)
+    try {
+      await createIssue({
+        parentId: issue.id,
+        title: childForm.title.trim(),
+        description: childForm.description,
+        objective: childForm.objective,
+        priority: childForm.priority,
+        status: "todo",
+        workMode: "autonomous",
+        assigneeAgentId: childForm.assigneeAgentId || undefined,
+        workspace: issue.workspace,
+        context: "",
+        constraints: issue.constraints ?? "",
+      })
+      const next = await load()
+      if (next) setDetail(next)
+      setChildForm(emptyChildIssue)
+      setCreateOpen(false)
+      toast.success(
+        childForm.assigneeAgentId
+          ? "子 Issue 已创建并分配"
+          : "未分配的子 Issue 已加入 Todo"
+      )
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "创建子 Issue 失败")
+    } finally {
+      setBusy(false)
     }
   }
   const submit = async () => {
@@ -245,7 +308,7 @@ export function BoardIssueDetailPage() {
                 <Trash2 />
                 删除
               </Button>
-              <StatusBadge status={issue.status} />
+              <IssueRuntimeBadge runtime={runtime} />
               <Badge variant="outline">{issue.priority}</Badge>
               <Badge variant="secondary">{assignee?.name || "未委派"}</Badge>
             </div>
@@ -282,8 +345,8 @@ export function BoardIssueDetailPage() {
                   评论
                 </CardTitle>
                 <CardDescription>
-                  这是 Board 评论，不是私聊；协调层会把它直接送达对应的任务内 Agent
-                  实例，运行中即时引导，睡眠中立即唤醒。
+                  这是 Board 评论，不是私聊；协调层会把它直接送达对应的任务内
+                  Agent 实例，运行中即时引导，睡眠中立即唤醒。
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
@@ -326,7 +389,7 @@ export function BoardIssueDetailPage() {
               <CardContent className="flex flex-col gap-3 text-sm">
                 <Meta label="负责人" value={assignee?.name || "未委派"} />
                 <Meta label="创建者" value={creatorName} />
-                <Meta label="状态" value={issue.status} />
+                <Meta label="状态" value={issueWorkflowStatus(issue.status)} />
                 <Meta label="优先级" value={issue.priority} />
                 <Meta label="协作模式" value="Board Autonomy" />
                 <Meta label="创建时间" value={formatTime(issue.createdAt)} />
@@ -349,10 +412,21 @@ export function BoardIssueDetailPage() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader>
+              <CardHeader className="flex-row items-center justify-between gap-3">
                 <CardTitle className="flex items-center gap-2">
                   <GitBranch />子 Issues
                 </CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setChildForm(emptyChildIssue)
+                    setCreateOpen(true)
+                  }}
+                >
+                  <Plus />
+                  新建
+                </Button>
               </CardHeader>
               <CardContent className="flex flex-col gap-2">
                 {detail.children.length ? (
@@ -556,6 +630,132 @@ export function BoardIssueDetailPage() {
               onClick={() => void saveEdit()}
             >
               保存修改
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>新建子 Issue</DialogTitle>
+            <DialogDescription>
+              负责人可留空；未分配 Issue 会保留在 Todo，之后再由 Agent
+              或操作员认领。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="child-issue-title">标题</Label>
+              <Input
+                id="child-issue-title"
+                value={childForm.title}
+                onChange={(event) =>
+                  setChildForm((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="child-issue-objective">目标</Label>
+              <Textarea
+                id="child-issue-objective"
+                value={childForm.objective}
+                onChange={(event) =>
+                  setChildForm((current) => ({
+                    ...current,
+                    objective: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="child-issue-description">描述</Label>
+              <Textarea
+                id="child-issue-description"
+                value={childForm.description}
+                onChange={(event) =>
+                  setChildForm((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>优先级</Label>
+                <Select
+                  value={childForm.priority}
+                  onValueChange={(value) =>
+                    value &&
+                    setChildForm((current) => ({
+                      ...current,
+                      priority: value as CreateIssueInput["priority"],
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {issuePriorities.map((priority) => (
+                        <SelectItem key={priority} value={priority}>
+                          {priority}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label>负责人（可选）</Label>
+                <Select
+                  value={childForm.assigneeAgentId || "unassigned"}
+                  onValueChange={(value) =>
+                    setChildForm((current) => ({
+                      ...current,
+                      assigneeAgentId:
+                        !value || value === "unassigned" ? "" : value,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="unassigned">未分配</SelectItem>
+                      {(state?.agents ?? [])
+                        .filter(
+                          (agent) =>
+                            agent.enabled &&
+                            !agent.internal &&
+                            agent.category !== "concierge"
+                        )
+                        .map((agent) => (
+                          <SelectItem key={agent.id} value={agent.id}>
+                            {agent.name} · {agent.category}
+                          </SelectItem>
+                        ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button
+              disabled={busy || !childForm.title.trim()}
+              onClick={() => void createChildIssue()}
+            >
+              {busy ? <Spinner /> : <Plus />}
+              创建 Issue
             </Button>
           </DialogFooter>
         </DialogContent>

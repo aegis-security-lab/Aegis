@@ -6,7 +6,7 @@ export interface ConfigView {
   pricing: ModelPricing
   baseUrl: string
   thinking: string
-	authMode: "api_key" | "environment" | ""
+  authMode: "api_key" | "environment" | ""
   hasApiKey: boolean
   workspace: string
   concurrency: number
@@ -79,7 +79,7 @@ export interface Task {
   title: string
   description: string
   objective: string
-  priority: "critical" | "high" | "medium" | "low"
+  priority: "high" | "middle" | "low"
   workMode: "guided" | "autonomous"
   assigneeAgentId?: string
   workspace: string
@@ -154,6 +154,36 @@ export interface ContainerDeleteResult {
   deletedExecutions: number
 }
 
+export interface ContainerBatchFailure {
+  containerId: string
+  error: string
+}
+
+export interface ContainerBatchStopResult {
+  requested: number
+  stopped: ContainerInstance[]
+  failed: ContainerBatchFailure[]
+}
+
+export interface ContainerBatchDeleteImpact {
+  containerIds: string[]
+  containerCount: number
+  taskCount: number
+  issueCount: number
+  executionCount: number
+  activeExecutionCount: number
+  items: ContainerDeleteImpact[]
+}
+
+export interface ContainerBatchDeleteResult {
+  requested: number
+  deleted: ContainerDeleteResult[]
+  failed: ContainerBatchFailure[]
+  deletedIssues: number
+  deletedTasks: number
+  deletedExecutions: number
+}
+
 export interface ContainerProfileDeleteResult {
   containerProfileId: string
   deletedIssues: number
@@ -172,7 +202,9 @@ export type IssueStatus =
   | "cancelled"
 export type IssueExecutionPhase =
   | "active"
+  | "scheduled"
   | "waiting_children"
+  | "sleeping"
   | "resuming"
   | "validating"
   | "summarizing"
@@ -192,7 +224,7 @@ export interface Issue {
   description: string
   objective: string
   status: IssueStatus
-  priority: "critical" | "high" | "medium" | "low"
+  priority: "high" | "middle" | "low"
   workMode: "guided" | "autonomous"
   executionPhase: IssueExecutionPhase
   requestDepth: number
@@ -225,6 +257,18 @@ export interface Issue {
   completedAt?: string
   cancelledAt?: string
   createdAt: string
+  updatedAt: string
+}
+export type IssueRuntimeKind =
+  "running" | "waiting" | "failed" | "completed" | "cancelled" | "pending"
+export interface IssueRuntimeView {
+  issueId: string
+  state: string
+  kind: IssueRuntimeKind
+  health: "healthy" | "waiting" | "stalled" | "error"
+  currentExecutionId?: string
+  currentExecutionStatus?: string
+  detail?: string
   updatedAt: string
 }
 export interface IssueRelation {
@@ -470,6 +514,7 @@ export interface IssueValidation {
 }
 export interface IssueDetail {
   issue: Issue
+  runtime: IssueRuntimeView
   children: Issue[]
   blockedBy: Issue[]
   blocks: Issue[]
@@ -721,6 +766,7 @@ export interface AppState {
   containers: ContainerInstance[]
   tasks: Task[]
   issues: Issue[]
+  issueRuntimes: IssueRuntimeView[]
   relations: IssueRelation[]
   executions: Execution[]
   approvals: Approval[]
@@ -738,7 +784,7 @@ export interface SaveConfigInput {
   pricing: ModelPricing
   baseUrl: string
   thinking: string
-	authMode: "api_key" | "environment"
+  authMode: "api_key" | "environment"
   apiKey: string
   workspace: string
   concurrency: number
@@ -759,7 +805,8 @@ export interface CreateIssueInput {
   title: string
   description: string
   objective: string
-  priority: "critical" | "high" | "medium" | "low"
+  priority: "high" | "middle" | "low"
+  status?: IssueStatus
   workMode: "guided" | "autonomous"
   assigneeAgentId?: string
   workspace: string
@@ -778,7 +825,7 @@ export interface ConnectionTestResult {
   error?: string
 }
 export interface Finding {
-  auditLevel?: AuditLevel;
+  auditLevel?: AuditLevel
   id: string
   domain: string
   category: string
@@ -793,7 +840,7 @@ export interface Finding {
   updatedAt: string
 }
 
-export type AuditLevel = 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'I';
+export type AuditLevel = "S" | "A" | "B" | "C" | "D" | "E" | "I"
 export interface FindingList {
   findings: Finding[]
   total: number

@@ -303,6 +303,8 @@ github.com/z3r2ne/agentcore v0.1.0 h1:mMFYIWT7HknAg2ibwEBi8GItJhdotvvONUQ5QvrpKS
 github.com/z3r2ne/agentcore v0.1.0/go.mod h1:2Uk3hONayCjy7UCsUHaelSEDm8lh4aSk66T3zEcTrDQ=
 github.com/z3r2ne/agentcore v0.2.1 h1:onTE4LweikyyB8SKsZLPCTLPnSYkbL3R6m/FVEwR0Ws=
 github.com/z3r2ne/agentcore v0.2.1/go.mod h1:2Uk3hONayCjy7UCsUHaelSEDm8lh4aSk66T3zEcTrDQ=
+github.com/z3r2ne/agentcore v0.2.2 h1:Ky2/xRMyoG483p5Ad3JSsptesIlsoKFnwW1E3ycnZPk=
+github.com/z3r2ne/agentcore v0.2.2/go.mod h1:2Uk3hONayCjy7UCsUHaelSEDm8lh4aSk66T3zEcTrDQ=
 github.com/zmap/rc2 v0.0.0-20131011165748-24b9757f5521/go.mod h1:3YZ9o3WnatTIZhuOtot4IcUfzoKVjUHqu6WALIyI0nE=
 github.com/zmap/rc2 v0.0.0-20190804163417-abaa70531248 h1:Nzukz5fNOBIHOsnP+6I79kPx3QhLv8nBy2mfFhBRq30=
 github.com/zmap/rc2 v0.0.0-20190804163417-abaa70531248/go.mod h1:3YZ9o3WnatTIZhuOtot4IcUfzoKVjUHqu6WALIyI0nE=

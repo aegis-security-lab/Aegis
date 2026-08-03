@@ -15,6 +15,18 @@ import (
 	"github.com/z3r2ne/agentcore"
 )
 
+func TestIssueExecutionPriorityUsesBoardOrder(t *testing.T) {
+	if high, middle, low := issueExecutionPriority("high"), issueExecutionPriority("middle"), issueExecutionPriority("low"); !(high > middle && middle > low) {
+		t.Fatalf("priority order high=%d middle=%d low=%d", high, middle, low)
+	}
+	if issueExecutionPriority("critical") != issueExecutionPriority("high") || issueExecutionPriority("medium") != issueExecutionPriority("middle") {
+		t.Fatal("legacy priority aliases are not normalized")
+	}
+	if issueExecutionPriority("high") >= coordination.ExecutionPriorityWakeup {
+		t.Fatal("ordinary Issue priority must not preempt durable wakeup recovery")
+	}
+}
+
 func TestFailedChildImmediatelyWakesWaitingParentThroughCoordination(t *testing.T) {
 	store, manager := bridgeTestManager(t)
 	bridge, err := newTestCoordinationBridge(manager, "failed-child-wakeup", "board_autonomy", &coordinationDeliveryRecorder{notify: make(chan struct{}, 2)}, nil)

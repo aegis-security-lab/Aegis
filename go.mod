@@ -10,7 +10,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/projectdiscovery/uncover v1.2.1
 	github.com/spf13/cobra v1.10.2
-	github.com/z3r2ne/agentcore v0.2.1
+	github.com/z3r2ne/agentcore v0.2.2
 	golang.org/x/net v0.52.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2

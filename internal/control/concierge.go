@@ -32,7 +32,7 @@ func (s *Store) CreateConciergeConversation() (ConciergeConversation, error) {
 	cfg := s.effectiveAgentConfig(agent)
 	issue := Issue{
 		ID: issueID, Number: -now.UnixNano(), Identifier: "CHAT-" + strings.TrimPrefix(conversationID, "conversation-"),
-		ProjectID: project.ID, Title: "与管家对话", Status: "done", Priority: "medium", WorkMode: "autonomous",
+		ProjectID: project.ID, Title: "与管家对话", Status: "done", Priority: "middle", WorkMode: "autonomous",
 		ExecutionPhase: "completed", AssigneeAgentID: agent.ID, CurrentExecutionID: executionID,
 		ValidationDisabled: true, Workspace: s.Config().Workspace, CreatedBy: "operator", Hidden: true,
 		CreatedAt: now, UpdatedAt: now,

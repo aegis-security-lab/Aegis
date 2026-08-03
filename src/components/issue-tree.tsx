@@ -5,7 +5,6 @@ import {
   CircleCheck,
   ChevronDown,
   CircleDotDashed,
-  CircleX,
   GitBranch,
   GitMerge,
   TriangleAlert,
@@ -13,6 +12,7 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -23,23 +23,29 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatTime } from "@/lib/format"
+import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
+import { issueWorkflowStatus } from "@/lib/issue-workflow"
 import { cn } from "@/lib/utils"
-import type { AgentDefinition, Execution, Issue, IssueRelation, TaskAgent } from "@/types"
+import type {
+  AgentDefinition,
+  Issue,
+  IssueRelation,
+  IssueRuntimeView,
+  TaskAgent,
+} from "@/types"
 
-const terminalStatuses = new Set(["done", "failed", "budget_exceeded", "cancelled"])
-const activeExecutionStatuses = new Set([
-  "queued",
-  "starting",
-  "running",
-  "waiting_approval",
+const terminalStatuses = new Set([
+  "done",
+  "failed",
+  "budget_exceeded",
+  "cancelled",
 ])
-
 interface IssueTreeProps {
   issues: Issue[]
   relations: IssueRelation[]
   agents: AgentDefinition[]
   taskAgents?: TaskAgent[]
-  executions?: Execution[]
+  runtimes?: IssueRuntimeView[]
   rootIds?: string[]
   mode?: "hierarchy" | "dependency"
   defaultExpansion?: "none" | "roots" | "all"
@@ -51,7 +57,7 @@ export function IssueTree({
   relations,
   agents,
   taskAgents = [],
-  executions = [],
+  runtimes = [],
   rootIds,
   mode = "hierarchy",
   defaultExpansion = "roots",
@@ -117,23 +123,16 @@ export function IssueTree({
     [agents]
   )
   const taskAgentMap = React.useMemo(
-    () => new Map(taskAgents.map((identity) => [identity.id, `${identity.name} · ${agentMap.get(identity.agentId) ?? identity.agentId}`])),
+    () =>
+      new Map(
+        taskAgents.map((identity) => [
+          identity.id,
+          `${identity.name} · ${agentMap.get(identity.agentId) ?? identity.agentId}`,
+        ])
+      ),
     [agentMap, taskAgents]
   )
-  const executionMap = React.useMemo(() => {
-    const map = new Map<string, Execution>()
-    for (const execution of executions) {
-      const current = map.get(execution.issueId)
-      if (
-        !current ||
-        new Date(execution.startedAt).getTime() >
-          new Date(current.startedAt).getTime()
-      ) {
-        map.set(execution.issueId, execution)
-      }
-    }
-    return map
-  }, [executions])
+  const runtimeMap = React.useMemo(() => issueRuntimeMap(runtimes), [runtimes])
   const visibleIssues = React.useMemo(() => {
     const ids = new Set<string>()
     const visit = (issue: Issue) => {
@@ -145,8 +144,8 @@ export function IssueTree({
     return issues.filter((issue) => ids.has(issue.id))
   }, [branchMap, issues, roots])
   const summary = React.useMemo(
-    () => summarizeTree(visibleIssues, executionMap),
-    [executionMap, visibleIssues]
+    () => summarizeTree(visibleIssues, runtimeMap),
+    [runtimeMap, visibleIssues]
   )
   const [expanded, setExpanded] = React.useState<Set<string>>(
     () =>
@@ -225,6 +224,10 @@ export function IssueTree({
           )}
           执行中 {summary.running}
         </Badge>
+        <Badge variant="outline">
+          <CircleDotDashed data-icon="inline-start" />
+          等待中 {summary.waiting}
+        </Badge>
         <Badge variant={summary.failed > 0 ? "destructive" : "outline"}>
           <TriangleAlert data-icon="inline-start" />
           失败 {summary.failed}
@@ -266,7 +269,7 @@ export function IssueTree({
                   relations={relations}
                   agentMap={agentMap}
                   taskAgentMap={taskAgentMap}
-                  executionMap={executionMap}
+                  runtimeMap={runtimeMap}
                   mode={mode}
                   reference={row.reference}
                   open={expanded.has(row.issue.id)}
@@ -297,7 +300,7 @@ interface TreeNodeProps {
   relations: IssueRelation[]
   agentMap: Map<string, string>
   taskAgentMap: Map<string, string>
-  executionMap: Map<string, Execution>
+  runtimeMap: Map<string, IssueRuntimeView>
   mode: "hierarchy" | "dependency"
   reference: boolean
   open: boolean
@@ -313,7 +316,7 @@ function TreeNode({
   relations,
   agentMap,
   taskAgentMap,
-  executionMap,
+  runtimeMap,
   mode,
   reference,
   open,
@@ -333,8 +336,7 @@ function TreeNode({
   const progress = hierarchyChildren.length
     ? Math.round((completed / hierarchyChildren.length) * 100)
     : 0
-  const execution = executionMap.get(issue.id)
-  const operationalState = issueOperationalState(issue, execution)
+  const runtime = issueRuntimeOrUnavailable(runtimeMap, issue.id)
   const creatorName =
     agentMap.get(issue.createdBy) ??
     (issue.createdBy === "operator"
@@ -380,7 +382,13 @@ function TreeNode({
           >
             {issue.title}
           </Link>
-          <OperationalBadge state={operationalState} />
+          <IssueRuntimeBadge runtime={runtime} />
+          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+            {issueWorkflowStatus(issue.status)}
+          </Badge>
+          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+            {issue.priority}
+          </Badge>
           {reference && (
             <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
               关系引用
@@ -396,7 +404,9 @@ function TreeNode({
         <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="font-mono text-[11px]">{issue.identifier}</span>
           <span>
-            {taskAgentMap.get(issue.assigneeTaskAgentId ?? "") ?? agentMap.get(issue.assigneeAgentId ?? "") ?? "未分配 Agent"}
+            {taskAgentMap.get(issue.assigneeTaskAgentId ?? "") ??
+              agentMap.get(issue.assigneeAgentId ?? "") ??
+              "未分配 Agent"}
           </span>
           <span>创建者 {creatorName}</span>
           <span>创建 {formatTime(issue.createdAt)}</span>
@@ -416,14 +426,14 @@ function TreeNode({
             </>
           )}
         </div>
-        {operationalState.detail && (
+        {runtime.detail && runtime.health !== "healthy" && (
           <Tooltip>
             <TooltipTrigger className="mt-1.5 flex max-w-full items-center gap-1 text-xs text-destructive">
               <TriangleAlert className="size-3 shrink-0" />
-              <span className="truncate">{operationalState.detail}</span>
+              <span className="truncate">{runtime.detail}</span>
             </TooltipTrigger>
             <TooltipContent className="max-w-sm">
-              {operationalState.detail}
+              {runtime.detail}
             </TooltipContent>
           </Tooltip>
         )}
@@ -448,142 +458,25 @@ function TreeNode({
   )
 }
 
-type OperationalState = {
-  kind: "running" | "failed" | "completed" | "cancelled" | "pending"
-  label: string
-  detail?: string
-}
-
-function issueOperationalState(
-  issue: Issue,
-  execution: Execution | undefined
-): OperationalState {
-  if (issue.status === "done") {
-    return { kind: "completed", label: "任务结束" }
+function summarizeTree(
+  issues: Issue[],
+  runtimeMap: Map<string, IssueRuntimeView>
+) {
+  const summary = {
+    running: 0,
+    waiting: 0,
+    failed: 0,
+    completed: 0,
+    pending: 0,
   }
-  if (issue.status === "cancelled") {
-    return {
-      kind: "cancelled",
-      label: issue.objectiveAbandoned ? "目标已放弃" : "任务已取消",
-    }
-  }
-  if (issue.status === "budget_exceeded") {
-    return { kind: "failed", label: "执行预算已耗尽", detail: issue.error }
-  }
-  if (issue.executionPhase === "recovering") {
-    return { kind: "running", label: "重启恢复中" }
-  }
-  if (
-    issue.status === "blocked" ||
-    execution?.status === "failed" ||
-    execution?.status === "disconnected"
-  ) {
-    return {
-      kind: "failed",
-      label: execution?.status === "disconnected" ? "执行断开" : "执行失败",
-      detail: issue.error || execution?.error,
-    }
-  }
-  if (issue.executionPhase === "waiting_children") {
-    return { kind: "running", label: "等待子任务" }
-  }
-  if (issue.executionPhase === "resuming") {
-    return { kind: "running", label: "汇总结果" }
-  }
-  if (issue.executionPhase === "validating") {
-    return { kind: "running", label: "验收中" }
-  }
-  if (issue.executionPhase === "summarizing") {
-    return { kind: "running", label: "取消后总结中" }
-  }
-  if (issue.executionPhase === "budget_summarizing") {
-    return { kind: "running", label: "预算耗尽后总结中" }
-  }
-  if (issue.status === "in_progress") {
-    if (execution?.status === "queued") {
-      return { kind: "running", label: "执行排队中" }
-    }
-    if (execution?.status === "starting") {
-      return { kind: "running", label: "Agent 启动中" }
-    }
-    if (execution?.status === "waiting_approval") {
-      return { kind: "running", label: "等待审批" }
-    }
-    return {
-      kind: "running",
-      label: execution?.currentTool
-        ? `执行中 · ${execution.currentTool}`
-        : "Agent 执行中",
-    }
-  }
-  if (issue.status === "in_review") {
-    return { kind: "pending", label: "等待人工复核" }
-  }
-  return { kind: "pending", label: "等待调度" }
-}
-
-function OperationalBadge({ state }: { state: OperationalState }) {
-  if (state.kind === "running") {
-    return (
-      <Badge className="h-5 px-1.5 text-[10px]">
-        <Spinner data-icon="inline-start" />
-        {state.label}
-      </Badge>
-    )
-  }
-  if (state.kind === "failed") {
-    return (
-      <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">
-        <TriangleAlert data-icon="inline-start" />
-        {state.label}
-      </Badge>
-    )
-  }
-  if (state.kind === "completed") {
-    return (
-      <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
-        <CircleCheck data-icon="inline-start" />
-        {state.label}
-      </Badge>
-    )
-  }
-  if (state.kind === "cancelled") {
-    return (
-      <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-        <CircleX data-icon="inline-start" />
-        {state.label}
-      </Badge>
-    )
-  }
-  return (
-    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-      <CircleDotDashed data-icon="inline-start" />
-      {state.label}
-    </Badge>
-  )
-}
-
-function summarizeTree(issues: Issue[], executionMap: Map<string, Execution>) {
-  const summary = { running: 0, failed: 0, completed: 0, pending: 0 }
   for (const issue of issues) {
-    const execution = executionMap.get(issue.id)
-    if (terminalStatuses.has(issue.status)) {
+    const runtime = issueRuntimeOrUnavailable(runtimeMap, issue.id)
+    if (runtime.kind === "running") summary.running++
+    else if (runtime.kind === "waiting") summary.waiting++
+    else if (runtime.kind === "failed") summary.failed++
+    else if (runtime.kind === "completed" || runtime.kind === "cancelled")
       summary.completed++
-    } else if (
-      issue.status === "blocked" ||
-      execution?.status === "failed" ||
-      execution?.status === "disconnected"
-    ) {
-      summary.failed++
-    } else if (
-      issue.executionPhase === "recovering" ||
-      issue.status === "in_progress" ||
-      (execution && activeExecutionStatuses.has(execution.status))
-    ) {
-      summary.running++
-    } else {
-      summary.pending++
-    }
+    else summary.pending++
   }
   return summary
 }

@@ -297,9 +297,8 @@ const createSubissuesTool = defineTool({
           description: "Concrete outcome the acceptance Agent must verify",
         }),
         priority: Type.Union([
-          Type.Literal("critical"),
           Type.Literal("high"),
-          Type.Literal("medium"),
+          Type.Literal("middle"),
           Type.Literal("low"),
         ]),
         agentId: Type.String({
@@ -697,9 +696,8 @@ const createTaskTool = defineTool({
       maxLength: 20000,
     }),
     priority: Type.Union([
-      Type.Literal("critical"),
       Type.Literal("high"),
-      Type.Literal("medium"),
+      Type.Literal("middle"),
       Type.Literal("low"),
     ]),
     workMode: Type.Union([Type.Literal("autonomous"), Type.Literal("guided")]),

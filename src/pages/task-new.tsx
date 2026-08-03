@@ -53,12 +53,7 @@ import {
 import { useAppState } from "@/lib/state"
 import type { CreateIssueInput } from "@/types"
 
-const priorities: CreateIssueInput["priority"][] = [
-  "critical",
-  "high",
-  "medium",
-  "low",
-]
+const priorities: CreateIssueInput["priority"][] = ["high", "middle", "low"]
 
 const categoryLabels: Record<string, string> = {
   orchestrator: "调度",
@@ -382,7 +377,8 @@ export function TaskNewPage() {
                     <SelectContent alignItemWithTrigger={false}>
                       {enabledAgentTypes.map((agent) => (
                         <SelectItem key={agent.id} value={agent.id}>
-                          {agent.name} · {categoryLabels[agent.category] ?? agent.category}
+                          {agent.name} ·{" "}
+                          {categoryLabels[agent.category] ?? agent.category}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -437,10 +433,15 @@ export function TaskNewPage() {
                 <Field>
                   <FieldLabel>Board Autonomy</FieldLabel>
                   <div className="rounded-md border bg-muted/25 px-3 py-3 text-sm">
-                    <div className="flex items-center gap-2 font-medium"><Route className="size-4 text-primary" />唯一协作模式</div>
+                    <div className="flex items-center gap-2 font-medium">
+                      <Route className="size-4 text-primary" />
+                      唯一协作模式
+                    </div>
                   </div>
                   <FieldDescription>
-                    根 Agent 可创建并分派子 Issue，同时继续工作；一分钟心跳会汇总进度，评论与手机消息可直接引导或唤醒运行中的 Agent。
+                    根 Agent 可创建并分派子
+                    Issue，同时继续工作；一分钟心跳会汇总进度，评论与手机消息可直接引导或唤醒运行中的
+                    Agent。
                   </FieldDescription>
                 </Field>
                 <Field>
@@ -488,8 +489,8 @@ export function TaskNewPage() {
                     placeholder="留空表示不限制"
                   />
                   <FieldDescription>
-                    整个 Task 从创建时开始计算；等待、休眠及重新执行子
-                    Issue 均不会重置。子 Issue 的单次 Execution 预算在设置中单独配置。
+                    整个 Task 从创建时开始计算；等待、休眠及重新执行子 Issue
+                    均不会重置。子 Issue 的单次 Execution 预算在设置中单独配置。
                   </FieldDescription>
                 </Field>
               </FieldGroup>
@@ -500,16 +501,17 @@ export function TaskNewPage() {
             <Route />
             <AlertTitle>动态 Issue 树</AlertTitle>
             <AlertDescription>
-                  根 Agent 发现任务过大时，可通过 Board 创建并指派子
-                  Issues。每个受派实例会领取新的临时名、会话和 Phone，父 Agent
-                  同时继续推进集成工作。
+              根 Agent 发现任务过大时，可通过 Board 创建并指派子
+              Issues。每个受派实例会领取新的临时名、会话和 Phone，父 Agent
+              同时继续推进集成工作。
             </AlertDescription>
           </Alert>
           <Alert>
             <ShieldCheck />
             <AlertTitle>真实执行</AlertTitle>
             <AlertDescription>
-              发布后会启动 AgentCore execution，并通过任务容器修改文件、调用工具和产生模型费用。
+              发布后会启动 AgentCore
+              execution，并通过任务容器修改文件、调用工具和产生模型费用。
             </AlertDescription>
           </Alert>
         </div>

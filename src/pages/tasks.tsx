@@ -13,7 +13,7 @@ import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
-import { StatusBadge } from "@/components/status-badge"
+import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -37,8 +37,9 @@ import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { restartTask } from "@/lib/api"
 import { formatCost, formatTime } from "@/lib/format"
+import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { useAppState } from "@/lib/state"
-import type { Issue, Task } from "@/types"
+import type { Issue, IssueRuntimeView, Task } from "@/types"
 
 type TaskFilter = "all" | "active" | "review" | "done" | "attention"
 
@@ -59,6 +60,7 @@ export function TasksPage() {
   const issues = state?.issues ?? []
   const executions = state?.executions ?? []
   const tasks = state?.tasks ?? []
+  const runtimeMap = issueRuntimeMap(state?.issueRuntimes ?? [])
 
   const setQuery = (value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -75,7 +77,7 @@ export function TasksPage() {
   }
 
   const rows = tasks
-    .map((task) => taskRow(task, issues, executions))
+    .map((task) => taskRow(task, issues, executions, runtimeMap))
     .filter((row) => {
       const normalized = query.trim().toLocaleLowerCase()
       const matchesQuery =
@@ -86,13 +88,14 @@ export function TasksPage() {
       if (filter === "all") return true
       if (!row.latest) return filter === "attention"
       if (filter === "active") {
-        return ["backlog", "todo", "in_progress"].includes(row.latest.status)
+        return (
+          row.runtime!.state !== "in_review" &&
+          ["running", "waiting", "pending"].includes(row.runtime!.kind)
+        )
       }
-      if (filter === "review") return row.latest.status === "in_review"
-      if (filter === "done") return row.latest.status === "done"
-      return ["blocked", "failed", "budget_exceeded", "cancelled"].includes(
-        row.latest.status
-      )
+      if (filter === "review") return row.runtime!.state === "in_review"
+      if (filter === "done") return row.runtime!.kind === "completed"
+      return ["failed", "cancelled"].includes(row.runtime!.kind)
     })
     .sort((left, right) =>
       right.task.updatedAt.localeCompare(left.task.updatedAt)
@@ -242,7 +245,7 @@ export function TasksPage() {
                 >
                   <div className="flex items-center gap-2 xl:block">
                     {row.latest ? (
-                      <StatusBadge status={row.latest.status} />
+                      <IssueRuntimeBadge runtime={row.runtime!} />
                     ) : (
                       <Badge variant="outline">待初始化</Badge>
                     )}
@@ -321,7 +324,7 @@ export function TasksPage() {
                             <RotateCcw />
                             重新启动
                           </DropdownMenuItem>
-                          {row.latest && !isTerminalTask(row.latest.status) ? (
+                          {row.latest && !isTerminalRuntime(row.runtime!) ? (
                             <DropdownMenuItem
                               variant="destructive"
                               onClick={() =>
@@ -367,12 +370,16 @@ export function TasksPage() {
 function taskRow(
   task: Task,
   issues: Issue[],
-  executions: Array<{ issueId: string; status: string; cost: number }>
+  executions: Array<{ issueId: string; status: string; cost: number }>,
+  runtimeMap: Map<string, IssueRuntimeView>
 ) {
   const runs = issues
     .filter((issue) => !issue.parentId && issue.taskSourceId === task.id)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   const latest = runs[0]
+  const runtime = latest
+    ? issueRuntimeOrUnavailable(runtimeMap, latest.id)
+    : undefined
   const issueIDs = latest
     ? taskTreeIssueIDs(latest.id, issues)
     : new Set<string>()
@@ -385,7 +392,7 @@ function taskRow(
   ).length
   const progress = descendants
     ? Math.round((completed / descendants) * 100)
-    : latest?.status === "done"
+    : runtime?.kind === "completed"
       ? 100
       : 0
   const treeExecutions = executions.filter((execution) =>
@@ -404,6 +411,7 @@ function taskRow(
     task,
     runs,
     latest,
+    runtime,
     progress,
     active,
     cost,
@@ -411,8 +419,8 @@ function taskRow(
   }
 }
 
-function isTerminalTask(status: Issue["status"]) {
-  return ["done", "failed", "budget_exceeded", "cancelled"].includes(status)
+function isTerminalRuntime(runtime: IssueRuntimeView) {
+  return ["completed", "failed", "cancelled"].includes(runtime.kind)
 }
 
 function isTaskFilter(value: string | null): value is TaskFilter {

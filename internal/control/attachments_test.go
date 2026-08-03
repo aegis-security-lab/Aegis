@@ -217,6 +217,47 @@ func TestValidationAgentCanReadOnlySourceExecutionAttachmentsInChunks(t *testing
 	}
 }
 
+func TestValidationAttachmentMaterializationResolvesServerDataPath(t *testing.T) {
+	dockerLog, _ := installFakeDocker(t)
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Materialize validation evidence", Objective: "Verify the attached report.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := "# Durable report\n\nVerified after restart.\n"
+	attachment, err := store.captureUploadedAttachment(issue, source.ID, PublishAttachmentInput{Path: "/workspace/report.md"}, strings.NewReader(content), int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.IsAbs(attachment.StoragePath) {
+		t.Fatalf("test requires a durable relative storage path, got %q", attachment.StoragePath)
+	}
+	container := ContainerInstance{Name: "aegis-task-validation", WorkspacePath: TaskWorkspacePath}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	infos, err := manager.materializeValidationAttachments(source.ID, container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != attachment.ID {
+		t.Fatalf("unexpected materialized attachments: %+v", infos)
+	}
+	logData, err := os.ReadFile(dockerLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absoluteStoragePath := filepath.Join(store.DataDir(), attachment.StoragePath)
+	if !strings.Contains(string(logData), "cp "+absoluteStoragePath+" "+container.Name+":"+infos[0].Path+".partial") {
+		t.Fatalf("validation attachment did not use its server data path:\n%s", logData)
+	}
+}
+
 func TestWriteOutputIsNotReadByServerWithoutExplicitUpload(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{

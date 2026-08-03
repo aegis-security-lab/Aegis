@@ -543,3 +543,62 @@ func TestDeleteContainerRequiresConfirmationAndCascadesTaskData(t *testing.T) {
 		t.Fatalf("container volume was not deleted:\n%s", logData)
 	}
 }
+
+func TestBatchStopImpactAndDeleteContainers(t *testing.T) {
+	logPath, _ := installFakeDocker(t)
+	store := configuredStore(t)
+	containers := make([]ContainerInstance, 0, 2)
+	for _, title := range []string{"batch one", "batch two"} {
+		_, root, err := store.CreateTask(CreateIssueInput{
+			Title: title, Objective: "batch lifecycle", Priority: "medium",
+			WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		container, err := store.ensureTaskContainer(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		containers = append(containers, container)
+	}
+
+	stopped, err := store.StopContainers([]string{containers[0].ID, containers[1].ID, containers[0].ID, "missing-container"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Requested != 3 || len(stopped.Stopped) != 2 || len(stopped.Failed) != 1 || stopped.Failed[0].ContainerID != "missing-container" {
+		t.Fatalf("unexpected batch stop result: %+v", stopped)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), "stop --time 5 "+containers[0].Name) {
+		t.Fatalf("running container was not stopped:\n%s", logData)
+	}
+
+	impact, err := store.ContainerBatchDeleteImpact([]string{containers[0].ID, containers[1].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if impact.ContainerCount != 2 || impact.TaskCount != 2 || impact.IssueCount != 2 || impact.ExecutionCount != 0 || len(impact.Items) != 2 {
+		t.Fatalf("unexpected batch impact: %+v", impact)
+	}
+
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	deleted, err := manager.DeleteContainers([]string{containers[0].ID, containers[1].ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Requested != 2 || len(deleted.Deleted) != 2 || len(deleted.Failed) != 0 || deleted.DeletedTasks != 2 || deleted.DeletedIssues != 2 {
+		t.Fatalf("unexpected batch delete result: %+v", deleted)
+	}
+	var remaining int64
+	if err = store.db.Model(&ContainerInstance{}).Where("id IN ?", []string{containers[0].ID, containers[1].ID}).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("batch delete left %d containers", remaining)
+	}
+}

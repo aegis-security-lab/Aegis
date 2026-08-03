@@ -23,7 +23,7 @@ func (s NativeConciergeSource) Resolve(_ context.Context, execution capability.R
 	}
 	tool := agentcore.FuncTool{ToolDefinition: agentcore.ToolDefinition{
 		Name: "aegis_create_task", Description: "Create one real top-level Aegis Task and hand it to the Go AgentCore Coordination runtime.",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1},"taskDescription":{"type":"string"},"objective":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high","critical"]},"workMode":{"type":"string","enum":["autonomous","guided"]},"agentId":{"type":"string","minLength":1},"workspace":{"type":"string"},"constraints":{"type":"string"}},"required":["title","agentId"],"additionalProperties":false}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1},"taskDescription":{"type":"string"},"objective":{"type":"string"},"priority":{"type":"string","enum":["low","middle","high"]},"workMode":{"type":"string","enum":["autonomous","guided"]},"agentId":{"type":"string","minLength":1},"workspace":{"type":"string"},"constraints":{"type":"string"}},"required":["title","agentId"],"additionalProperties":false}`),
 	}, Mode: agentcore.ToolExecutionSequential, ExecuteFunc: func(ctx context.Context, raw json.RawMessage, _ agentcore.ToolUpdateSink) (agentcore.ToolResult, error) {
 		if err := contextError(ctx); err != nil {
 			return agentcore.ToolResult{}, err

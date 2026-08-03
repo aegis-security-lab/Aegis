@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,6 +107,36 @@ func TestUrgentExecutionPriorityAndPromptMergeAreDurable(t *testing.T) {
 	}
 	if err = queue.AppendPrompt(context.Background(), "urgent", "late", "too late"); !errors.Is(err, coordination.ErrExecutionNotQueued) {
 		t.Fatalf("running append error=%v", err)
+	}
+}
+
+func TestIssueExecutionsAreClaimedHighMiddleLowThenFIFO(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "coordination.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	queue := &coordination.ExecutionQueue{Repository: store, Now: func() time.Time { return now }}
+	items := []coordination.Execution{
+		{ID: "low", Priority: coordination.ExecutionPriorityIssueLow},
+		{ID: "middle-first", Priority: coordination.ExecutionPriorityIssueMiddle},
+		{ID: "high", Priority: coordination.ExecutionPriorityIssueHigh},
+		{ID: "middle-second", Priority: coordination.ExecutionPriorityIssueMiddle},
+	}
+	for index := range items {
+		items[index].Spec = agenthost.ExecutionSpec{ExecutionID: items[index].ID, AgentID: "agent", Prompt: "work", Model: agenthost.ModelRef{Provider: "test", Model: "model"}}
+		if err = queue.Enqueue(context.Background(), items[index]); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Millisecond)
+	}
+	now = now.Add(time.Second)
+	for index, expected := range []string{"high", "middle-first", "middle-second", "low"} {
+		claim, ok, claimErr := store.ClaimExecution(context.Background(), coordination.ExecutionClaimRequest{WorkerID: fmt.Sprintf("worker-%d", index), Now: now, LeaseDuration: time.Minute})
+		if claimErr != nil || !ok || claim.Execution.ID != expected {
+			t.Fatalf("claim %d=%+v ok=%v err=%v expected=%s", index, claim, ok, claimErr, expected)
+		}
 	}
 }
 

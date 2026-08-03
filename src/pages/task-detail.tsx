@@ -15,8 +15,8 @@ import {
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import { StatusBadge } from "@/components/status-badge"
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
+import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -43,12 +43,14 @@ import {
   updateTaskBudget,
 } from "@/lib/api"
 import { formatTime } from "@/lib/format"
+import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import type {
   AgentDefinition,
   Issue,
   IssueDetail,
+  IssueRuntimeView,
   Task,
   TaskAgent,
   TaskPhone,
@@ -181,6 +183,11 @@ export function TaskDetailPage() {
   const issue =
     state?.issues.find((candidate) => candidate.id === detail.issue.id) ??
     detail.issue
+  const runtimeMap = issueRuntimeMap([
+    ...(detail.runtime ? [detail.runtime] : []),
+    ...(state?.issueRuntimes ?? []),
+  ])
+  const runtime = issueRuntimeOrUnavailable(runtimeMap, issue.id)
   const source = state?.tasks.find(
     (candidate) => candidate.id === issue.taskSourceId
   )
@@ -238,7 +245,7 @@ export function TaskDetailPage() {
         description={parameters.objective || "查看执行进度、计划与运行记录。"}
         actions={
           <>
-            <StatusBadge status={issue.status} />
+            <IssueRuntimeBadge runtime={runtime} />
             <Button
               variant="outline"
               size="sm"
@@ -362,6 +369,7 @@ export function TaskDetailPage() {
         agents={state?.agents ?? []}
         taskAgents={taskAgents}
         phones={phones}
+        runtimes={state?.issueRuntimes ?? []}
         error={phoneError}
       />
 
@@ -475,7 +483,9 @@ export function TaskDetailPage() {
                   {agentLabel(run, state?.agents ?? [])}
                 </span>
               </div>
-              <StatusBadge status={run.status} />
+              <IssueRuntimeBadge
+                runtime={issueRuntimeOrUnavailable(runtimeMap, run.id)}
+              />
               <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
             </Link>
           ))}
@@ -523,6 +533,7 @@ function TaskPhoneBelt({
   agents,
   taskAgents,
   phones,
+  runtimes,
   error,
 }: {
   root: Issue
@@ -530,9 +541,11 @@ function TaskPhoneBelt({
   agents: AgentDefinition[]
   taskAgents: TaskAgent[]
   phones: TaskPhone[]
+  runtimes: IssueRuntimeView[]
   error: string
 }) {
   const taskIssues = taskTreeIssues(root, issues)
+  const runtimeMap = issueRuntimeMap(runtimes)
   const issueByIdentity = new Map(
     taskIssues
       .filter((issue) => issue.assigneeTaskAgentId)
@@ -627,7 +640,14 @@ function TaskPhoneBelt({
                             {issue?.identifier ?? "等待 Issue"} ·{" "}
                             {issue?.title ?? "尚未绑定"}
                           </span>
-                          {issue ? <StatusBadge status={issue.status} /> : null}
+                          {issue ? (
+                            <IssueRuntimeBadge
+                              runtime={issueRuntimeOrUnavailable(
+                                runtimeMap,
+                                issue.id
+                              )}
+                            />
+                          ) : null}
                         </div>
                         <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                           <Activity className="size-3" />

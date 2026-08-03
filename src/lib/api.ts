@@ -7,6 +7,9 @@ import type {
   ConnectionTestResult,
   ContainerProfile,
   ContainerInstance,
+  ContainerBatchDeleteImpact,
+  ContainerBatchDeleteResult,
+  ContainerBatchStopResult,
   ContainerDeleteImpact,
   ContainerDeleteResult,
   ContainerProfileDeleteImpact,
@@ -132,6 +135,24 @@ export const startContainer = (id: string) =>
 export const stopContainer = (id: string) =>
   request<ContainerInstance>(`/api/containers/${encodeURIComponent(id)}/stop`, {
     method: "POST",
+  })
+export const stopContainers = (containerIds: string[]) =>
+  request<ContainerBatchStopResult>("/api/containers/batch/stop", {
+    method: "POST",
+    body: JSON.stringify({ containerIds }),
+  })
+export const fetchContainerBatchDeleteImpact = (containerIds: string[]) =>
+  request<ContainerBatchDeleteImpact>("/api/containers/batch/delete-impact", {
+    method: "POST",
+    body: JSON.stringify({ containerIds }),
+  })
+export const deleteContainers = (
+  containerIds: string[],
+  cascadeIssues: boolean
+) =>
+  request<ContainerBatchDeleteResult>("/api/containers/batch/delete", {
+    method: "POST",
+    body: JSON.stringify({ containerIds, cascadeIssues }),
   })
 export const fetchConciergeConversations = () =>
   request<{ conversations: ConciergeConversation[] }>(

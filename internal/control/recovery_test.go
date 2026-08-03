@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -337,6 +338,42 @@ func TestRestartFinalizesSettledWorkerWithoutRepeatingWork(t *testing.T) {
 	}
 }
 
+func TestRestartPreservesDurableSleepingIssue(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Parent waiting durably", Objective: "Resume only after the durable wake signal.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(issue, issue.AssigneeAgentID, "wakeup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "running", "runtime_type": "agentcore"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "in_progress", "execution_phase": "sleeping", "sleep_token": "durable-wait",
+		"checkout_execution_id": "", "current_execution_id": execution.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewStore(store.DataDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := reopened.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved.Status != "in_progress" || preserved.ExecutionPhase != "sleeping" || preserved.SleepToken != "durable-wait" || preserved.RecoveryExecutionID != "" {
+		t.Fatalf("durable sleep was incorrectly converted to restart recovery: %+v", preserved)
+	}
+}
+
 func TestRestartResumesSameValidationAttemptAndSession(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
@@ -394,5 +431,178 @@ func TestRestartResumesSameValidationAttemptAndSession(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "不要把重启算作新的尝试") || !strings.Contains(prompt, validation.CandidateResult) {
 		t.Fatalf("unexpected validation recovery prompt: %s", prompt)
+	}
+}
+
+func TestOrphanedValidationInfrastructureFailureIsRecoveredInPlace(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Orphaned validation", Objective: "Verify the published evidence.", Priority: "high",
+		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSessionID := validator.SessionID
+	if err = store.updateExecution(validator.ID, map[string]any{
+		"status": "failed", "error": "验收附件 report.md 在服务端不存在或不完整", "finished_at": time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	validation := IssueValidation{
+		ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID,
+		ValidationExecutionID: validator.ID, Attempt: 1, Objective: issue.Objective,
+		CandidateResult: "Published evidence", Status: "interrupted", CreatedAt: time.Now(),
+	}
+	if err = store.db.Create(&validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "failed", "execution_phase": "completed", "current_execution_id": validator.ID,
+		"validation_execution_id": validator.ID, "error": "验收附件 report.md 在服务端不存在或不完整", "completed_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.reconcileOrphanedValidations()
+	recovering, err := store.GetIssue(issue.ID)
+	if err != nil || recovering.Status != "todo" || recovering.ExecutionPhase != "recovering" || recovering.RecoveryExecutionID != validator.ID || recovering.CompletedAt != nil {
+		t.Fatalf("orphaned Issue was not made recoverable: err=%v issue=%+v", err, recovering)
+	}
+	if err = store.db.First(&validation, "id = ?", validation.ID).Error; err != nil || validation.Status != "interrupted" || validation.Attempt != 1 {
+		t.Fatalf("validation attempt was not preserved: err=%v validation=%+v", err, validation)
+	}
+	if err = store.db.First(&validator, "id = ?", validator.ID).Error; err != nil || validator.Status != "disconnected" || validator.SessionID != originalSessionID {
+		t.Fatalf("validation Execution was not preserved: err=%v execution=%+v", err, validator)
+	}
+
+	checkedOut, recoveredExecution, agent, prompt, err := manager.prepareIssueRecovery(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkedOut.Status != "in_progress" || checkedOut.ExecutionPhase != "validating" || recoveredExecution.ID != validator.ID || recoveredExecution.SessionID != originalSessionID || agent.ID != "acceptance-validator" {
+		t.Fatalf("validation did not resume in place: issue=%+v execution=%+v agent=%+v", checkedOut, recoveredExecution, agent)
+	}
+	if !strings.Contains(prompt, "不要把重启算作新的尝试") {
+		t.Fatalf("unexpected recovery prompt: %s", prompt)
+	}
+}
+
+func TestManagerDefersRecoveryUntilCoordinationIsAvailable(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Deferred validation recovery", Objective: "Verify evidence after restart.", Priority: "high",
+		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _ := store.createExecution(issue, "backend-engineer", "work")
+	validator, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(validator.ID, map[string]any{"status": "disconnected", "runtime_type": "container", "finished_at": time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	validation := IssueValidation{
+		ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID,
+		ValidationExecutionID: validator.ID, Attempt: 1, Objective: issue.Objective,
+		CandidateResult: "evidence", Status: "interrupted", CreatedAt: time.Now(),
+	}
+	if err = store.db.Create(&validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "todo", "execution_phase": "recovering", "current_execution_id": validator.ID,
+		"validation_execution_id": validator.ID, "recovery_execution_id": validator.ID,
+		"recovery_phase": "validating", "recovery_requested_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	before, _ := store.GetIssue(issue.ID)
+	if before.Status != "todo" || before.ExecutionPhase != "recovering" {
+		t.Fatalf("Manager recovered before Coordination was installed: %+v", before)
+	}
+	bridge, err := newTestCoordinationBridge(manager, "deferred-recovery", "board_autonomy", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetCoordination(bridge)
+	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		after, loadErr := store.GetIssue(issue.ID)
+		if loadErr == nil && after.Status == "in_progress" && after.ExecutionPhase == "validating" && after.RecoveryExecutionID == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Manager did not recover after Coordination became available: err=%v issue=%+v", loadErr, after)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAgentCoreRecoveryFallsBackAfterPreparedEnvelopeFails(t *testing.T) {
+	store, manager := bridgeTestManager(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Recover after prepared envelope failure", Objective: "Resume the same AgentCore execution.", Priority: "high",
+		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(issue, issue.AssigneeAgentID, "rework")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "disconnected", "runtime_type": "agentcore", "finished_at": time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "todo", "execution_phase": "recovering", "current_execution_id": execution.ID,
+		"recovery_execution_id": execution.ID, "recovery_phase": "active", "recovery_requested_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	bridge, err := newTestCoordinationBridge(manager, "agentcore-recovery-fallback", "board_autonomy", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetCoordination(bridge)
+	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
+
+	now := time.Now().UTC()
+	payload := fmt.Sprintf(`{"id":"old-prepared","coordinationId":"%s","spec":{"executionId":"old-prepared","agentId":"%s","values":{"control.preparedExecutionId":"%s"}},"status":"failed","attempt":1,"maxAttempts":1,"priority":100,"availableAt":%q,"createdAt":%q,"updatedAt":%q}`, issue.ID, issue.AssigneeAgentID, execution.ID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	if err = store.db.Exec(`INSERT INTO coordination_executions (id, coordination_id, status, priority, available_at, created_at, updated_at, payload) VALUES (?, ?, 'failed', 100, ?, ?, ?, ?)`, "old-prepared", issue.ID, now, now, now, payload).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	manager.resumeInterruptedWork()
+	recovered, err := store.GetIssue(issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Status != "in_progress" || recovered.ExecutionPhase != "active" || recovered.RecoveryExecutionID != "" || recovered.CurrentExecutionID != execution.ID {
+		t.Fatalf("failed prepared envelope did not fall back to recovery: %+v", recovered)
+	}
+	if err = store.db.First(&execution, "id = ?", execution.ID).Error; err != nil || execution.Status != "queued" {
+		t.Fatalf("original execution was not requeued: err=%v execution=%+v", err, execution)
 	}
 }

@@ -85,6 +85,35 @@ func TestDockerSourceRejectsMissingContainerAndEscapingPaths(t *testing.T) {
 	}
 }
 
+func TestDockerSourceCanMaterializeReadOnlyDiscoveryTools(t *testing.T) {
+	binary, _, _ := fakeDocker(t)
+	resolved, err := (DockerSource{Binary: binary}).Resolve(context.Background(), capability.ResolveContext{
+		Workspace: "/workspace", Values: map[string]any{"control.runtimeId": "task-container"},
+	}, capability.Ref{Kind: capability.KindTool, Name: "workspace", Config: map[string]any{
+		"allowShell": false,
+		"allowWrite": false,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.Tools) != 4 {
+		t.Fatalf("read-only tools=%d, want 4", len(resolved.Tools))
+	}
+	for _, name := range []string{"read", "grep", "find", "ls"} {
+		_ = namedTool(t, resolved.Tools, name)
+	}
+	for _, forbidden := range []string{"bash", "write", "edit"} {
+		for _, tool := range resolved.Tools {
+			if tool.Definition().Name == forbidden {
+				t.Fatalf("read-only workspace unexpectedly exposed %s", forbidden)
+			}
+		}
+	}
+	if resolved.Snapshot.Metadata["allowShell"] != "false" || resolved.Snapshot.Metadata["allowWrite"] != "false" {
+		t.Fatalf("read-only capability metadata=%v", resolved.Snapshot.Metadata)
+	}
+}
+
 func TestDockerToolHonorsContextCancellation(t *testing.T) {
 	binary, _, _ := fakeDocker(t)
 	resolved, err := (DockerSource{Binary: binary}).Resolve(context.Background(), capability.ResolveContext{

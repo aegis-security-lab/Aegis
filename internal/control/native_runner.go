@@ -38,9 +38,23 @@ func (r NativeIssueRunner) Run(ctx context.Context, scheduled agenthost.Executio
 	}
 	r.Manager.scheduleMu.Lock()
 	var prepared preparedIssueExecution
-	if preparedID, _ := scheduled.Values[controlPreparedExecutionIDValue].(string); strings.TrimSpace(preparedID) != "" {
-		prompt, _ := scheduled.Values[controlPreparedPromptValue].(string)
-		prepared, err = r.prepareExistingExecution(issue, preparedID, prompt)
+	preparedID, _ := scheduled.Values[controlPreparedExecutionIDValue].(string)
+	preparedID = strings.TrimSpace(preparedID)
+	if preparedID != "" {
+		if issue.Status == "todo" && issue.ExecutionPhase == "recovering" && issue.RecoveryExecutionID == preparedID {
+			// A Coordination lease survives a service restart, while Store startup
+			// deliberately marks the domain Execution disconnected. When the same
+			// prepared envelope is reclaimed, resume it through the recovery state
+			// machine instead of rejecting the disconnected Execution as terminal.
+			var prompt string
+			var recoveryExecution Execution
+			var recoveryAgent AgentDefinition
+			issue, recoveryExecution, recoveryAgent, prompt, err = r.Manager.prepareIssueRecovery(issue.ID)
+			prepared = preparedIssueExecution{issue: issue, execution: recoveryExecution, agent: recoveryAgent, prompt: prompt}
+		} else {
+			prompt, _ := scheduled.Values[controlPreparedPromptValue].(string)
+			prepared, err = r.prepareExistingExecution(issue, preparedID, prompt)
+		}
 	} else if issue.Status == "todo" && issue.ExecutionPhase == "recovering" && issue.RecoveryExecutionID != "" {
 		var prompt string
 		var recoveryExecution Execution
@@ -55,6 +69,9 @@ func (r NativeIssueRunner) Run(ctx context.Context, scheduled agenthost.Executio
 	}
 	r.Manager.scheduleMu.Unlock()
 	if err != nil {
+		if preparedID != "" {
+			r.reconcilePreparedExecutionFailure(issue, preparedID, err)
+		}
 		return agenthost.Result{}, err
 	}
 	if !slices.Contains([]string{"work", "wakeup", "planning", "rework", "continuation", "recovery", "heartbeat", "validation"}, prepared.execution.Kind) {
@@ -66,7 +83,7 @@ func (r NativeIssueRunner) Run(ctx context.Context, scheduled agenthost.Executio
 	}
 	nativeSpec, err := r.executionSpec(ctx, prepared)
 	if err != nil {
-		r.Manager.failExecution(prepared.issue, prepared.execution, err)
+		r.reconcilePreparedExecutionFailure(prepared.issue, prepared.execution.ID, err)
 		return agenthost.Result{}, err
 	}
 	budgetController := newExecutionBudgetController(r.Manager, prepared.execution)
@@ -82,14 +99,14 @@ func (r NativeIssueRunner) Run(ctx context.Context, scheduled agenthost.Executio
 		"status": "running", "runtime_type": "agentcore", "runtime_id": runtimeID,
 		"initial_prompt": nativeSpec.Prompt, "system_prompt": nativeSpec.SystemPrompt, "pid": 0,
 	}); err != nil {
-		r.Manager.failExecution(prepared.issue, prepared.execution, err)
+		r.reconcilePreparedExecutionFailure(prepared.issue, prepared.execution.ID, err)
 		return agenthost.Result{}, err
 	}
 	if err := r.Manager.store.db.Create(&Message{
 		ID: nextID("message"), ExecutionID: prepared.execution.ID, IssueID: prepared.issue.ID,
 		Role: "user", Content: nativeSpec.Prompt, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
-		r.Manager.failExecution(prepared.issue, prepared.execution, err)
+		r.reconcilePreparedExecutionFailure(prepared.issue, prepared.execution.ID, err)
 		return agenthost.Result{}, err
 	}
 	_ = r.Manager.store.db.Model(&Execution{}).Where("id = ?", prepared.execution.ID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
@@ -410,11 +427,48 @@ func (r NativeIssueRunner) prepareExistingExecution(issue Issue, executionID, pr
 	if slices.Contains([]string{"completed", "failed", "cancelled", "budget_exceeded", "disconnected"}, execution.Status) {
 		return preparedIssueExecution{}, fmt.Errorf("control native runner: prepared Execution is already %s", execution.Status)
 	}
-	agent, err := r.Manager.store.executionAgent(execution.AgentID)
-	if err != nil {
-		return preparedIssueExecution{}, err
+	var agent AgentDefinition
+	var err error
+	if execution.Kind == "validation" {
+		agent, err = r.Manager.store.GetAgent(execution.AgentID)
+		if err != nil || !agent.Enabled || !agent.Internal || agent.ID != "acceptance-validator" {
+			return preparedIssueExecution{}, errors.New("control native runner: validation Agent is unavailable")
+		}
+	} else {
+		agent, err = r.Manager.store.executionAgent(execution.AgentID)
+		if err != nil {
+			return preparedIssueExecution{}, err
+		}
 	}
 	return preparedIssueExecution{issue: issue, execution: execution, agent: agent, prompt: prompt}, nil
+}
+
+// reconcilePreparedExecutionFailure keeps the durable Issue state aligned with
+// the Coordination envelope when materialization fails before AgentCore starts.
+// Validation failures must also close the active validation row; otherwise the
+// UI and parent Issue would wait forever on an Execution that no longer exists.
+func (r NativeIssueRunner) reconcilePreparedExecutionFailure(issue Issue, executionID string, cause error) {
+	var execution Execution
+	if err := r.Manager.store.db.First(&execution, "id = ? AND issue_id = ?", executionID, issue.ID).Error; err != nil {
+		return
+	}
+	if slices.Contains([]string{"completed", "failed", "cancelled", "budget_exceeded", "disconnected"}, execution.Status) {
+		return
+	}
+	if execution.Kind == "validation" {
+		now := time.Now()
+		_ = r.Manager.store.db.Model(&IssueValidation{}).
+			Where("validation_execution_id = ? AND status = ?", execution.ID, "running").
+			Updates(map[string]any{"status": "error", "error": cause.Error(), "completed_at": now}).Error
+	}
+	current, err := r.Manager.store.GetIssue(issue.ID)
+	if err != nil || current.CurrentExecutionID != execution.ID || issueStatusTerminal(current.Status) {
+		_ = r.Manager.store.updateExecution(execution.ID, map[string]any{
+			"status": "failed", "error": cause.Error(), "finished_at": time.Now(), "pid": 0,
+		})
+		return
+	}
+	r.Manager.failExecution(current, execution, cause)
 }
 
 func (r NativeIssueRunner) settlePreparedWakeup(wakeupID string, prepared preparedIssueExecution) {
@@ -514,6 +568,11 @@ func (r NativeIssueRunner) executionSpec(ctx context.Context, prepared preparedI
 	systemPrompt := agentKnowledgeSystemPrompt(prepared.agent.SystemPrompt, bases)
 	systemPrompt = agentSecurityOutcomeGradeSystemPrompt(systemPrompt, prepared.agent.Category)
 	systemPrompt = agentLanguageSystemPrompt(systemPrompt, cfg.Language)
+	systemPrompt = agentExecutionEfficiencySystemPrompt(systemPrompt)
+	var activeExecutions int64
+	_ = r.Manager.store.db.Model(&Execution{}).Where("status IN ? AND kind <> ?", activeExecutionStatuses, "validation").Count(&activeExecutions).Error
+	systemPrompt = agentOrganizationContextSystemPrompt(systemPrompt, r.Manager.store.Agents(), cfg, activeExecutions)
+	systemPrompt = agentGoalPreservingDecompositionSystemPrompt(systemPrompt, prepared.agent, cfg)
 	systemPrompt = agentInputAttachmentsSystemPrompt(systemPrompt, attachments)
 	systemPrompt = agentPermissionSystemPrompt(systemPrompt, runtimeWorkspace, prepared.agent.Permissions)
 	systemPrompt = nativeCoordinationSystemPrompt(systemPrompt, prepared.issue, prepared.agent)
@@ -561,6 +620,8 @@ func nativeCoordinationSystemPrompt(systemPrompt string, issue Issue, agent Agen
 You are one task-local Agent instance, not a global employee. Your role type is %q (agentId=%s), taskAgentId=%s, and current Issue is %s. Your conversation and Phone belong only to this Task and must never be treated as memory for another Task.
 
 The only coordination mode is Board Autonomy:
+- Use phone_board_list_issues and phone_board_get_issue to inspect authoritative Issue status, runtime state, priority, assignee name, and Agent type before coordinating work.
+- Use phone_board_create_issue to create one child Issue without assigning it, or with an optional assignee. Use phone_board_update_issue to change priority, workflow status, or assignee; use phone_board_delete_issue only for permanently removing stopped work.
 - Use the Phone Board shortcut phone_board_delegate to create and assign durable child Issues. Delegation does not pause you; continue any useful parent work.
 - When a direct child ends as failed or budget_exceeded, you are woken immediately. Use phone_board_continue_issue only if its evidence justifies another Execution; otherwise use phone_board_delegate for a different direction or accept the partial result and continue. A new Execution resets only its own budget, never the Task wall-clock.
 - A one-minute heartbeat wakes this Agent only after it releases the active loop into sleeping or waiting_children; it is never periodic input to active model work. On wake, use it to inspect, guide, stop, or reassign work when needed.

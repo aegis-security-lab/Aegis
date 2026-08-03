@@ -183,7 +183,7 @@ func (r controlBoardRepository) ListIssues(_ context.Context, actor agentapp.Act
 		if query != "" && !strings.Contains(strings.ToLower(issue.Identifier+" "+issue.Title+" "+issue.Objective), query) {
 			continue
 		}
-		result = append(result, boardIssue(issue))
+		result = append(result, r.boardIssue(issue))
 	}
 	return result, nil
 }
@@ -201,7 +201,116 @@ func (r controlBoardRepository) GetIssue(_ context.Context, actor agentapp.Actor
 	for index, comment := range detail.Comments {
 		comments[index] = agentapp.BoardComment{ID: comment.ID, IssueID: comment.IssueID, AuthorID: comment.AuthorID, Body: comment.Body, CreatedAt: comment.CreatedAt}
 	}
-	return boardIssue(detail.Issue), comments, nil
+	return r.boardIssue(detail.Issue), comments, nil
+}
+
+func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.Actor, input agentapp.BoardCreateIssueRequest, _ string) (agentapp.BoardIssue, error) {
+	current, err := r.currentIssue(actor)
+	if err != nil {
+		return agentapp.BoardIssue{}, err
+	}
+	parentID := strings.TrimSpace(input.ParentIssueID)
+	if parentID == "" {
+		parentID = current.ID
+	}
+	if _, _, err = r.GetIssue(ctx, actor, parentID); err != nil {
+		return agentapp.BoardIssue{}, err
+	}
+	assigneeID := strings.TrimSpace(input.AssigneeAgentID)
+	if assigneeID != "" {
+		if err = r.manager.store.ValidateDelegation(actor.AgentID, assigneeID); err != nil {
+			return agentapp.BoardIssue{}, err
+		}
+	}
+	status := strings.TrimSpace(input.Status)
+	if status == "" {
+		status = "todo"
+	}
+	if status != "todo" {
+		return agentapp.BoardIssue{}, errors.New("Phone Board 创建 Issue 时状态只能是 todo")
+	}
+	attachmentIDs := r.manager.store.InputAttachmentIDsForExecution(actor.ExecutionID)
+	created, err := r.manager.store.CreateIssue(CreateIssueInput{
+		ParentID: parentID, Title: input.Title, Description: input.Description, Objective: input.Objective,
+		Priority: fallback(strings.TrimSpace(input.Priority), "middle"), Status: status, WorkMode: "autonomous",
+		AssigneeAgentID: assigneeID, AttachmentIDs: attachmentIDs, AttachmentSourceExecutionID: actor.ExecutionID,
+		CreatedBy: actorRoutingID(actor),
+	})
+	if err != nil {
+		return agentapp.BoardIssue{}, err
+	}
+	if assigneeID != "" && (created.Status == "todo" || created.Status == "backlog") {
+		if bridge := r.manager.Coordination(); bridge != nil {
+			if err = bridge.SubmitIssueCreated(ctx, created); err != nil {
+				return agentapp.BoardIssue{}, err
+			}
+		} else {
+			r.manager.notifyBoardAssignment(actorRoutingID(actor), created, "Phone Board 创建并委派了 Issue")
+		}
+	}
+	r.manager.store.notify()
+	return r.boardIssue(created), nil
+}
+
+func (r controlBoardRepository) UpdateIssue(ctx context.Context, actor agentapp.Actor, input agentapp.BoardUpdateIssueRequest, _ string) (agentapp.BoardIssue, error) {
+	issueID := strings.TrimSpace(input.IssueID)
+	if issueID == "" {
+		return agentapp.BoardIssue{}, agentapp.ErrValidation
+	}
+	if _, _, err := r.GetIssue(ctx, actor, issueID); err != nil {
+		return agentapp.BoardIssue{}, err
+	}
+	if input.AssigneeAgentID != nil {
+		*input.AssigneeAgentID = strings.TrimSpace(*input.AssigneeAgentID)
+		if *input.AssigneeAgentID != "" {
+			if err := r.manager.store.ValidateDelegation(actor.AgentID, *input.AssigneeAgentID); err != nil {
+				return agentapp.BoardIssue{}, err
+			}
+		}
+	}
+	status := ""
+	if input.Status != nil {
+		status = strings.TrimSpace(*input.Status)
+		*input.Status = status
+	}
+	update := UpdateIssueInput{Title: input.Title, Description: input.Description, Objective: input.Objective, Priority: input.Priority, Status: input.Status, AssigneeAgentID: input.AssigneeAgentID}
+	if status == "cancelled" {
+		update.Status = nil
+		if hasBoardIssueUpdate(update) {
+			if _, err := r.manager.UpdateBoardIssue(issueID, update); err != nil {
+				return agentapp.BoardIssue{}, err
+			}
+		}
+		reason := fallback(strings.TrimSpace(input.Reason), "Agent 通过 Phone Board 取消了 Issue")
+		cancelled, err := r.manager.archiveBoardIssue(issueID, reason)
+		if err != nil {
+			return agentapp.BoardIssue{}, err
+		}
+		return r.boardIssue(cancelled), nil
+	}
+	if !hasBoardIssueUpdate(update) {
+		return agentapp.BoardIssue{}, agentapp.ErrValidation
+	}
+	updated, err := r.manager.UpdateBoardIssue(issueID, update)
+	if err != nil {
+		return agentapp.BoardIssue{}, err
+	}
+	return r.boardIssue(updated), nil
+}
+
+func (r controlBoardRepository) DeleteIssue(ctx context.Context, actor agentapp.Actor, issueID, _ string) (int64, error) {
+	issueID = strings.TrimSpace(issueID)
+	if issueID == "" {
+		return 0, agentapp.ErrValidation
+	}
+	if _, _, err := r.GetIssue(ctx, actor, issueID); err != nil {
+		return 0, err
+	}
+	result, err := r.manager.DeleteBoardIssue(issueID)
+	if err != nil {
+		return 0, err
+	}
+	return result.DeletedIssues, nil
 }
 
 func (r controlBoardRepository) Delegate(ctx context.Context, actor agentapp.Actor, request agentapp.BoardDelegationRequest, key string) error {
@@ -215,7 +324,7 @@ func (r controlBoardRepository) Delegate(ctx context.Context, actor agentapp.Act
 		for capabilityIndex, item := range child.Capabilities {
 			capabilities[capabilityIndex] = capability.Ref{Kind: capability.Kind(item.Kind), Name: item.Name, Version: item.Version, Config: item.Config, Optional: item.Optional}
 		}
-		children[index] = coordination.ChildWork{AgentID: child.AgentID, Title: child.Title, Prompt: child.Prompt, Workspace: child.Workspace, Capabilities: capabilities, CapabilitySelection: coordination.CapabilitySelection(child.CapabilitySelection)}
+		children[index] = coordination.ChildWork{AgentID: child.AgentID, Title: child.Title, Prompt: child.Prompt, Priority: child.Priority, Workspace: child.Workspace, Capabilities: capabilities, CapabilitySelection: coordination.CapabilitySelection(child.CapabilitySelection)}
 	}
 	invocation := r.invocation(actor, issue, key, "delegate")
 	return ManagerBoardCoordinator{Manager: r.manager}.Delegate(ctx, invocation, coordination.DelegationRequest{Children: children, ParentBehavior: request.ParentBehavior, ResultDelivery: request.ResultDelivery})
@@ -276,11 +385,35 @@ func (r controlBoardRepository) AddComment(ctx context.Context, actor agentapp.A
 	return agentapp.BoardComment{ID: comment.ID, IssueID: comment.IssueID, AuthorID: comment.AuthorID, Body: comment.Body, CreatedAt: comment.CreatedAt}, nil
 }
 
-func boardIssue(issue Issue) agentapp.BoardIssue {
-	return agentapp.BoardIssue{
+func (r controlBoardRepository) boardIssue(issue Issue) agentapp.BoardIssue {
+	result := agentapp.BoardIssue{
 		ID: issue.ID, Identifier: issue.Identifier, Title: issue.Title, Objective: issue.Objective,
-		Status: issue.Status, Priority: issue.Priority, AssigneeID: issue.AssigneeAgentID, AssigneeTaskAgentID: issue.AssigneeTaskAgentID,
-		Blocked: issue.Status == "blocked" || issue.ExecutionPhase == "blocked", UpdatedAt: issue.UpdatedAt,
+		Status: issue.Status, WorkflowStatus: issueWorkflowStatus(issue.Status), Priority: issue.Priority, AssigneeID: issue.AssigneeAgentID, AssigneeTaskAgentID: issue.AssigneeTaskAgentID,
+		ExecutionPhase: issue.ExecutionPhase, Blocked: issue.Status == "blocked" || issue.ExecutionPhase == "blocked", UpdatedAt: issue.UpdatedAt,
+	}
+	if views := r.manager.store.issueRuntimeViews([]Issue{issue}); len(views) == 1 {
+		result.ExecutionPhase = views[0].State
+	}
+	if issue.AssigneeAgentID != "" {
+		if agent, err := r.manager.store.GetAgent(issue.AssigneeAgentID); err == nil {
+			result.AssigneeTypeName = agent.Name
+		}
+	}
+	if issue.AssigneeTaskAgentID != "" {
+		var identity TaskAgent
+		if err := r.manager.store.db.First(&identity, "id = ?", issue.AssigneeTaskAgentID).Error; err == nil {
+			result.AssigneeName = identity.Name
+		}
+	}
+	return result
+}
+
+func issueWorkflowStatus(status string) string {
+	switch status {
+	case "backlog", "blocked", "failed", "budget_exceeded":
+		return "todo"
+	default:
+		return status
 	}
 }
 
@@ -381,4 +514,5 @@ func NewControlAgentPhone(manager *Manager) (*agentapp.Phone, AgentPhoneClient, 
 
 var _ agentapp.BoardRepository = controlBoardRepository{}
 var _ agentapp.BoardCoordinator = controlBoardRepository{}
+var _ agentapp.BoardIssueManager = controlBoardRepository{}
 var _ agentapp.RelayRepository = (*controlRelayRepository)(nil)

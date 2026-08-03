@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Card,
   CardAction,
@@ -85,18 +86,22 @@ import {
   buildWorkerContainerImage,
   createContainerProfile,
   deleteContainer,
+  deleteContainers,
   deleteContainerProfile,
+  fetchContainerBatchDeleteImpact,
   fetchContainerDeleteImpact,
   fetchContainerProfileDeleteImpact,
   probeDocker,
   startContainer,
   stopContainer,
+  stopContainers,
   updateContainerProfile,
   type SaveContainerProfileInput,
 } from "@/lib/api"
 import { formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import type {
+  ContainerBatchDeleteImpact,
   ContainerDeleteImpact,
   ContainerInstance,
   ContainerProfile,
@@ -154,6 +159,27 @@ export function ContainersPage() {
     React.useState<ContainerInstance | null>(null)
   const [containerDeleteImpact, setContainerDeleteImpact] =
     React.useState<ContainerDeleteImpact | null>(null)
+  const [selectedContainerIds, setSelectedContainerIds] = React.useState(
+    () => new Set<string>()
+  )
+  const [batchDeleteImpact, setBatchDeleteImpact] =
+    React.useState<ContainerBatchDeleteImpact | null>(null)
+
+  const activeSelectedContainerIds = new Set(
+    containers
+      .filter((container) => selectedContainerIds.has(container.id))
+      .map((container) => container.id)
+  )
+  const selectedContainers = containers.filter((container) =>
+    activeSelectedContainerIds.has(container.id)
+  )
+  const stoppableContainers = selectedContainers.filter((container) =>
+    ["running", "paused", "restarting"].includes(container.runtimeStatus)
+  )
+  const allContainersSelected =
+    containers.length > 0 && activeSelectedContainerIds.size === containers.length
+  const someContainersSelected =
+    activeSelectedContainerIds.size > 0 && !allContainersSelected
 
   const checkDocker = async () => {
     setBusyAction("probe")
@@ -250,6 +276,79 @@ export function ContainersPage() {
       setContainerDeleteImpact(null)
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "删除失败")
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const stopSelectedContainers = async () => {
+    if (stoppableContainers.length === 0) return
+    setBusyAction("container-batch-stop")
+    try {
+      const result = await stopContainers(
+        stoppableContainers.map((container) => container.id)
+      )
+      await refresh()
+      setSelectedContainerIds(
+        new Set(result.failed.map((failure) => failure.containerId))
+      )
+      if (result.failed.length > 0) {
+        toast.warning(
+          `已停止 ${result.stopped.length} 个容器，${result.failed.length} 个失败`,
+          { description: result.failed[0]?.error }
+        )
+      } else {
+        toast.success(`已停止 ${result.stopped.length} 个容器`, {
+          description: "任务工作区和数据卷均已保留。",
+        })
+      }
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "批量停止失败")
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const prepareBatchDelete = async () => {
+    if (activeSelectedContainerIds.size === 0) return
+    setBusyAction("container-batch-impact")
+    try {
+      setBatchDeleteImpact(
+        await fetchContainerBatchDeleteImpact([...activeSelectedContainerIds])
+      )
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "无法检查批量删除影响")
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const removeSelectedContainers = async () => {
+    if (!batchDeleteImpact) return
+    setBusyAction("container-batch-delete")
+    try {
+      const result = await deleteContainers(
+        batchDeleteImpact.containerIds,
+        true
+      )
+      await refresh()
+      setBatchDeleteImpact(null)
+      setSelectedContainerIds(
+        new Set(result.failed.map((failure) => failure.containerId))
+      )
+      const description = `同时删除 ${result.deletedTasks} 个任务、${result.deletedIssues} 个 Issues 和 ${result.deletedExecutions} 条执行记录。`
+      if (result.failed.length > 0) {
+        toast.warning(
+          `已删除 ${result.deleted.length} 个容器，${result.failed.length} 个失败`,
+          { description: `${description} ${result.failed[0]?.error ?? ""}` }
+        )
+      } else {
+        toast.success(`已删除 ${result.deleted.length} 个容器`, {
+          description,
+        })
+      }
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "批量删除失败")
     } finally {
       setBusyAction(null)
     }
@@ -442,7 +541,7 @@ export function ContainersPage() {
               </EmptyHeader>
             </Empty>
           ) : (
-            <Card>
+            <Card className="overflow-visible">
               <CardHeader>
                 <CardTitle>全部任务容器</CardTitle>
                 <CardDescription>
@@ -450,9 +549,74 @@ export function ContainersPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <div className="sticky top-2 z-20 mb-3 flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/85">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Badge variant={activeSelectedContainerIds.size > 0 ? "default" : "secondary"}>
+                      已选 {activeSelectedContainerIds.size}
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {activeSelectedContainerIds.size > 0
+                        ? `其中 ${stoppableContainers.length} 个正在运行，可安全停止并保留工作区。`
+                        : "勾选容器后可以批量停止或删除。"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {activeSelectedContainerIds.size > 0 ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busyAction !== null}
+                        onClick={() => setSelectedContainerIds(new Set())}
+                      >
+                        清除选择
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={stoppableContainers.length === 0 || busyAction !== null}
+                      onClick={() => void stopSelectedContainers()}
+                    >
+                      {busyAction === "container-batch-stop" ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <Square data-icon="inline-start" />
+                      )}
+                      停止运行项
+                      {stoppableContainers.length > 0 ? ` (${stoppableContainers.length})` : ""}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={activeSelectedContainerIds.size === 0 || busyAction !== null}
+                      onClick={() => void prepareBatchDelete()}
+                    >
+                      {busyAction === "container-batch-impact" ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <Trash2 data-icon="inline-start" />
+                      )}
+                      批量删除
+                    </Button>
+                  </div>
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          aria-label="选择全部容器"
+                          checked={allContainersSelected}
+                          indeterminate={someContainersSelected}
+                          onCheckedChange={(checked) =>
+                            setSelectedContainerIds(
+                              checked === true
+                                ? new Set(containers.map((container) => container.id))
+                                : new Set()
+                            )
+                          }
+                        />
+                      </TableHead>
                       <TableHead>容器</TableHead>
                       <TableHead>状态</TableHead>
                       <TableHead>环境配置</TableHead>
@@ -481,8 +645,26 @@ export function ContainersPage() {
                       const changing = busyAction === `runtime:${container.id}`
                       const checkingDelete =
                         busyAction === `container-impact:${container.id}`
+                      const selected = activeSelectedContainerIds.has(container.id)
                       return (
-                        <TableRow key={container.id}>
+                        <TableRow
+                          key={container.id}
+                          data-state={selected ? "selected" : undefined}
+                        >
+                          <TableCell>
+                            <Checkbox
+                              aria-label={`选择容器 ${container.name}`}
+                              checked={selected}
+                              onCheckedChange={(checked) =>
+                                setSelectedContainerIds((current) => {
+                                  const next = new Set(current)
+                                  if (checked === true) next.add(container.id)
+                                  else next.delete(container.id)
+                                  return next
+                                })
+                              }
+                            />
+                          </TableCell>
                           <TableCell>
                             <div className="flex max-w-64 flex-col gap-1">
                               <span className="truncate font-medium" title={container.name}>
@@ -671,6 +853,66 @@ export function ContainersPage() {
                 <Trash2 data-icon="inline-start" />
               )}
               确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={batchDeleteImpact !== null}
+        onOpenChange={(open) => {
+          if (!open && busyAction !== "container-batch-delete") {
+            setBatchDeleteImpact(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogMedia className="bg-destructive/10 text-destructive">
+              <TriangleAlert />
+            </AlertDialogMedia>
+            <AlertDialogTitle>
+              永久删除 {batchDeleteImpact?.containerCount ?? 0} 个容器？
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              确认后会逐个停止并删除所选容器及数据卷，同时永久删除绑定的任务和执行数据。成功项不会因为其他容器失败而回滚。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["任务", batchDeleteImpact?.taskCount ?? 0],
+              ["Issues", batchDeleteImpact?.issueCount ?? 0],
+              ["执行记录", batchDeleteImpact?.executionCount ?? 0],
+              ["活跃执行", batchDeleteImpact?.activeExecutionCount ?? 0],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-md bg-muted/60 px-3 py-2">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="mt-1 font-mono text-lg font-semibold tabular-nums">
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+          {(batchDeleteImpact?.activeExecutionCount ?? 0) > 0 ? (
+            <p className="text-sm font-medium text-destructive">
+              活跃 Execution 将被立即中止，尚未保存的执行状态可能丢失。
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busyAction === "container-batch-delete"}>
+              取消
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busyAction === "container-batch-delete"}
+              onClick={() => void removeSelectedContainers()}
+            >
+              {busyAction === "container-batch-delete" ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Trash2 data-icon="inline-start" />
+              )}
+              确认批量删除
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -229,6 +229,49 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, gin.H{"image": control.WorkerContainerImage, "output": output})
 	})
+	api.POST("/containers/batch/stop", func(c *gin.Context) {
+		var in struct {
+			ContainerIDs []string `json:"containerIds"`
+		}
+		if !bindJSON(c, &in) {
+			return
+		}
+		result, err := store.StopContainers(in.ContainerIDs)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+	api.POST("/containers/batch/delete-impact", func(c *gin.Context) {
+		var in struct {
+			ContainerIDs []string `json:"containerIds"`
+		}
+		if !bindJSON(c, &in) {
+			return
+		}
+		impact, err := store.ContainerBatchDeleteImpact(in.ContainerIDs)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, impact)
+	})
+	api.POST("/containers/batch/delete", func(c *gin.Context) {
+		var in struct {
+			ContainerIDs  []string `json:"containerIds"`
+			CascadeIssues bool     `json:"cascadeIssues"`
+		}
+		if !bindJSON(c, &in) {
+			return
+		}
+		result, err := manager.DeleteContainers(in.ContainerIDs, in.CascadeIssues)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
 	api.POST("/containers/:id/start", func(c *gin.Context) {
 		container, err := store.StartContainer(c.Param("id"))
 		if err != nil {

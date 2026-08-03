@@ -102,6 +102,19 @@ func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T)
 	if board.PageID != "board.home" || !strings.Contains(board.Text, issue.Identifier) || strings.Contains(board.Text, other.Identifier) {
 		t.Fatalf("control issue was not exposed through Board:\n%s", board.Text)
 	}
+	var identity TaskAgent
+	if err = store.db.First(&identity, "id = ?", issue.AssigneeTaskAgentID).Error; err != nil {
+		t.Fatal(err)
+	}
+	agentType, err := store.GetAgent(issue.AssigneeAgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{identity.Name, agentType.Name, "done", "runtime completed"} {
+		if !strings.Contains(board.Text, expected) {
+			t.Fatalf("Board omitted assignment or status %q:\n%s", expected, board.Text)
+		}
+	}
 	detail := phoneAction(t, client, started.PhoneSessionID, board, agentapp.ActionClick, "@1", "open-issue", nil).Page
 	detail = phoneAction(t, client, started.PhoneSessionID, detail, agentapp.ActionInput, "@1", "draft-comment", map[string]any{"value": "Verified through Agent Phone."}).Page
 	posted := phoneAction(t, client, started.PhoneSessionID, detail, agentapp.ActionSubmit, "@2", "post-comment", nil)
@@ -124,5 +137,81 @@ func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T)
 	}
 	if len(comments) != 1 || comments[0].AuthorID != issue.AssigneeTaskAgentID || comments[0].ExecutionID != "execution-native-1" || comments[0].Body != "Verified through Agent Phone." {
 		t.Fatalf("comments=%+v", comments)
+	}
+}
+
+func TestControlPhoneBoardManagesUnassignedIssueLifecycle(t *testing.T) {
+	store, manager := bridgeTestManager(t)
+	parent, err := store.CreateIssue(CreateIssueInput{Title: "Phone manager", Objective: "Manage child work", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(parent, parent.AssigneeAgentID, "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "active", "current_execution_id": execution.ID, "checkout_execution_id": execution.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, client, err := NewControlAgentPhone(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := client.Start(context.Background(), agentapp.StartSessionRequest{AgentID: parent.AssigneeAgentID, TaskAgentID: parent.AssigneeTaskAgentID, TaskID: parent.ID, ExecutionID: execution.ID, InstalledApps: []string{"aegis.board", "aegis.relay"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortcuts, err := client.Shortcuts(context.Background(), started.PhoneSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shortcuts) > agentapp.MaxPhoneShortcuts {
+		t.Fatalf("Phone shortcut cap exceeded: %d", len(shortcuts))
+	}
+	names := map[string]bool{}
+	for _, shortcut := range shortcuts {
+		names[shortcut.Name] = true
+	}
+	for _, expected := range []string{"phone_board_create_issue", "phone_board_update_issue", "phone_board_delete_issue"} {
+		if !names[expected] {
+			t.Fatalf("missing shortcut %s: %+v", expected, shortcuts)
+		}
+	}
+
+	createdResponse, err := client.RunShortcut(context.Background(), agentapp.ShortcutRequest{PhoneSessionID: started.PhoneSessionID, Name: "phone_board_create_issue", IdempotencyKey: "create-unassigned", Arguments: map[string]any{"title": "Unclaimed investigation", "objective": "Record one finding", "priority": "middle"}})
+	if err != nil || createdResponse.Effect != "created" {
+		t.Fatalf("create response=%+v err=%v", createdResponse, err)
+	}
+	var child Issue
+	if err = store.db.Where("parent_id = ?", parent.ID).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if child.Status != "todo" || child.Priority != "middle" || child.AssigneeAgentID != "" || child.AssigneeTaskAgentID != "" {
+		t.Fatalf("unassigned child=%+v", child)
+	}
+
+	updatedResponse, err := client.RunShortcut(context.Background(), agentapp.ShortcutRequest{PhoneSessionID: started.PhoneSessionID, Name: "phone_board_update_issue", IdempotencyKey: "assign-child", Arguments: map[string]any{"issueId": child.ID, "priority": "high", "assigneeAgentId": "frontend-engineer"}})
+	if err != nil || updatedResponse.Effect != "updated" {
+		t.Fatalf("update response=%+v err=%v", updatedResponse, err)
+	}
+	child, _ = store.GetIssue(child.ID)
+	if child.Priority != "high" || child.AssigneeAgentID != "frontend-engineer" || child.AssigneeTaskAgentID == "" {
+		t.Fatalf("assigned child=%+v", child)
+	}
+
+	_, err = client.RunShortcut(context.Background(), agentapp.ShortcutRequest{PhoneSessionID: started.PhoneSessionID, Name: "phone_board_update_issue", IdempotencyKey: "cancel-child", Arguments: map[string]any{"issueId": child.ID, "status": "cancelled", "reason": "Direction is no longer useful"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ = store.GetIssue(child.ID)
+	if child.Status != "cancelled" || child.Error != "Direction is no longer useful" {
+		t.Fatalf("cancelled child=%+v", child)
+	}
+	deleted, err := client.RunShortcut(context.Background(), agentapp.ShortcutRequest{PhoneSessionID: started.PhoneSessionID, Name: "phone_board_delete_issue", IdempotencyKey: "delete-child", Arguments: map[string]any{"issueId": child.ID}})
+	if err != nil || deleted.Effect != "deleted" {
+		t.Fatalf("delete response=%+v err=%v", deleted, err)
+	}
+	if _, err = store.GetIssue(child.ID); err == nil {
+		t.Fatal("deleted child still exists")
 	}
 }

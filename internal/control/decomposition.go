@@ -38,8 +38,9 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		if item.Objective == "" {
 			return DecompositionResult{}, fmt.Errorf("子 Issue %d 缺少目标", index+1)
 		}
-		if !slices.Contains([]string{"critical", "high", "medium", "low"}, item.Priority) {
-			item.Priority = "medium"
+		item.Priority = normalizeIssuePriority(item.Priority)
+		if !slices.Contains([]string{"high", "middle", "low"}, item.Priority) {
+			item.Priority = "middle"
 		}
 		if len(item.DependsOn) > 0 {
 			return DecompositionResult{}, fmt.Errorf("子 Issue %d 不能设置 dependsOn；子 Issues 必须彼此独立并可立即调度", index+1)

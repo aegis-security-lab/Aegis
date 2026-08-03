@@ -253,11 +253,15 @@ func (m *Manager) materializeValidationAttachments(sourceExecutionID string, con
 	}
 	infos := make([]ValidationAttachmentInfo, 0, len(attachments))
 	for _, attachment := range attachments {
-		if info, err := os.Stat(attachment.StoragePath); err != nil || info.Size() != attachment.Size {
+		storagePath, err := m.store.attachmentStoragePath(attachment)
+		if err != nil {
+			return nil, fmt.Errorf("验收附件 %s 的服务端路径无效", attachment.Name)
+		}
+		if info, statErr := os.Stat(storagePath); statErr != nil || info.Size() != attachment.Size {
 			return nil, fmt.Errorf("验收附件 %s 在服务端不存在或不完整", attachment.Name)
 		}
 		destination := validationAttachmentRuntimePath(attachment)
-		if err := materializeContainerValidationAttachment(attachment, container, destination); err != nil {
+		if err := materializeContainerValidationAttachment(attachment, storagePath, container, destination); err != nil {
 			return nil, fmt.Errorf("准备验收附件 %s 失败: %w", attachment.Name, err)
 		}
 		info := m.validationAttachmentInfo(attachment)
@@ -271,7 +275,7 @@ func validationAttachmentRuntimePath(attachment IssueAttachment) string {
 	return path.Join(TaskWorkspacePath, ".aegis", "validation-evidence", attachment.ExecutionID, attachment.ID, attachment.Name)
 }
 
-func materializeContainerValidationAttachment(attachment IssueAttachment, container ContainerInstance, destination string) error {
+func materializeContainerValidationAttachment(attachment IssueAttachment, storagePath string, container ContainerInstance, destination string) error {
 	check := exec.Command("docker", "exec", container.Name, "sh", "-c", `test -f "$1" && test "$(wc -c < "$1")" -eq "$2"`, "aegis-validation-check", destination, strconv.FormatInt(attachment.Size, 10))
 	if check.Run() == nil {
 		return nil
@@ -281,7 +285,7 @@ func materializeContainerValidationAttachment(attachment IssueAttachment, contai
 		return fmt.Errorf("创建容器验收附件目录失败: %s", strings.TrimSpace(string(output)))
 	}
 	temporary := destination + ".partial"
-	if output, err := exec.Command("docker", "cp", attachment.StoragePath, container.Name+":"+temporary).CombinedOutput(); err != nil {
+	if output, err := exec.Command("docker", "cp", storagePath, container.Name+":"+temporary).CombinedOutput(); err != nil {
 		return fmt.Errorf("复制验收附件到容器失败: %s", strings.TrimSpace(string(output)))
 	}
 	if output, err := exec.Command("docker", "exec", container.Name, "sh", "-c", `mv "$1" "$2" && chmod 0444 "$2"`, "aegis-validation-copy", temporary, destination).CombinedOutput(); err != nil {
@@ -535,14 +539,28 @@ func (s *Store) AttachmentFile(id string) (IssueAttachment, *os.File, error) {
 	if err := s.db.First(&attachment, "id = ?", id).Error; err != nil {
 		return IssueAttachment{}, nil, errors.New("attachment not found")
 	}
-	root := filepath.Join(s.dataDir, "artifacts")
-	path := filepath.Join(s.dataDir, attachment.StoragePath)
-	if !pathWithin(root, path) {
-		return IssueAttachment{}, nil, errors.New("invalid attachment storage path")
+	storagePath, err := s.attachmentStoragePath(attachment)
+	if err != nil {
+		return IssueAttachment{}, nil, err
 	}
-	file, err := os.Open(path)
+	file, err := os.Open(storagePath)
 	if err != nil {
 		return IssueAttachment{}, nil, err
 	}
 	return attachment, file, nil
+}
+
+func (s *Store) attachmentStoragePath(attachment IssueAttachment) (string, error) {
+	root := filepath.Join(s.dataDir, "artifacts")
+	storagePath := filepath.Clean(strings.TrimSpace(attachment.StoragePath))
+	if storagePath == "." || storagePath == "" {
+		return "", errors.New("invalid attachment storage path")
+	}
+	if !filepath.IsAbs(storagePath) {
+		storagePath = filepath.Join(s.dataDir, storagePath)
+	}
+	if !pathWithin(root, storagePath) {
+		return "", errors.New("invalid attachment storage path")
+	}
+	return storagePath, nil
 }

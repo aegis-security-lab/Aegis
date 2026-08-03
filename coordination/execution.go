@@ -21,8 +21,11 @@ const (
 	ExecutionFailed    ExecutionStatus = "failed"
 	ExecutionCancelled ExecutionStatus = "cancelled"
 
-	ExecutionPriorityNormal = 0
-	ExecutionPriorityWakeup = 100
+	ExecutionPriorityNormal      = 0
+	ExecutionPriorityIssueLow    = 10
+	ExecutionPriorityIssueMiddle = 20
+	ExecutionPriorityIssueHigh   = 30
+	ExecutionPriorityWakeup      = 100
 )
 
 var (

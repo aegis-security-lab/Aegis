@@ -95,7 +95,7 @@ func (b *CoordinationBridge) PlanAgentCapabilities(ctx context.Context, coordina
 	cfg := b.manager.store.effectiveAgentConfig(agent)
 	defaults := defaultNativeCapabilities(agent, cfg, b.phoneEnabled)
 	required := []capability.Ref{
-		{Kind: capability.KindTool, Name: "workspace"},
+		workspaceCapabilityRef(agent.Permissions),
 		{Kind: capability.KindTool, Name: "delivery"},
 	}
 	if b.phoneEnabled {
@@ -110,6 +110,17 @@ func (b *CoordinationBridge) PlanAgentCapabilities(ctx context.Context, coordina
 	observability.Default().Info(ctx, "coordination.capability_plan.approved", slog.String("coordination_id", coordinationID), slog.String("agent_id", agentID), slog.String("selection", string(decision.Selection)), slog.Int("capability_count", len(decision.Capabilities)))
 	observability.DefaultMetrics().AddCounter("coordination_capability_plans_total", 1, observability.Labels{"status": "approved"})
 	return decision, nil
+}
+
+func workspaceCapabilityRef(permissions PermissionBoundary) capability.Ref {
+	return capability.Ref{
+		Kind: capability.KindTool,
+		Name: "workspace",
+		Config: map[string]any{
+			"allowShell": permissions.AllowShell,
+			"allowWrite": permissions.AllowWrite,
+		},
+	}
 }
 
 func (b *CoordinationBridge) PreviewAgentCapabilities(ctx context.Context, issueID string, child coordination.ChildWork) (coordination.CapabilityDecision, error) {
@@ -134,6 +145,11 @@ func (m *Manager) SetCoordination(bridge *CoordinationBridge) {
 	m.coordinationMu.Lock()
 	m.coordination = bridge
 	m.coordinationMu.Unlock()
+	// Recovery may enqueue prepared executions, so it must not race ahead of
+	// Coordination construction during process startup.
+	if bridge != nil && m.store != nil && m.store.Config().Configured {
+		m.recoveryOnce.Do(func() { go m.resumeWork() })
+	}
 }
 
 func (m *Manager) Coordination() *CoordinationBridge {
@@ -798,7 +814,7 @@ func (b *CoordinationBridge) EnqueueIssueExecution(ctx context.Context, issueID 
 	if root, rootErr := b.manager.store.taskRoot(issue); rootErr == nil {
 		taskID = root.ID
 	}
-	execution := coordination.Execution{ID: coordinationExecutionID, CoordinationID: taskID, MaxAttempts: 1, Spec: agenthost.ExecutionSpec{
+	execution := coordination.Execution{ID: coordinationExecutionID, CoordinationID: taskID, MaxAttempts: 1, Priority: issueExecutionPriority(issue.Priority), Spec: agenthost.ExecutionSpec{
 		ExecutionID: coordinationExecutionID, AgentID: issue.AssigneeAgentID, Workspace: issue.Workspace,
 		Model: agenthost.ModelRef{Provider: "coordination", Model: "issue"}, Prompt: issue.Title,
 		Values: map[string]any{controlIssueIDValue: issue.ID, "control.taskId": taskID, "control.taskAgentId": issue.AssigneeTaskAgentID},
@@ -822,6 +838,17 @@ func (b *CoordinationBridge) EnqueueIssueExecution(ctx context.Context, issueID 
 	}
 	b.manager.store.notify()
 	return nil
+}
+
+func issueExecutionPriority(priority string) int {
+	switch normalizeIssuePriority(priority) {
+	case "high":
+		return coordination.ExecutionPriorityIssueHigh
+	case "low":
+		return coordination.ExecutionPriorityIssueLow
+	default:
+		return coordination.ExecutionPriorityIssueMiddle
+	}
 }
 
 // EnqueuePreparedIssueExecution schedules a durable domain Execution whose
@@ -1009,7 +1036,7 @@ func (b *CoordinationBridge) createIssue(ctx context.Context, effect coordinatio
 	if _, err := b.manager.store.GetIssue(requestedID); err == nil {
 		return nil
 	}
-	issue, err := b.manager.store.CreateIssue(CreateIssueInput{RequestedID: requestedID, ParentID: command.ParentIssueID, Title: fallback(command.Child.Title, "Delegated work"), Objective: command.Child.Prompt, Description: command.Child.Prompt, Priority: "medium", Status: "todo", WorkMode: "autonomous", AssigneeAgentID: command.Child.AgentID, AssigneeTaskAgentID: command.Child.TaskAgentID, Capabilities: command.Child.Capabilities, CapabilitySelection: string(command.Child.CapabilitySelection), CreatedBy: fallback(command.ParentTaskAgentID, command.ParentAgentID)})
+	issue, err := b.manager.store.CreateIssue(CreateIssueInput{RequestedID: requestedID, ParentID: command.ParentIssueID, Title: fallback(command.Child.Title, "Delegated work"), Objective: command.Child.Prompt, Description: command.Child.Prompt, Priority: fallback(command.Child.Priority, "middle"), Status: "todo", WorkMode: "autonomous", AssigneeAgentID: command.Child.AgentID, AssigneeTaskAgentID: command.Child.TaskAgentID, Capabilities: command.Child.Capabilities, CapabilitySelection: string(command.Child.CapabilitySelection), CreatedBy: fallback(command.ParentTaskAgentID, command.ParentAgentID)})
 	if err != nil {
 		return err
 	}

@@ -41,6 +41,25 @@ func TestIssueTitleLengthLimit(t *testing.T) {
 	}
 }
 
+func TestBoardVocabularyNormalizesPriorityAndRequiresOwnerForInProgress(t *testing.T) {
+	s := configuredStore(t)
+	issue, err := s.CreateIssue(CreateIssueInput{Title: "Queued work", Priority: "medium", WorkMode: "autonomous"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issue.Priority != "middle" || issue.Status != "todo" || issue.AssigneeAgentID != "" {
+		t.Fatalf("normalized Issue=%+v", issue)
+	}
+	inProgress := "in_progress"
+	if _, err = s.UpdateIssue(issue.ID, UpdateIssueInput{Status: &inProgress}); err == nil || !strings.Contains(err.Error(), "必须有负责人") {
+		t.Fatalf("unassigned in_progress error=%v", err)
+	}
+	high, err := s.CreateIssue(CreateIssueInput{Title: "Legacy urgent work", Priority: "critical", WorkMode: "autonomous"})
+	if err != nil || high.Priority != "high" {
+		t.Fatalf("legacy high Issue=%+v err=%v", high, err)
+	}
+}
+
 func TestIssueHierarchyRelationsAndCheckout(t *testing.T) {
 	s := configuredStore(t)
 	parent, err := s.CreateIssue(CreateIssueInput{Title: "Build product", Objective: "Deliver the complete product.", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "aegis-orchestrator"})
@@ -220,7 +239,7 @@ func TestSessionDetailIncludesPromptSnapshots(t *testing.T) {
 		t.Fatalf("read purpose parameter=%+v", purpose)
 	}
 	children := detail.Session.Execution.ToolsSnapshot[1].Parameters[4].Children
-	if len(children) != 5 || children[3].Name != "priority" || len(children[3].Enum) != 4 {
+	if len(children) != 5 || children[3].Name != "priority" || len(children[3].Enum) != 3 {
 		t.Fatalf("nested tool parameters=%+v", children)
 	}
 }
@@ -530,6 +549,76 @@ func TestDefaultRegistry(t *testing.T) {
 	}
 }
 
+func TestExploreAgentIsSeededForReadOnlyCodeDiscovery(t *testing.T) {
+	s := configuredStore(t)
+	agent, err := s.GetAgent("explore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !agent.Builtin || !agent.Enabled || agent.Category != "exploration" {
+		t.Fatalf("unexpected explore Agent definition: %+v", agent)
+	}
+	if agent.Permissions.AllowNetwork || agent.Permissions.AllowShell || agent.Permissions.AllowWrite {
+		t.Fatalf("explore Agent must remain read-only: %+v", agent.Permissions)
+	}
+	workspaceRef := workspaceCapabilityRef(agent.Permissions)
+	if workspaceRef.Config["allowShell"] != false || workspaceRef.Config["allowWrite"] != false {
+		t.Fatalf("explore workspace capability is not read-only: %+v", workspaceRef.Config)
+	}
+	for _, required := range []string{
+		"code exploration specialist",
+		"Trace relevant control flow and data flow end to end",
+		"Stay read-only",
+		"repository-relative file paths and line numbers",
+		"implementation-ready handoff",
+	} {
+		if !strings.Contains(agent.SystemPrompt, required) {
+			t.Fatalf("explore system prompt missing %q", required)
+		}
+	}
+	for _, required := range []string{"read", "grep", "find", "ls", "aegis_submit_final_result"} {
+		if !slices.Contains(agent.Tools, required) {
+			t.Fatalf("explore Agent missing tool %s: %v", required, agent.Tools)
+		}
+	}
+	for _, forbidden := range []string{"bash", "edit", "write"} {
+		if slices.Contains(agent.Tools, forbidden) {
+			t.Fatalf("explore Agent unexpectedly has mutating tool %s: %v", forbidden, agent.Tools)
+		}
+	}
+}
+
+func TestExploreAgentReceivesCodeDiscoveryIssuesWithoutStealingSecurityAudits(t *testing.T) {
+	s := configuredStore(t)
+	exploration, err := s.CreateIssue(CreateIssueInput{
+		Title: "阅读项目并梳理调用链", Objective: "说明入口、核心调用链和实现改动的影响范围。", Priority: "medium", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routed, err := s.chooseAgent(exploration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routed.ID != "explore" {
+		t.Fatalf("code discovery issue agent=%s, want explore", routed.ID)
+	}
+
+	securityAudit, err := s.CreateIssue(CreateIssueInput{
+		Title: "审计代码中的认证安全漏洞", Objective: "识别并验证认证与权限边界问题。", Priority: "high", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routed, err = s.chooseAgent(securityAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routed.ID != "red-team-lead" {
+		t.Fatalf("security audit issue agent=%s, want red-team-lead", routed.ID)
+	}
+}
+
 func TestRegistryRestartDoesNotRewritePersistedDefinitions(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir)
@@ -642,6 +731,51 @@ func TestExecutionEfficiencyIsIncludedInEmployeeSystemPrompt(t *testing.T) {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("execution efficiency prompt missing %q: %s", required, prompt)
 		}
+	}
+}
+
+func TestAgentOrganizationContextIncludesRosterLeadersAndCapacity(t *testing.T) {
+	prompt := agentOrganizationContextSystemPrompt("base", []AgentDefinition{
+		{ID: "red-team-lead", Name: "红队负责人", Category: "security", Description: "Own broad security goals", Enabled: true, SkillIDs: []string{"decompose-issues"}},
+		{ID: "backend-engineer", Name: "后端工程师", Category: "backend", Description: "Implement bounded backend work", Enabled: true},
+		{ID: "disabled", Name: "Disabled", Category: "general", Enabled: false},
+	}, Config{Concurrency: 7}, 3)
+	for _, expected := range []string{"red-team-lead", "红队负责人", `"decompositionLeader":true`, "backend-engineer", "at most 7", "3 were active", "high-priority Issues are claimed before middle, then low", "Phone Board"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("organization prompt missing %q:\n%s", expected, prompt)
+		}
+	}
+	if strings.Contains(prompt, `"agentId":"disabled"`) {
+		t.Fatalf("disabled Agent leaked into roster:\n%s", prompt)
+	}
+}
+
+func TestGoalPreservingDecompositionPromptTargetsOnlyCapableLeaders(t *testing.T) {
+	cfg := Config{
+		MaxIssueDepth: 6, MaxChildrenPerRequest: 9, MaxDirectChildren: 18,
+		IssueBudget: IssueBudgetConfig{MaxTurns: 73, ActiveTimeMinutes: 17, SummaryTurns: 8, SummaryTimeMinutes: 2},
+	}
+	leader := AgentDefinition{ID: "custom-leader", SkillIDs: []string{"decompose-issues"}}
+	prompt := agentGoalPreservingDecompositionSystemPrompt("base", leader, cfg)
+	for _, required := range []string{
+		"<goal_preserving_decomposition>",
+		"exactly one top-level goal",
+		"do not create a redundant child that merely restates that goal",
+		"one distinct direct child Issue for every goal",
+		"never combine two or more goals into one Issue",
+		"73 model turns and 17 active minutes",
+		"current request limit is 9 children",
+		"direct-child limit is 18",
+		"hierarchy depth limit is 6",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("leader decomposition prompt is missing %q: %s", required, prompt)
+		}
+	}
+
+	worker := AgentDefinition{ID: "backend-engineer", SkillIDs: []string{"go-service-engineering"}}
+	if got := agentGoalPreservingDecompositionSystemPrompt("base", worker, cfg); got != "base" {
+		t.Fatalf("ordinary worker unexpectedly received Leader decomposition policy: %s", got)
 	}
 }
 

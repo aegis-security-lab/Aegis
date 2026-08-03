@@ -159,6 +159,36 @@ type ContainerDeleteResult struct {
 	DeletedExecutions int64  `json:"deletedExecutions"`
 }
 
+type ContainerBatchFailure struct {
+	ContainerID string `json:"containerId"`
+	Error       string `json:"error"`
+}
+
+type ContainerBatchStopResult struct {
+	Requested int                     `json:"requested"`
+	Stopped   []ContainerInstance     `json:"stopped"`
+	Failed    []ContainerBatchFailure `json:"failed"`
+}
+
+type ContainerBatchDeleteImpact struct {
+	ContainerIDs         []string                `json:"containerIds"`
+	ContainerCount       int                     `json:"containerCount"`
+	TaskCount            int                     `json:"taskCount"`
+	IssueCount           int                     `json:"issueCount"`
+	ExecutionCount       int                     `json:"executionCount"`
+	ActiveExecutionCount int                     `json:"activeExecutionCount"`
+	Items                []ContainerDeleteImpact `json:"items"`
+}
+
+type ContainerBatchDeleteResult struct {
+	Requested         int                     `json:"requested"`
+	Deleted           []ContainerDeleteResult `json:"deleted"`
+	Failed            []ContainerBatchFailure `json:"failed"`
+	DeletedIssues     int64                   `json:"deletedIssues"`
+	DeletedTasks      int64                   `json:"deletedTasks"`
+	DeletedExecutions int64                   `json:"deletedExecutions"`
+}
+
 type ContainerProfileDeleteResult struct {
 	ContainerProfileID string `json:"containerProfileId"`
 	DeletedIssues      int64  `json:"deletedIssues"`
@@ -238,6 +268,22 @@ type Issue struct {
 	CancelledAt             *time.Time       `json:"cancelledAt,omitempty"`
 	CreatedAt               time.Time        `json:"createdAt"`
 	UpdatedAt               time.Time        `json:"updatedAt"`
+}
+
+// IssueRuntimeView is a read-only projection of the durable records that own
+// an Issue's current activity. It is deliberately not persisted: API clients
+// must render this projection instead of independently interpreting the
+// partially overlapping Issue, Execution, wait, validation, and recovery
+// fields.
+type IssueRuntimeView struct {
+	IssueID                string    `json:"issueId"`
+	State                  string    `json:"state"`
+	Kind                   string    `json:"kind"`
+	Health                 string    `json:"health"`
+	CurrentExecutionID     string    `json:"currentExecutionId,omitempty"`
+	CurrentExecutionStatus string    `json:"currentExecutionStatus,omitempty"`
+	Detail                 string    `json:"detail,omitempty"`
+	UpdatedAt              time.Time `json:"updatedAt"`
 }
 
 // ConciergeConversation is a user-facing, persistent chat with the built-in
@@ -827,6 +873,7 @@ type SaveSkillInput struct {
 
 type IssueDetail struct {
 	Issue          Issue                `json:"issue"`
+	Runtime        IssueRuntimeView     `json:"runtime"`
 	Children       []Issue              `json:"children"`
 	BlockedBy      []Issue              `json:"blockedBy"`
 	Blocks         []Issue              `json:"blocks"`
@@ -908,6 +955,7 @@ type StateView struct {
 	Containers        []ContainerInstance `json:"containers"`
 	Tasks             []Task              `json:"tasks"`
 	Issues            []Issue             `json:"issues"`
+	IssueRuntimes     []IssueRuntimeView  `json:"issueRuntimes"`
 	Relations         []IssueRelation     `json:"relations"`
 	Executions        []Execution         `json:"executions"`
 	Approvals         []Approval          `json:"approvals"`

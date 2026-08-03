@@ -9,6 +9,7 @@ import {
 import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
+import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,11 +26,13 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { formatTime } from "@/lib/format"
+import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { useAppState } from "@/lib/state"
 
 export function DashboardPage() {
   const { state } = useAppState()
   const issues = state?.issues ?? []
+  const runtimeMap = issueRuntimeMap(state?.issueRuntimes ?? [])
   const tasks = issues.filter((issue) => !issue.parentId)
   const active = (state?.executions ?? []).filter((execution) =>
     ["queued", "starting", "running", "waiting_approval"].includes(
@@ -39,8 +42,8 @@ export function DashboardPage() {
   const pending = (state?.approvals ?? []).filter(
     (approval) => approval.status === "pending"
   )
-  const blocked = issues.filter((issue) =>
-    ["blocked", "failed"].includes(issue.status)
+  const blocked = issues.filter(
+    (issue) => issueRuntimeOrUnavailable(runtimeMap, issue.id).kind === "failed"
   )
   const recent = [...tasks]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -138,7 +141,9 @@ export function DashboardPage() {
                         {formatTime(issue.updatedAt)}
                       </span>
                     </span>
-                    <StatusBadge status={issue.status} />
+                    <IssueRuntimeBadge
+                      runtime={issueRuntimeOrUnavailable(runtimeMap, issue.id)}
+                    />
                   </Link>
                 ))}
               </div>
@@ -185,7 +190,9 @@ export function DashboardPage() {
                     <span className="min-w-0 flex-1 truncate text-sm">
                       {issue.identifier} · {issue.title}
                     </span>
-                    <StatusBadge status={issue.status} />
+                    <IssueRuntimeBadge
+                      runtime={issueRuntimeOrUnavailable(runtimeMap, issue.id)}
+                    />
                   </Link>
                 ))}
               </CardContent>

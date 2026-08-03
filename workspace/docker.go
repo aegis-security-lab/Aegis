@@ -60,15 +60,43 @@ func (s DockerSource) Resolve(_ context.Context, execution capability.ResolveCon
 	if runner.maximum <= 0 {
 		runner.maximum = defaultOutputLimit
 	}
-	tools := []agentcore.Tool{
-		runner.bashTool(), runner.readTool(), runner.writeTool(), runner.editTool(),
-		runner.grepTool(), runner.findTool(), runner.listTool(),
+	allowShell, err := capabilityBool(ref.Config, "allowShell", true)
+	if err != nil {
+		return capability.Resolved{}, err
 	}
+	allowWrite, err := capabilityBool(ref.Config, "allowWrite", true)
+	if err != nil {
+		return capability.Resolved{}, err
+	}
+	tools := make([]agentcore.Tool, 0, 7)
+	if allowShell {
+		tools = append(tools, runner.bashTool())
+	}
+	tools = append(tools, runner.readTool())
+	if allowWrite {
+		tools = append(tools, runner.writeTool(), runner.editTool())
+	}
+	tools = append(tools, runner.grepTool(), runner.findTool(), runner.listTool())
 	return capability.Resolved{
 		Tools:        tools,
-		Instructions: []capability.Instruction{{Source: "docker-workspace", Content: fmt.Sprintf("All project work is isolated in the Task Docker container. Use only the supplied bash/read/write/edit/grep/find/ls tools. The shared Task workspace is %s. Never refer to, request, or invent a host path.", runner.root)}},
-		Snapshot:     capability.Snapshot{Kind: capability.KindTool, Name: ref.Name, Version: ref.Version, Metadata: map[string]string{"runtime": "docker", "workspace": runner.root}},
+		Instructions: []capability.Instruction{{Source: "docker-workspace", Content: fmt.Sprintf("All project work is isolated in the Task Docker container. Use only the workspace tools supplied to this execution. The shared Task workspace is %s. Never refer to, request, or invent a host path.", runner.root)}},
+		Snapshot: capability.Snapshot{Kind: capability.KindTool, Name: ref.Name, Version: ref.Version, Metadata: map[string]string{
+			"runtime": "docker", "workspace": runner.root,
+			"allowShell": strconv.FormatBool(allowShell), "allowWrite": strconv.FormatBool(allowWrite),
+		}},
 	}, nil
+}
+
+func capabilityBool(config map[string]any, key string, fallback bool) (bool, error) {
+	value, exists := config[key]
+	if !exists {
+		return fallback, nil
+	}
+	result, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("workspace: %s must be a boolean", key)
+	}
+	return result, nil
 }
 
 type dockerRunner struct {

@@ -738,6 +738,77 @@ func (s *Store) ContainerDeleteImpact(id string) (ContainerDeleteImpact, error) 
 	return plan.Impact, err
 }
 
+func normalizeContainerBatchIDs(ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, errors.New("至少选择一个容器")
+	}
+	if len(ids) > 500 {
+		return nil, errors.New("一次最多操作 500 个容器")
+	}
+	seen := make(map[string]bool, len(ids))
+	normalized := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, errors.New("容器 ID 不能为空")
+		}
+		if !seen[id] {
+			seen[id] = true
+			normalized = append(normalized, id)
+		}
+	}
+	return normalized, nil
+}
+
+func (s *Store) StopContainers(ids []string) (ContainerBatchStopResult, error) {
+	ids, err := normalizeContainerBatchIDs(ids)
+	if err != nil {
+		return ContainerBatchStopResult{}, err
+	}
+	result := ContainerBatchStopResult{
+		Requested: len(ids),
+		Stopped:   make([]ContainerInstance, 0, len(ids)),
+		Failed:    make([]ContainerBatchFailure, 0),
+	}
+	for _, id := range ids {
+		container, stopErr := s.StopContainer(id)
+		if stopErr != nil {
+			result.Failed = append(result.Failed, ContainerBatchFailure{ContainerID: id, Error: stopErr.Error()})
+			continue
+		}
+		result.Stopped = append(result.Stopped, container)
+	}
+	return result, nil
+}
+
+func (s *Store) ContainerBatchDeleteImpact(ids []string) (ContainerBatchDeleteImpact, error) {
+	ids, err := normalizeContainerBatchIDs(ids)
+	if err != nil {
+		return ContainerBatchDeleteImpact{}, err
+	}
+	result := ContainerBatchDeleteImpact{
+		ContainerIDs:   append([]string(nil), ids...),
+		ContainerCount: len(ids),
+		Items:          make([]ContainerDeleteImpact, 0, len(ids)),
+	}
+	tasks := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		impact, impactErr := s.ContainerDeleteImpact(id)
+		if impactErr != nil {
+			return ContainerBatchDeleteImpact{}, impactErr
+		}
+		result.Items = append(result.Items, impact)
+		if impact.TaskID != "" {
+			tasks[impact.TaskID] = true
+		}
+		result.IssueCount += impact.IssueCount
+		result.ExecutionCount += impact.ExecutionCount
+		result.ActiveExecutionCount += impact.ActiveExecutionCount
+	}
+	result.TaskCount = len(tasks)
+	return result, nil
+}
+
 func (s *Store) DeleteContainer(id string, cascadeIssues bool) (ContainerDeleteResult, error) {
 	plan, err := s.containerDeletePlan(id)
 	if err != nil {

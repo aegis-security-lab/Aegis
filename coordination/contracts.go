@@ -12,6 +12,7 @@ type ChildWork struct {
 	TaskAgentID         string              `json:"taskAgentId,omitempty"`
 	Title               string              `json:"title,omitempty"`
 	Prompt              string              `json:"prompt"`
+	Priority            string              `json:"priority,omitempty"`
 	Workspace           string              `json:"workspace,omitempty"`
 	Capabilities        []capability.Ref    `json:"capabilities,omitempty"`
 	CapabilitySelection CapabilitySelection `json:"capabilitySelection,omitempty"`

@@ -57,14 +57,16 @@ func (m *Manager) BoardCommandFromExecution(executionID, token string, input Boa
 		result.Detail = &detail
 		return result, nil
 	case "create":
-		if err := m.store.ValidateDelegation(execution.AgentID, input.AssigneeAgentID); err != nil {
-			return result, err
+		if strings.TrimSpace(input.AssigneeAgentID) != "" {
+			if err := m.store.ValidateDelegation(execution.AgentID, input.AssigneeAgentID); err != nil {
+				return result, err
+			}
 		}
 		attachmentIDs := m.store.InputAttachmentIDsForExecution(execution.ID)
 		issue, createErr := m.CreateIssue(CreateIssueInput{
 			ParentID: input.ParentID, Title: input.Title, Description: input.Description,
 			Objective: input.Objective, Status: fallback(input.Status, "todo"),
-			Priority: fallback(input.Priority, "medium"), WorkMode: "autonomous",
+			Priority: fallback(input.Priority, "middle"), WorkMode: "autonomous",
 			AssigneeAgentID: input.AssigneeAgentID, AttachmentIDs: attachmentIDs,
 			AttachmentSourceExecutionID: execution.ID, CreatedBy: execution.AgentID,
 		})
@@ -95,29 +97,21 @@ func (m *Manager) BoardCommandFromExecution(executionID, token string, input Boa
 			update.Status = &input.Status
 		}
 		if input.AssigneeAgentID != "" || input.Action == "assign" {
-			if delegationErr := m.store.ValidateDelegation(execution.AgentID, input.AssigneeAgentID); delegationErr != nil {
-				return result, delegationErr
+			if strings.TrimSpace(input.AssigneeAgentID) != "" {
+				if delegationErr := m.store.ValidateDelegation(execution.AgentID, input.AssigneeAgentID); delegationErr != nil {
+					return result, delegationErr
+				}
 			}
 			update.AssigneeAgentID = &input.AssigneeAgentID
 		}
 		if input.ParentID != "" {
 			update.ParentID = &input.ParentID
 		}
-		updated, updateErr := m.store.UpdateIssue(issue.ID, update)
+		updated, updateErr := m.UpdateBoardIssue(issue.ID, update)
 		if updateErr != nil {
 			return result, updateErr
 		}
-		m.ReconcileIssue(updated)
 		result.Issue = &updated
-		if updated.AssigneeAgentID != "" && updated.AssigneeAgentID != issue.AssigneeAgentID {
-			if bridge := m.Coordination(); bridge != nil {
-				if submitErr := bridge.SubmitIssueAssigned(context.Background(), updated); submitErr != nil {
-					return result, submitErr
-				}
-			} else {
-				m.notifyBoardAssignment(execution.AgentID, updated, "Board 更新了 Issue 委派")
-			}
-		}
 		return result, nil
 	case "archive":
 		archived, archiveErr := m.archiveBoardIssue(strings.TrimSpace(input.IssueID), fallback(strings.TrimSpace(input.Reason), "Agent 通过 Board 归档了 Issue"))
@@ -269,13 +263,47 @@ func (m *Manager) UpdateBoardIssue(issueID string, input UpdateIssueInput) (Issu
 	if err != nil {
 		return Issue{}, err
 	}
+	if input.Status != nil && strings.TrimSpace(*input.Status) == "cancelled" && before.Status != "cancelled" {
+		input.Status = nil
+		if hasBoardIssueUpdate(input) {
+			if _, err = m.store.UpdateIssue(issueID, input); err != nil {
+				return Issue{}, err
+			}
+		}
+		return m.archiveBoardIssue(issueID, "通过 Board 取消了 Issue")
+	}
+	requestedStart := input.Status != nil && strings.TrimSpace(*input.Status) == "in_progress" && before.Status != "in_progress"
+	if requestedStart {
+		assigneeID := before.AssigneeAgentID
+		if input.AssigneeAgentID != nil {
+			assigneeID = strings.TrimSpace(*input.AssigneeAgentID)
+		}
+		if assigneeID == "" {
+			return Issue{}, errors.New("in_progress Issue 必须先指定负责人")
+		}
+		// Queued work remains todo until CheckoutIssue atomically proves that an
+		// Execution has actually started. This prevents UI state from claiming a
+		// worker is running while it is still waiting for capacity.
+		status := "todo"
+		input.Status = &status
+	}
+	if input.Status != nil && strings.TrimSpace(*input.Status) != before.Status {
+		var active int64
+		if err = m.store.db.Model(&Execution{}).Where("issue_id = ? AND status IN ?", before.ID, activeExecutionStatuses).Count(&active).Error; err != nil {
+			return Issue{}, err
+		}
+		if active > 0 {
+			return Issue{}, errors.New("Issue 正在执行；只能取消活动工作，不能直接改写为其他状态")
+		}
+	}
 	updated, err := m.store.UpdateIssue(issueID, input)
 	if err != nil {
 		return Issue{}, err
 	}
 	m.ReconcileIssue(updated)
 	reopenedTerminalOutcome := slices.Contains([]string{"failed", "budget_exceeded"}, before.Status) && slices.Contains([]string{"todo", "backlog"}, updated.Status)
-	if updated.AssigneeAgentID != "" && (updated.AssigneeAgentID != before.AssigneeAgentID || reopenedTerminalOutcome) {
+	becameSchedulable := !slices.Contains([]string{"todo", "backlog"}, before.Status) && slices.Contains([]string{"todo", "backlog"}, updated.Status)
+	if updated.AssigneeAgentID != "" && (updated.AssigneeAgentID != before.AssigneeAgentID || reopenedTerminalOutcome || becameSchedulable || requestedStart) {
 		if bridge := m.Coordination(); bridge != nil {
 			if err := bridge.SubmitIssueAssigned(context.Background(), updated); err != nil {
 				return Issue{}, err
@@ -285,6 +313,10 @@ func (m *Manager) UpdateBoardIssue(issueID string, input UpdateIssueInput) (Issu
 		}
 	}
 	return updated, nil
+}
+
+func hasBoardIssueUpdate(input UpdateIssueInput) bool {
+	return input.Title != nil || input.Description != nil || input.Objective != nil || input.Priority != nil || input.Status != nil || input.AssigneeAgentID != nil || input.ParentID != nil || input.TimeBudgetMinutes != nil
 }
 
 func (m *Manager) DeleteBoardIssue(issueID string) (DeleteIssueResult, error) {

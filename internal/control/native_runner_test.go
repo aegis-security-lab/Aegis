@@ -21,6 +21,88 @@ func (f hostRunnerFunc) Run(ctx context.Context, spec agenthost.ExecutionSpec, s
 	return f(ctx, spec, sink)
 }
 
+func TestNativeIssueRunnerAcceptsInternalValidationExecution(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Validate prepared delivery", Objective: "Verify the submitted evidence.", Priority: "high",
+		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := NativeIssueRunner{Manager: &Manager{store: store, sessions: map[string]*PiSession{}}}
+	prepared, err := runner.prepareExistingExecution(issue, execution.ID, "Validate the delivery.")
+	if err != nil {
+		t.Fatalf("internal validation execution was rejected: %v", err)
+	}
+	if prepared.execution.ID != execution.ID || prepared.agent.ID != "acceptance-validator" || !prepared.agent.Internal {
+		t.Fatalf("unexpected prepared validation: %+v", prepared)
+	}
+}
+
+func TestNativeIssueRunnerReconcilesPreparedValidationStartupFailure(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Failed validation startup", Objective: "Verify the submitted evidence.", Priority: "high",
+		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.updateExecution(execution.ID, map[string]any{"status": "starting"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "in_progress", "execution_phase": "validating", "current_execution_id": execution.ID,
+		"validation_execution_id": execution.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	validation := IssueValidation{
+		ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: "source-execution",
+		ValidationExecutionID: execution.ID, Attempt: 1, Objective: issue.Objective,
+		CandidateResult: "candidate", Status: "running", CreatedAt: time.Now(),
+	}
+	if err = store.db.Create(&validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	host := hostRunnerFunc(func(context.Context, agenthost.ExecutionSpec, agentcore.EventSink) (agenthost.Result, error) {
+		t.Fatal("AgentHost must not run when the prepared prompt is invalid")
+		return agenthost.Result{}, nil
+	})
+	runner := NativeIssueRunner{Manager: manager, Host: host}
+	_, runErr := runner.Run(context.Background(), agenthost.ExecutionSpec{
+		ExecutionID: "prepared-invalid-validation",
+		Values: map[string]any{
+			controlIssueIDValue:             issue.ID,
+			controlPreparedExecutionIDValue: execution.ID,
+			controlPreparedPromptValue:      "",
+		},
+	}, nil)
+	if runErr == nil {
+		t.Fatal("invalid prepared validation unexpectedly started")
+	}
+	if err = store.db.First(&execution, "id = ?", execution.ID).Error; err != nil || execution.Status != "failed" {
+		t.Fatalf("prepared Execution was not failed: err=%v execution=%+v", err, execution)
+	}
+	if err = store.db.First(&validation, "id = ?", validation.ID).Error; err != nil || validation.Status != "error" || validation.CompletedAt == nil {
+		t.Fatalf("active validation was not reconciled: err=%v validation=%+v", err, validation)
+	}
+	failedIssue, err := store.GetIssue(issue.ID)
+	if err != nil || failedIssue.Status != "failed" || failedIssue.ExecutionPhase != "completed" {
+		t.Fatalf("Issue remained stuck after startup failure: err=%v issue=%+v", err, failedIssue)
+	}
+}
+
 func TestNativeIssueRunnerCompletesWorkThroughAgentHost(t *testing.T) {
 	store, manager := bridgeTestManager(t)
 	bridge, err := newTestCoordinationBridge(manager, "native-runner", "board_autonomy", nil, nil)
@@ -210,7 +292,13 @@ func TestNativeIssueRunnerRecoversCancelledWorkerContextWithoutFailingIssue(t *t
 		t.Fatalf("interrupted execution=%+v", execution)
 	}
 
-	if _, err = runner.Run(context.Background(), scheduled, nil); err != nil {
+	reclaimedPrepared := scheduled
+	reclaimedPrepared.Values = map[string]any{
+		controlIssueIDValue:             issue.ID,
+		controlPreparedExecutionIDValue: firstExecutionID,
+		controlPreparedPromptValue:      "stale prompt from before restart",
+	}
+	if _, err = runner.Run(context.Background(), reclaimedPrepared, nil); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.GetIssue(issue.ID)
@@ -402,6 +490,51 @@ func TestNativeIssueRunnerUsesCoordinationCapabilityPolicy(t *testing.T) {
 	}
 	if len(execution.CapabilitiesSnapshot) != 1 || execution.CapabilitiesSnapshot[0].Metadata["apps"] != "aegis.board" {
 		t.Fatalf("capability snapshot=%+v", execution.CapabilitiesSnapshot)
+	}
+}
+
+func TestNativeIssueRunnerInjectsGoalPreservingPolicyIntoLeaderContext(t *testing.T) {
+	store, manager := bridgeTestManager(t)
+	bridge, err := newTestCoordinationBridge(manager, "leader-goal-policy", "board_autonomy", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetCoordination(bridge)
+	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Plan several independent outcomes", Objective: "Deliver every requested outcome at full depth.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "development-lead",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"container_profile_id": "", "container_id": "", "validation_disabled": true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	host := hostRunnerFunc(func(_ context.Context, spec agenthost.ExecutionSpec, _ agentcore.EventSink) (agenthost.Result, error) {
+		for _, required := range []string{
+			"<execution_efficiency>",
+			"<aegis_organization_context>",
+			`"agentId":"red-team-lead"`,
+			`"decompositionLeader":true`,
+			"Capacity is finite",
+			"<goal_preserving_decomposition>",
+			"one distinct direct child Issue for every goal",
+			"do not create a redundant child that merely restates that goal",
+		} {
+			if !strings.Contains(spec.SystemPrompt, required) {
+				t.Fatalf("Leader runtime system prompt is missing %q: %s", required, spec.SystemPrompt)
+			}
+		}
+		message := agentcore.TextMessage(agentcore.RoleAssistant, "leader policy observed")
+		return agenthost.Result{Core: agentcore.Result{
+			State: agentcore.State{Messages: []agentcore.Message{message}}, NewMessages: []agentcore.Message{message}, StopReason: agentcore.StopReasonStop,
+		}}, nil
+	})
+	if _, err = (NativeIssueRunner{Manager: manager, Host: host}).Run(context.Background(), agenthost.ExecutionSpec{Values: map[string]any{controlIssueIDValue: issue.ID}}, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

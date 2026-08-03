@@ -256,6 +256,21 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{}, &Task{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{}); err != nil {
 		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
 	}
+	// Keep one public Board priority vocabulary. These aliases existed in older
+	// releases, so normalize them in place before any scheduler reads the queue.
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		for _, model := range []any{&Issue{}, &Task{}} {
+			if err := tx.Model(model).Where("priority = ?", "medium").Update("priority", "middle").Error; err != nil {
+				return err
+			}
+			if err := tx.Model(model).Where("priority = ?", "critical").Update("priority", "high").Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("migrate Issue priorities: %w", err)
+	}
 	// Older releases created blocks edges between sibling Issues and from each
 	// child to its parent. Hierarchy plus IssueChildWait now owns coordination.
 	if err := db.Exec(`DELETE FROM issue_relations
@@ -394,7 +409,7 @@ func NewStore(dataDir string) (*Store, error) {
 			return err
 		}
 		var interruptedIssues []Issue
-		if err := tx.Where("hidden = ? AND status = ? AND execution_phase NOT IN ?", false, "in_progress", []string{"waiting_children", "summarizing"}).Find(&interruptedIssues).Error; err != nil {
+		if err := tx.Where("hidden = ? AND status = ? AND execution_phase NOT IN ?", false, "in_progress", []string{"waiting_children", "sleeping", "summarizing"}).Find(&interruptedIssues).Error; err != nil {
 			return err
 		}
 		for _, issue := range interruptedIssues {
@@ -819,7 +834,7 @@ func (s *Store) stateViewLocked() StateView {
 	for index := range executions {
 		executions[index] = compactExecution(executions[index])
 	}
-	return StateView{Configured: s.config.Configured, Config: configView(s.config), Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), TaskAgents: taskAgents, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
+	return StateView{Configured: s.config.Configured, Config: configView(s.config), Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, IssueRuntimes: s.issueRuntimeViews(issues), Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), TaskAgents: taskAgents, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
 }
 func (s *Store) Subscribe() (<-chan StateView, func()) {
 	ch := make(chan StateView, 4)
@@ -874,10 +889,8 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	if len(input.Capabilities) > 64 {
 		return Issue{}, errors.New("Issue capabilities cannot exceed 64 entries")
 	}
-	if input.Priority == "" {
-		input.Priority = "medium"
-	}
-	if !slices.Contains([]string{"critical", "high", "medium", "low"}, input.Priority) {
+	input.Priority = normalizeIssuePriority(input.Priority)
+	if !slices.Contains([]string{"high", "middle", "low"}, input.Priority) {
 		return Issue{}, errors.New("invalid priority")
 	}
 	if input.WorkMode == "" {
@@ -994,14 +1007,13 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	}
 	status := input.Status
 	if status == "" {
-		if input.AssigneeAgentID != "" {
-			status = "todo"
-		} else {
-			status = "backlog"
-		}
+		status = "todo"
 	}
 	if !validIssueStatus(status) {
 		return Issue{}, errors.New("invalid issue status")
+	}
+	if status == "in_progress" && strings.TrimSpace(input.AssigneeAgentID) == "" {
+		return Issue{}, errors.New("in_progress Issue 必须有负责人")
 	}
 	var issue Issue
 	validationMode, maxValidationAttempts := normalizeValidationPolicy(s.config.ValidationMode, s.config.MaxValidationAttempts)
@@ -1195,6 +1207,9 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 		return IssueDetail{}, err
 	}
 	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Watermark: time.Now()}
+	if runtimes := s.issueRuntimeViews([]Issue{issue}); len(runtimes) == 1 {
+		d.Runtime = runtimes[0]
+	}
 	d.Decompositions = []IssueDecomposition{}
 	s.db.Where("parent_id = ?", issue.ID).Order("number asc").Find(&d.Children)
 	var incoming, outgoing []IssueRelation
@@ -1260,6 +1275,16 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if input.Status != nil && *input.Status != "cancelled" && s.belongsToCancelledTask(issue) {
 		return Issue{}, errors.New("所属任务已取消，不能重新打开 Issue")
 	}
+	effectiveStatus, effectiveAssignee := issue.Status, issue.AssigneeAgentID
+	if input.Status != nil {
+		effectiveStatus = strings.TrimSpace(*input.Status)
+	}
+	if input.AssigneeAgentID != nil {
+		effectiveAssignee = strings.TrimSpace(*input.AssigneeAgentID)
+	}
+	if effectiveStatus == "in_progress" && effectiveAssignee == "" {
+		return Issue{}, errors.New("in_progress Issue 必须有负责人")
+	}
 	if input.AssigneeAgentID != nil && *input.AssigneeAgentID != issue.AssigneeAgentID {
 		var active int64
 		if err := s.db.Model(&Execution{}).Where("issue_id = ? AND status IN ?", issue.ID, activeExecutionStatuses).Count(&active).Error; err != nil {
@@ -1293,10 +1318,11 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		updates["time_budget_minutes"] = *input.TimeBudgetMinutes
 	}
 	if input.Priority != nil {
-		if !slices.Contains([]string{"critical", "high", "medium", "low"}, *input.Priority) {
+		value := normalizeIssuePriority(*input.Priority)
+		if !slices.Contains([]string{"high", "middle", "low"}, value) {
 			return Issue{}, errors.New("invalid priority")
 		}
-		updates["priority"] = *input.Priority
+		updates["priority"] = value
 	}
 	if input.AssigneeAgentID != nil {
 		if issue.AssigneeTaskAgentID != "" && *input.AssigneeAgentID != issue.AssigneeAgentID {
@@ -1385,6 +1411,19 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 
 func validIssueStatus(v string) bool {
 	return slices.Contains([]string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "failed", "budget_exceeded", "cancelled"}, v)
+}
+
+func normalizeIssuePriority(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "", "medium", "middle":
+		return "middle"
+	case "critical", "high":
+		return "high"
+	case "low":
+		return "low"
+	default:
+		return strings.TrimSpace(strings.ToLower(value))
+	}
 }
 
 var terminalIssueStatuses = []string{"done", "failed", "budget_exceeded", "cancelled"}

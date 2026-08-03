@@ -8,16 +8,13 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAppState } from "@/lib/state"
+import { issueWorkflowStatus } from "@/lib/issue-workflow"
 import type { Issue, IssueStatus } from "@/types"
 
 const statuses: IssueStatus[] = [
-  "backlog",
   "todo",
   "in_progress",
   "in_review",
-  "blocked",
-  "failed",
-  "budget_exceeded",
   "done",
   "cancelled",
 ]
@@ -45,7 +42,7 @@ export function IssuesPage() {
   const allIssues = state?.issues ?? []
   const matched = allIssues.filter(
     (issue) =>
-      (filter === "all" || issue.status === filter) &&
+      (filter === "all" || issueWorkflowStatus(issue.status) === filter) &&
       (!query.trim() ||
         `${issue.identifier} ${issue.title}`
           .toLocaleLowerCase()
@@ -57,9 +54,9 @@ export function IssuesPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-		eyebrow="Board"
-		title="Issues"
-		description="像工作队列一样快速扫描状态、负责人、优先级和父子关系，再进入单个 Issue 处理细节。"
+        eyebrow="Board"
+        title="Issues"
+        description="像工作队列一样快速扫描状态、负责人、优先级和父子关系，再进入单个 Issue 处理细节。"
       />
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative min-w-0 flex-1 lg:max-w-xs">
@@ -115,7 +112,7 @@ export function IssuesPage() {
             relations={state?.relations ?? []}
             agents={state?.agents ?? []}
             taskAgents={state?.taskAgents ?? []}
-            executions={state?.executions ?? []}
+            runtimes={state?.issueRuntimes ?? []}
           />
         </Card>
       </div>

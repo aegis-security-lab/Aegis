@@ -142,7 +142,13 @@ export function IssueAgentActivity({
           <MessageScrollerButton />
         </MessageScroller>
       </MessageScrollerProvider>
-      <ActivityDetailDialog item={selected} onClose={() => setSelected(null)} />
+      {selected ? (
+        <ActivityDetailDialog
+          key={`${selected.kind}-${selected.id}`}
+          item={selected}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
     </>
   )
 }
@@ -235,19 +241,16 @@ function ActivityDetailDialog({
   item,
   onClose,
 }: {
-  item: ActivityItem | null
+  item: ActivityItem
   onClose: () => void
 }) {
   const [fullEvent, setFullEvent] = React.useState<ExecutionEvent | null>(null)
-  const [loading, setLoading] = React.useState(false)
+  const [loading, setLoading] = React.useState(item.kind === "event")
   const [error, setError] = React.useState("")
 
   React.useEffect(() => {
-    setFullEvent(null)
-    setError("")
-    if (!item || item.kind !== "event") return
+    if (item.kind !== "event") return
     let cancelled = false
-    setLoading(true)
     void fetchExecutionEvent(item.event.id)
       .then((event) => !cancelled && setFullEvent(event))
       .catch(
