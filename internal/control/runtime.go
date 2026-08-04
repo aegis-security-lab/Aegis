@@ -499,6 +499,8 @@ func agentGoalPreservingDecompositionSystemPrompt(systemPrompt string, agent Age
 <goal_preserving_decomposition>
 Before delegating, identify the request's independently verifiable top-level goals; constraints, quality requirements, evidence formats, and execution steps are not separate goals. Preserve goal depth instead of compressing scope: when there is exactly one top-level goal, do not create a redundant child that merely restates that goal—either complete it directly when it is genuinely bounded, or create direct execution children divided by coherent modules, surfaces, phases, or outcomes whose combined coverage satisfies the goal. When there are multiple top-level goals, create one distinct direct child Issue for every goal and never combine two or more goals into one Issue; assign each such goal-owning child to a delegation-capable Leader so it can inspect its own scope and split further when needed. Reusing the same Leader Agent type is allowed, but every goal must retain a separate Issue, task-local identity, Session, Phone, Execution budget, evidence set, and acceptance decision. Shared setup or discovery may be an additional enabling child, but it never replaces a goal-owning child. If all goal owners cannot be dispatched in one call, create them in successive waves while maintaining an explicit coverage checklist and never group goals to satisfy a child-count limit.
 
+For a batch of independently verifiable targets—such as repositories, sites, projects, files, packages, accounts, or requested deliverables—treat every target as a separate goal even when the operator phrases the batch as one overall objective. You do not need to create every target Issue up front. First establish a complete, auditable coverage ledger with the total target count and stable target identities, then create only the next small wave that fits current capacity and priority. Track at least not_created, todo, in_progress, in_review, done, failed, and cancelled counts; after each wave, reconcile the ledger against Board state before creating the next wave. A target may remain not_created in the ledger or be created as an unassigned todo without consuming a worker slot, but it must receive its own execution Issue before any substantive work begins. Every executed target must therefore have its own Issue, task-local identity, Session, Execution budget, evidence, and acceptance decision. A grouping or Leader Issue may coordinate a subset and create its target Issues in later waves, but it must never perform several targets as one execution or substitute one shared acceptance decision for per-target Issues. "Successive waves" means delaying creation or assignment of independent target Issues; it never means bundling multiple targets into one worker Issue.
+
 Size every execution child against the live configuration, not a memorized constant: the current per-Execution work budget is %d model turns and %d active minutes, the current request limit is %d children, the direct-child limit is %d, and the hierarchy depth limit is %d. Each child must have one primary outcome, bounded scope, concrete deliverables, and acceptance evidence, and must realistically finish with room for verification and final submission inside one Execution. Split any scope that is too broad or uncertain; merge small steps only when they serve the same top-level goal, owner, deliverable, and acceptance decision. Before calling phone_board_delegate, verify that every top-level goal has exactly one owner, no child bundles unrelated goals, the children collectively cover the parent objective, and the chosen Agent is appropriate for the work.
 </goal_preserving_decomposition>`, strings.TrimSpace(systemPrompt), budget.MaxTurns, budget.ActiveTimeMinutes, maxPerRequest, maxDirect, maxDepth)
 }
@@ -2572,10 +2574,17 @@ func (m *Manager) DeleteConciergeConversation(id string) error {
 	return m.store.deleteConciergeConversation(id)
 }
 
-func (m *Manager) SendConciergeMessage(conversationID, message string) (Message, error) {
+func (m *Manager) SendConciergeMessage(conversationID, message string, attachmentIDs []string) (Message, error) {
 	message = strings.TrimSpace(message)
-	if message == "" {
+	attachmentIDs, err := normalizeInputAttachmentIDs(attachmentIDs)
+	if err != nil {
+		return Message{}, err
+	}
+	if message == "" && len(attachmentIDs) == 0 {
 		return Message{}, errors.New("消息不能为空")
+	}
+	if message == "" {
+		message = "请根据我上传的附件理解需求；如果目标明确，请创建任务，否则先向我确认必要信息。"
 	}
 	if utf8.RuneCountInString(message) > 50000 {
 		return Message{}, errors.New("消息不能超过 50000 个字符")
@@ -2600,11 +2609,21 @@ func (m *Manager) SendConciergeMessage(conversationID, message string) (Message,
 		return Message{}, errors.New("管家需要 Go AgentCore runtime")
 	}
 	sent := Message{ID: nextID("message"), ExecutionID: detail.Execution.ID, IssueID: issue.ID, Role: "user", Content: message, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err = m.store.db.Create(&sent).Error; err != nil {
+	if err = m.store.db.Transaction(func(tx *gorm.DB) error {
+		if createErr := tx.Create(&sent).Error; createErr != nil {
+			return createErr
+		}
+		attachments, bindErr := bindConciergeInputAttachmentsTx(tx, detail.Conversation, sent, attachmentIDs)
+		if bindErr != nil {
+			return bindErr
+		}
+		sent.Attachments = attachments
+		return tx.Model(&Execution{}).Where("id = ?", detail.Execution.ID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
+	}); err != nil {
 		return Message{}, err
 	}
-	_ = m.store.db.Model(&Execution{}).Where("id = ?", detail.Execution.ID).UpdateColumn("message_count", gorm.Expr("message_count + 1")).Error
-	if delivered, steerErr := delivery.SteerLiveIssue(issue.ID, agent.ID, message); delivered {
+	runtimePrompt := conciergeInputAttachmentsPrompt(message, sent.Attachments)
+	if delivered, steerErr := delivery.SteerLiveIssue(issue.ID, agent.ID, runtimePrompt); delivered {
 		if steerErr != nil {
 			return Message{}, steerErr
 		}
@@ -2625,13 +2644,13 @@ func (m *Manager) SendConciergeMessage(conversationID, message string) (Message,
 	_ = m.store.updateExecution(detail.Execution.ID, map[string]any{"status": "starting", "runtime_type": "agentcore", "pid": 0, "error": "", "finished_at": nil})
 	m.store.touchConciergeConversation(detail.Execution.ID, "running", message)
 	m.scheduleMu.Unlock()
-	go m.runNativeConciergeTurn(issue, detail.Execution, agent, message, host, delivery)
+	go m.runNativeConciergeTurn(issue, detail.Execution, agent, message, runtimePrompt, host, delivery)
 	m.store.incrementConciergeMessages(detail.Execution.ID)
 	m.store.notify()
 	return sent, nil
 }
 
-func (m *Manager) runNativeConciergeTurn(issue Issue, execution Execution, agent AgentDefinition, prompt string, host *agenthost.Host, delivery *NativeSessionDelivery) {
+func (m *Manager) runNativeConciergeTurn(issue Issue, execution Execution, agent AgentDefinition, prompt, runtimePrompt string, host *agenthost.Host, delivery *NativeSessionDelivery) {
 	cfg := m.store.effectiveAgentConfig(agent)
 	options := map[string]any{}
 	if thinking := strings.TrimSpace(cfg.Thinking); thinking != "" && thinking != "off" {
@@ -2642,7 +2661,7 @@ func (m *Manager) runNativeConciergeTurn(issue Issue, execution Execution, agent
 	spec := agenthost.ExecutionSpec{
 		ExecutionID: execution.ID, AgentID: agent.ID, SessionID: execution.SessionID,
 		Model:        agenthost.ModelRef{Provider: cfg.Provider, Model: cfg.Model, Options: options},
-		SystemPrompt: systemPrompt, Prompt: prompt,
+		SystemPrompt: systemPrompt, Prompt: runtimePrompt,
 		Capabilities: []capability.Ref{{Kind: capability.KindTool, Name: "concierge"}},
 		Values:       map[string]any{"control.issueId": issue.ID, "control.executionId": execution.ID},
 	}
@@ -2696,12 +2715,14 @@ func (m *Manager) createTaskFromConcierge(executionID string, input CreateConcie
 	}
 	priority := fallback(strings.TrimSpace(input.Priority), "middle")
 	workMode := fallback(strings.TrimSpace(input.WorkMode), "autonomous")
+	attachmentIDs := m.store.conciergeInputAttachmentIDs(executionID)
 	issue, err := m.CreateIssue(CreateIssueInput{
 		Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description),
 		Objective: strings.TrimSpace(input.Objective), Priority: priority, Status: "todo",
 		WorkMode: workMode, AssigneeAgentID: strings.TrimSpace(input.AssigneeAgentID),
 		Workspace: strings.TrimSpace(input.Workspace), Constraints: strings.TrimSpace(input.Constraints),
-		Context: "由管家 Agent 根据用户对话创建。",
+		Context:       "由管家 Agent 根据用户对话创建。",
+		AttachmentIDs: attachmentIDs, AttachmentSourceExecutionID: executionID,
 	})
 	if err != nil {
 		return Issue{}, err

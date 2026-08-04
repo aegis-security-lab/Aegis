@@ -2,6 +2,7 @@ import * as React from "react"
 import {
   CircleStop,
   Copy,
+  FileSearch,
   ListTodo,
   MoreHorizontal,
   Plus,
@@ -13,6 +14,7 @@ import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
+import { TaskAuditDrawer } from "@/components/task-audit-drawer"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -54,6 +56,7 @@ export function TasksPage() {
     totalIssues: number
     activeExecutions: number
   } | null>(null)
+  const [auditTarget, setAuditTarget] = React.useState<Task | null>(null)
   const query = searchParams.get("q") ?? ""
   const filterParam = searchParams.get("status")
   const filter: TaskFilter = isTaskFilter(filterParam) ? filterParam : "all"
@@ -313,6 +316,10 @@ export function TasksPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-40">
                         <DropdownMenuGroup>
+                          <DropdownMenuItem onClick={() => setAuditTarget(row.task)}>
+                            <FileSearch />
+                            分析任务
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => cloneTask(row.task)}>
                             <Copy />
                             复制为新任务
@@ -361,6 +368,16 @@ export function TasksPage() {
           totalIssues={cancelTarget.totalIssues}
           activeExecutions={cancelTarget.activeExecutions}
           onCancelled={() => refresh()}
+        />
+      ) : null}
+      {auditTarget ? (
+        <TaskAuditDrawer
+          open
+          onOpenChange={(open) => {
+            if (!open) setAuditTarget(null)
+          }}
+          taskId={auditTarget.id}
+          taskTitle={auditTarget.title}
         />
       ) : null}
     </div>

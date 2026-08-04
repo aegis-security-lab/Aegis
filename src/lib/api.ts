@@ -38,6 +38,7 @@ import type {
   SkillDefinition,
   TaskCancellationResult,
   Task,
+  TaskAudit,
   ToolInterruptResult,
   TaskTimeline,
   TaskWorkspace,
@@ -170,10 +171,14 @@ export const deleteConciergeConversation = (id: string) =>
   request<void>(`/api/concierge/conversations/${encodeURIComponent(id)}`, {
     method: "DELETE",
   })
-export const sendConciergeMessage = (id: string, message: string) =>
+export const sendConciergeMessage = (
+  id: string,
+  message: string,
+  attachmentIds: string[] = []
+) =>
   request<Message>(
     `/api/concierge/conversations/${encodeURIComponent(id)}/messages`,
-    { method: "POST", body: JSON.stringify({ message }) }
+    { method: "POST", body: JSON.stringify({ message, attachmentIds }) }
   )
 export const testConnection = (input: SaveConfigInput) =>
   request<ConnectionTestResult>("/api/setup/test", {
@@ -251,6 +256,17 @@ export const uploadTaskAttachment = (
   onProgress?: (progress: number) => void
 ) => uploadInputAttachment("/api/tasks/attachments", file, onProgress)
 
+export const uploadConciergeAttachment = (
+  conversationId: string,
+  file: File,
+  onProgress?: (progress: number) => void
+) =>
+  uploadInputAttachment(
+    `/api/concierge/conversations/${encodeURIComponent(conversationId)}/attachments`,
+    file,
+    onProgress
+  )
+
 export const deleteInputAttachment = (id: string) =>
   request<void>(`/api/input-attachments/${encodeURIComponent(id)}`, {
     method: "DELETE",
@@ -307,6 +323,18 @@ export const restartTask = (id: string) =>
   request<Issue>(`/api/tasks/${encodeURIComponent(id)}/restart`, {
     method: "POST",
   })
+export const fetchTaskAudits = (id: string) =>
+  request<{ audits: TaskAudit[] }>(
+    `/api/tasks/${encodeURIComponent(id)}/audits`
+  )
+export const createTaskAudit = (id: string) =>
+  request<TaskAudit>(`/api/tasks/${encodeURIComponent(id)}/audits`, {
+    method: "POST",
+  })
+export const fetchTaskAudit = (id: string) =>
+  request<TaskAudit>(`/api/task-audits/${encodeURIComponent(id)}`)
+export const taskAuditReportURL = (id: string) =>
+  `/api/task-audits/${encodeURIComponent(id)}/report`
 export const updateTaskBudget = (id: string, timeBudgetMinutes: number) =>
   request<Task>(`/api/tasks/${encodeURIComponent(id)}/budget`, {
     method: "PATCH",

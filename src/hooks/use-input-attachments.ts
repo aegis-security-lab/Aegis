@@ -20,8 +20,18 @@ export interface PendingInputAttachment {
   error?: string
 }
 
-export function useInputAttachments() {
-  const scopeKey = "task"
+type InputAttachmentUploader = (
+  file: File,
+  onProgress?: (progress: number) => void
+) => Promise<InputAttachment>
+
+export function useInputAttachments({
+  scopeKey = "task",
+  upload = uploadTaskAttachment,
+}: {
+  scopeKey?: string
+  upload?: InputAttachmentUploader
+} = {}) {
   const [bucket, setBucket] = React.useState<{
     key: string
     items: PendingInputAttachment[]
@@ -32,6 +42,7 @@ export function useInputAttachments() {
   )
   const itemsRef = React.useRef(items)
   const scopeKeyRef = React.useRef(scopeKey)
+  const generationRef = React.useRef(0)
   const boundAttachmentIDsRef = React.useRef(new Set<string>())
   React.useEffect(() => {
     itemsRef.current = items
@@ -80,6 +91,7 @@ export function useInputAttachments() {
   const addFiles = React.useCallback(
     (files: FileList | File[]) => {
       const uploadKey = scopeKeyRef.current
+      const uploadGeneration = generationRef.current
       const remaining = Math.max(
         0,
         MAX_INPUT_ATTACHMENTS - itemsRef.current.length
@@ -101,13 +113,19 @@ export function useInputAttachments() {
       setItems((current) => [...current, ...additions])
       for (const item of additions) {
         if (item.state === "error") continue
-        void uploadTaskAttachment(item.file, (progress) => {
-          if (scopeKeyRef.current === uploadKey) {
+        void upload(item.file, (progress) => {
+          if (
+            scopeKeyRef.current === uploadKey &&
+            generationRef.current === uploadGeneration
+          ) {
             updateItem(item.clientId, { progress })
           }
         })
           .then((attachment) => {
-            if (scopeKeyRef.current === uploadKey) {
+            if (
+              scopeKeyRef.current === uploadKey &&
+              generationRef.current === uploadGeneration
+            ) {
               updateItem(item.clientId, {
                 attachment,
                 progress: 100,
@@ -118,7 +136,10 @@ export function useInputAttachments() {
             }
           })
           .catch((reason) => {
-            if (scopeKeyRef.current === uploadKey) {
+            if (
+              scopeKeyRef.current === uploadKey &&
+              generationRef.current === uploadGeneration
+            ) {
               updateItem(item.clientId, {
                 state: "error",
                 error:
@@ -128,7 +149,7 @@ export function useInputAttachments() {
           })
       }
     },
-    [setItems, updateItem]
+    [setItems, updateItem, upload]
   )
 
   const remove = React.useCallback(
@@ -166,11 +187,20 @@ export function useInputAttachments() {
     setItems([])
   }, [setItems])
 
+  const discard = React.useCallback(() => {
+    generationRef.current += 1
+    for (const item of itemsRef.current) {
+      if (item.attachment) void deleteInputAttachment(item.attachment.id)
+    }
+    setItems([])
+  }, [setItems])
+
   return {
     items,
     addFiles,
     remove,
     clearBound,
+    discard,
     attachmentIds: items.flatMap((item) =>
       item.state === "done" && item.attachment ? [item.attachment.id] : []
     ),

@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ExternalLink,
   MessageSquare,
+  Paperclip,
   Plus,
   Send,
   Sparkles,
@@ -12,6 +13,8 @@ import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { ConciergeConversationView } from "@/components/concierge-conversation"
+import { InputAttachmentList } from "@/components/input-attachments"
+import { useInputAttachments } from "@/hooks/use-input-attachments"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -49,6 +52,7 @@ import {
   fetchSessionDelta,
   fetchSessionMessages,
   sendConciergeMessage,
+  uploadConciergeAttachment,
 } from "@/lib/api"
 import { chronological, mergeById } from "@/lib/collections"
 import { formatTime } from "@/lib/format"
@@ -76,6 +80,39 @@ export function WorkspaceChatPage() {
   const [deleteTarget, setDeleteTarget] =
     React.useState<ConciergeConversation | null>(null)
   const watermarkRef = React.useRef("")
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const attachmentOwnerRef = React.useRef(conversationId ?? "")
+
+  const ensureConversation = React.useCallback(async () => {
+    const existing = conversationId ?? attachmentOwnerRef.current
+    if (existing) return existing
+    const conversation = await createConciergeConversation()
+    attachmentOwnerRef.current = conversation.id
+    setConversations((current) => [conversation, ...current])
+    navigate(`/workspace/${conversation.id}`)
+    return conversation.id
+  }, [conversationId, navigate])
+
+  const uploadAttachment = React.useCallback(
+    async (file: File, onProgress?: (progress: number) => void) => {
+      const id = await ensureConversation()
+      return uploadConciergeAttachment(id, file, onProgress)
+    },
+    [ensureConversation]
+  )
+  const attachments = useInputAttachments({
+    scopeKey: "concierge-composer",
+    upload: uploadAttachment,
+  })
+  const discardAttachments = attachments.discard
+
+  React.useEffect(() => {
+    const next = conversationId ?? ""
+    if (attachmentOwnerRef.current !== next) {
+      discardAttachments()
+      attachmentOwnerRef.current = next
+    }
+  }, [conversationId, discardAttachments])
 
   const loadConversations = React.useCallback(async () => {
     try {
@@ -183,6 +220,8 @@ export function WorkspaceChatPage() {
     setCreating(true)
     try {
       const conversation = await createConciergeConversation()
+      attachments.discard()
+      attachmentOwnerRef.current = conversation.id
       setConversations((current) => [conversation, ...current])
       navigate(`/workspace/${conversation.id}`)
     } catch (error) {
@@ -194,18 +233,13 @@ export function WorkspaceChatPage() {
 
   const send = async () => {
     const message = draft.trim()
-    if (!message || sending) return
-    let id = conversationId
+    if ((!message && attachments.attachmentIds.length === 0) || sending) return
     setSending(true)
     setDraft("")
     try {
-      if (!id) {
-        const conversation = await createConciergeConversation()
-        id = conversation.id
-        setConversations((current) => [conversation, ...current])
-        navigate(`/workspace/${conversation.id}`)
-      }
-      await sendConciergeMessage(id, message)
+      const id = await ensureConversation()
+      await sendConciergeMessage(id, message, attachments.attachmentIds)
+      attachments.clearBound()
       const next = await fetchConciergeConversation(id)
       watermarkRef.current = next.watermark
       setDetail(next)
@@ -425,6 +459,21 @@ export function WorkspaceChatPage() {
               void send()
             }}
           >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                if (event.target.files) attachments.addFiles(event.target.files)
+                event.target.value = ""
+              }}
+            />
+            <InputAttachmentList
+              items={attachments.items}
+              onRemove={(clientId) => void attachments.remove(clientId)}
+              className="mb-2 flex-wrap overflow-visible"
+            />
             <InputGroup className="min-h-24 items-stretch rounded-lg bg-background">
               <InputGroupTextarea
                 value={draft}
@@ -441,7 +490,18 @@ export function WorkspaceChatPage() {
                 className="min-h-14 resize-none text-[13px]"
               />
               <InputGroupAddon align="block-end" className="justify-between">
-                <span className="px-1 text-xs font-normal text-muted-foreground">
+                <InputGroupButton
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="上传附件"
+                  title="上传附件"
+                  disabled={sending || attachments.uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip />
+                </InputGroupButton>
+                <span className="ml-auto px-1 text-xs font-normal text-muted-foreground">
                   Enter 发送 · Shift+Enter 换行
                 </span>
                 <InputGroupButton
@@ -449,7 +509,12 @@ export function WorkspaceChatPage() {
                   variant="default"
                   size="icon-sm"
                   aria-label="发送消息"
-                  disabled={!draft.trim() || sending}
+                  disabled={
+                    sending ||
+                    attachments.uploading ||
+                    attachments.hasErrors ||
+                    (!draft.trim() && attachments.attachmentIds.length === 0)
+                  }
                 >
                   {sending ? <Spinner /> : <Send />}
                 </InputGroupButton>

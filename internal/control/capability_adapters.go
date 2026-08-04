@@ -181,6 +181,9 @@ func NewNativeAgentHost(store *Store, options ...NativeHostOptions) (*agenthost.
 	if err := registry.Register(capability.KindTool, "delivery", NativeDeliverySource{Store: store}); err != nil {
 		return nil, err
 	}
+	if err := registry.Register(capability.KindTool, "task-evidence", TaskEvidenceSource{Store: store}); err != nil {
+		return nil, err
+	}
 	if len(options) > 0 && options[0].Phone != nil {
 		if err := phonecap.RegisterDefault(registry, *options[0].Phone); err != nil {
 			return nil, err

@@ -22,7 +22,7 @@ func (s NativeConciergeSource) Resolve(_ context.Context, execution capability.R
 		return capability.Resolved{}, errors.New("native concierge: concierge Execution is required")
 	}
 	tool := agentcore.FuncTool{ToolDefinition: agentcore.ToolDefinition{
-		Name: "aegis_create_task", Description: "Create one real top-level Aegis Task and hand it to the Go AgentCore Coordination runtime.",
+		Name: "aegis_create_task", Description: "Create one real top-level Aegis Task and hand it to the Go AgentCore Coordination runtime. Every operator attachment in this concierge conversation is copied into the new Task; the conversation source files remain available for later Task creations and retries.",
 		Parameters: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1},"taskDescription":{"type":"string"},"objective":{"type":"string"},"priority":{"type":"string","enum":["low","middle","high"]},"workMode":{"type":"string","enum":["autonomous","guided"]},"agentId":{"type":"string","minLength":1},"workspace":{"type":"string"},"constraints":{"type":"string"}},"required":["title","agentId"],"additionalProperties":false}`),
 	}, Mode: agentcore.ToolExecutionSequential, ExecuteFunc: func(ctx context.Context, raw json.RawMessage, _ agentcore.ToolUpdateSink) (agentcore.ToolResult, error) {
 		if err := contextError(ctx); err != nil {

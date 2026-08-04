@@ -665,7 +665,7 @@ const createTaskTool = defineTool({
   name: "aegis_create_task",
   label: "Create Aegis task",
   description:
-    "Create one real top-level Aegis Task from the current concierge conversation and hand it to Coordination. Use only when the user clearly asks Aegis to execute work; never use it for questions, discussion, or ambiguous wishes.",
+    "Create one real top-level Aegis Task from the current concierge conversation and hand it to Coordination. Pending operator attachments from the conversation are transferred automatically. Use only when the user clearly asks Aegis to execute work; never use it for questions, discussion, or ambiguous wishes.",
   promptSnippet:
     "Create a real scheduled Aegis Task for an explicit user request",
   promptGuidelines: [
@@ -674,6 +674,7 @@ const createTaskTool = defineTool({
     "Set a concise execution boundary covering authorized scope or targets, workspace restrictions, prohibited destructive actions, and required verification. Never broaden authorization beyond the operator's request.",
     "Compare the request with the current system-provided Agent roster. Use the exact agentId when one enabled Agent is clearly appropriate; otherwise leave it empty for Coordination routing.",
     "Never claim creation succeeded unless this tool returns a Task identifier.",
+    "When the current turn includes operator attachments, mention that Aegis will transfer them automatically; do not invent attachment IDs or claim to have inspected opaque file contents.",
   ],
   parameters: Type.Object({
     title: Type.String({

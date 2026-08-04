@@ -253,8 +253,18 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := os.Chmod(dbPath, 0o600); err != nil {
 		return nil, fmt.Errorf("secure sqlite database: %w", err)
 	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{}, &Task{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{}); err != nil {
+	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{}, &Task{}, &TaskAudit{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{}); err != nil {
 		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
+	}
+	// Audit model streams are process-local. Preserve their partial report and
+	// evidence, but never leave history claiming that an interrupted audit is
+	// still active after a service restart.
+	recoveredAt := time.Now()
+	if err := db.Model(&TaskAudit{}).Where("status IN ?", []string{"preparing", "running"}).Updates(map[string]any{
+		"status": "failed", "error": "服务重启中断了本次审计；请新建审计以生成新的冻结证据快照。",
+		"completed_at": recoveredAt, "updated_at": recoveredAt,
+	}).Error; err != nil {
+		return nil, fmt.Errorf("recover interrupted task audits: %w", err)
 	}
 	// Keep one public Board priority vocabulary. These aliases existed in older
 	// releases, so normalize them in place before any scheduler reads the queue.
@@ -1016,6 +1026,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, errors.New("in_progress Issue 必须有负责人")
 	}
 	var issue Issue
+	var createdInputAttachmentDirs []string
 	validationMode, maxValidationAttempts := normalizeValidationPolicy(s.config.ValidationMode, s.config.MaxValidationAttempts)
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		var max int64
@@ -1056,8 +1067,10 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
 		}
-		if err := s.bindInputAttachmentsTx(tx, issue, input); err != nil {
-			return err
+		var bindErr error
+		createdInputAttachmentDirs, bindErr = s.bindInputAttachmentsTx(tx, issue, input)
+		if bindErr != nil {
+			return bindErr
 		}
 		for _, blocker := range uniqueStrings(input.BlockedBy) {
 			if blocker == issue.ID {
@@ -1071,6 +1084,9 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return nil
 	})
 	if err != nil {
+		for _, dir := range createdInputAttachmentDirs {
+			_ = os.RemoveAll(dir)
+		}
 		return Issue{}, err
 	}
 	s.changedLocked()
@@ -1206,7 +1222,7 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Watermark: time.Now()}
+	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, InputAttachments: []InputAttachment{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Watermark: time.Now()}
 	if runtimes := s.issueRuntimeViews([]Issue{issue}); len(runtimes) == 1 {
 		d.Runtime = runtimes[0]
 	}
@@ -1243,6 +1259,13 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	}
 	d.Events, d.EventsPage = events.Items, events.Page
 	if err := s.db.Where("issue_id = ?", issue.ID).Order("created_at desc, id desc").Limit(detailPageSize).Find(&d.Messages).Error; err != nil {
+		return IssueDetail{}, err
+	}
+	attachmentQuery := s.db.Where("issue_id = ?", issue.ID)
+	if issue.TaskSourceID != "" {
+		attachmentQuery = attachmentQuery.Or("task_id = ?", issue.TaskSourceID)
+	}
+	if err := attachmentQuery.Order("created_at asc, id asc").Find(&d.InputAttachments).Error; err != nil {
 		return IssueDetail{}, err
 	}
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Approvals)

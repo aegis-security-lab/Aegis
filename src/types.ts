@@ -92,6 +92,25 @@ export interface Task {
   createdAt: string
   updatedAt: string
 }
+export interface TaskAudit {
+  id: string
+  taskId?: string
+  requestedId: string
+  rootIssueIds: string[]
+  status: "preparing" | "running" | "completed" | "failed"
+  frameworkVersion: string
+  evidenceExportId?: string
+  evidenceComplete: boolean
+  evidenceManifest?: string
+  reportMarkdown?: string
+  error?: string
+  inputTokens: number
+  outputTokens: number
+  startedAt?: string
+  completedAt?: string
+  createdAt: string
+  updatedAt: string
+}
 export interface ContainerProfile {
   id: string
   name: string
@@ -395,6 +414,7 @@ export interface Message {
   streaming: boolean
   createdAt: string
   updatedAt: string
+  attachments?: InputAttachment[]
 }
 export interface OperatorAttachment {
   name: string
@@ -403,11 +423,12 @@ export interface OperatorAttachment {
 }
 export interface InputAttachment {
   id: string
-  scope: "task"
+  scope: "task" | "employee" | "concierge"
   ownerId?: string
   taskId?: string
   issueId?: string
   executionId?: string
+  messageId?: string
   name: string
   mimeType: string
   size: number
@@ -521,6 +542,7 @@ export interface IssueDetail {
   executions: Execution[]
   comments: IssueComment[]
   messages: Message[]
+  inputAttachments: InputAttachment[]
   events: ExecutionEvent[]
   approvals: Approval[]
   wakeups: AgentWakeup[]

@@ -1,5 +1,6 @@
 import * as React from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
+import { Paperclip } from "lucide-react"
 import { MarkdownContent } from "@/components/markdown-content"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,7 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { Spinner } from "@/components/ui/spinner"
+import { formatBytes } from "@/lib/format"
 import type { Message as ChatMessage } from "@/types"
 
 export function ConciergeConversationView({
@@ -111,6 +113,24 @@ function ConversationMessage({ message }: { message: ChatMessage }) {
           <Bubble variant="secondary" align="end">
             <BubbleContent className="text-[13px] leading-5">
               <MarkdownContent className="!leading-5 [&>*+*]:!mt-2">{message.content}</MarkdownContent>
+              {message.attachments?.length ? (
+                <div className="mt-2 flex max-w-md flex-col gap-1.5 border-t border-border/60 pt-2">
+                  {message.attachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"
+                    >
+                      <Paperclip className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-foreground">
+                        {attachment.name}
+                      </span>
+                      <span className="shrink-0 tabular-nums">
+                        {formatBytes(attachment.size)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </BubbleContent>
           </Bubble>
         )}

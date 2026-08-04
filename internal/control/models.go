@@ -218,6 +218,30 @@ type Task struct {
 	UpdatedAt               time.Time `json:"updatedAt"`
 }
 
+// TaskAudit is one immutable evaluation attempt over a point-in-time Task
+// evidence snapshot. ReportMarkdown is updated while the evaluator streams,
+// while EvidencePath keeps the exact input used for later reproduction.
+type TaskAudit struct {
+	ID               string     `json:"id" gorm:"primaryKey"`
+	TaskID           string     `json:"taskId,omitempty" gorm:"index"`
+	RequestedID      string     `json:"requestedId" gorm:"index"`
+	RootIssueIDs     []string   `json:"rootIssueIds" gorm:"serializer:json;type:text"`
+	Status           string     `json:"status" gorm:"index"`
+	FrameworkVersion string     `json:"frameworkVersion"`
+	EvidenceExportID string     `json:"evidenceExportId,omitempty"`
+	EvidenceComplete bool       `json:"evidenceComplete"`
+	EvidenceManifest string     `json:"evidenceManifest,omitempty" gorm:"type:text"`
+	EvidencePath     string     `json:"-"`
+	ReportMarkdown   string     `json:"reportMarkdown,omitempty" gorm:"type:text"`
+	Error            string     `json:"error,omitempty" gorm:"type:text"`
+	InputTokens      int        `json:"inputTokens"`
+	OutputTokens     int        `json:"outputTokens"`
+	StartedAt        *time.Time `json:"startedAt,omitempty"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt" gorm:"index"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+}
+
 // Issue is the single source of truth for one run or a child execution unit.
 type Issue struct {
 	ID                      string           `json:"id" gorm:"primaryKey"`
@@ -464,14 +488,15 @@ type ExecutionProgress struct {
 }
 
 type Message struct {
-	ID          string    `json:"id" gorm:"primaryKey"`
-	ExecutionID string    `json:"executionId" gorm:"index;index:idx_messages_execution_created,priority:1;index:idx_messages_execution_updated,priority:1"`
-	IssueID     string    `json:"issueId,omitempty" gorm:"index"`
-	Role        string    `json:"role"`
-	Content     string    `json:"content" gorm:"type:text"`
-	Streaming   bool      `json:"streaming"`
-	CreatedAt   time.Time `json:"createdAt" gorm:"index:idx_messages_execution_created,priority:2"`
-	UpdatedAt   time.Time `json:"updatedAt" gorm:"index:idx_messages_execution_updated,priority:2"`
+	ID          string            `json:"id" gorm:"primaryKey"`
+	ExecutionID string            `json:"executionId" gorm:"index;index:idx_messages_execution_created,priority:1;index:idx_messages_execution_updated,priority:1"`
+	IssueID     string            `json:"issueId,omitempty" gorm:"index"`
+	Role        string            `json:"role"`
+	Content     string            `json:"content" gorm:"type:text"`
+	Streaming   bool              `json:"streaming"`
+	CreatedAt   time.Time         `json:"createdAt" gorm:"index:idx_messages_execution_created,priority:2"`
+	UpdatedAt   time.Time         `json:"updatedAt" gorm:"index:idx_messages_execution_updated,priority:2"`
+	Attachments []InputAttachment `json:"attachments,omitempty" gorm:"-"`
 }
 
 // RelayThread and RelayMessage implement task-scoped asynchronous messaging
@@ -644,6 +669,7 @@ type InputAttachment struct {
 	TaskID      string     `json:"taskId,omitempty" gorm:"index"`
 	IssueID     string     `json:"issueId,omitempty" gorm:"index"`
 	ExecutionID string     `json:"executionId,omitempty" gorm:"index"`
+	MessageID   string     `json:"messageId,omitempty" gorm:"index"`
 	Name        string     `json:"name"`
 	StoragePath string     `json:"-"`
 	MimeType    string     `json:"mimeType"`
@@ -872,23 +898,24 @@ type SaveSkillInput struct {
 }
 
 type IssueDetail struct {
-	Issue          Issue                `json:"issue"`
-	Runtime        IssueRuntimeView     `json:"runtime"`
-	Children       []Issue              `json:"children"`
-	BlockedBy      []Issue              `json:"blockedBy"`
-	Blocks         []Issue              `json:"blocks"`
-	Executions     []Execution          `json:"executions"`
-	Comments       []IssueComment       `json:"comments"`
-	Messages       []Message            `json:"messages"`
-	Events         []ExecutionEvent     `json:"events"`
-	Approvals      []Approval           `json:"approvals"`
-	Wakeups        []AgentWakeup        `json:"wakeups"`
-	Decompositions []IssueDecomposition `json:"decompositions"`
-	Validations    []IssueValidation    `json:"validations"`
-	CommentsPage   PageInfo             `json:"commentsPage"`
-	EventsPage     PageInfo             `json:"eventsPage"`
-	ExecutionsPage PageInfo             `json:"executionsPage"`
-	Watermark      time.Time            `json:"watermark"`
+	Issue            Issue                `json:"issue"`
+	Runtime          IssueRuntimeView     `json:"runtime"`
+	Children         []Issue              `json:"children"`
+	BlockedBy        []Issue              `json:"blockedBy"`
+	Blocks           []Issue              `json:"blocks"`
+	Executions       []Execution          `json:"executions"`
+	Comments         []IssueComment       `json:"comments"`
+	Messages         []Message            `json:"messages"`
+	InputAttachments []InputAttachment    `json:"inputAttachments"`
+	Events           []ExecutionEvent     `json:"events"`
+	Approvals        []Approval           `json:"approvals"`
+	Wakeups          []AgentWakeup        `json:"wakeups"`
+	Decompositions   []IssueDecomposition `json:"decompositions"`
+	Validations      []IssueValidation    `json:"validations"`
+	CommentsPage     PageInfo             `json:"commentsPage"`
+	EventsPage       PageInfo             `json:"eventsPage"`
+	ExecutionsPage   PageInfo             `json:"executionsPage"`
+	Watermark        time.Time            `json:"watermark"`
 }
 
 type SessionSummary struct {

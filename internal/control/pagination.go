@@ -220,6 +220,9 @@ func (s *Store) SessionMessagesPage(sessionID, before string, limit int) (Messag
 		items = items[:limit]
 	}
 	reverseMessages(items)
+	if err = s.inputAttachmentsForMessages(items); err != nil {
+		return MessagePage{}, err
+	}
 	cursor := ""
 	if len(items) > 0 {
 		cursor = items[0].ID
@@ -304,6 +307,9 @@ func (s *Store) SessionDelta(sessionID string, since time.Time) (SessionDelta, e
 	}
 	if len(messages) > maxDeltaRows || len(events) > maxDeltaRows || len(progress) > maxDeltaRows {
 		return SessionDelta{}, errors.New("session delta exceeded safe limit; reload the latest page")
+	}
+	if err = s.inputAttachmentsForMessages(messages); err != nil {
+		return SessionDelta{}, err
 	}
 	for index := range events {
 		events[index] = compactExecutionEvent(events[index])

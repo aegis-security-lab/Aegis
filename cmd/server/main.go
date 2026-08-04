@@ -445,14 +445,18 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.Status(http.StatusNoContent)
 	})
+	api.POST("/concierge/conversations/:id/attachments", func(c *gin.Context) {
+		receiveInputAttachment(c, store, "concierge", c.Param("id"))
+	})
 	api.POST("/concierge/conversations/:id/messages", func(c *gin.Context) {
 		var in struct {
-			Message string `json:"message"`
+			Message       string   `json:"message"`
+			AttachmentIDs []string `json:"attachmentIds"`
 		}
 		if !bindJSON(c, &in) {
 			return
 		}
-		message, err := manager.SendConciergeMessage(c.Param("id"), in.Message)
+		message, err := manager.SendConciergeMessage(c.Param("id"), in.Message, in.AttachmentIDs)
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return
@@ -671,6 +675,50 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			"X-Aegis-Evidence-Schema-Version": manifest.SchemaVersion,
 		})
 	})
+	api.GET("/tasks/:id/audits", func(c *gin.Context) {
+		items, err := manager.ListTaskAudits(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"audits": items})
+	})
+	api.POST("/tasks/:id/audits", func(c *gin.Context) {
+		audit, err := manager.CreateTaskAudit(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			status := http.StatusUnprocessableEntity
+			if errors.Is(err, control.ErrTaskEvidenceNotFound) {
+				status = http.StatusNotFound
+			}
+			writeError(c, status, err)
+			return
+		}
+		c.JSON(http.StatusCreated, audit)
+	})
+	api.GET("/task-audits/:id", func(c *gin.Context) {
+		audit, err := manager.GetTaskAudit(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, audit)
+	})
+	api.GET("/task-audits/:id/report", func(c *gin.Context) {
+		audit, err := manager.GetTaskAudit(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		if strings.TrimSpace(audit.ReportMarkdown) == "" {
+			writeError(c, http.StatusConflict, errors.New("审计报告尚未生成"))
+			return
+		}
+		filename := "aegis-task-audit-" + archiveFilenamePart(audit.ID) + ".md"
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+		c.Header("Content-Disposition", disposition)
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Data(http.StatusOK, "text/markdown; charset=utf-8", []byte(audit.ReportMarkdown))
+	})
 	api.POST("/tasks/:id/restart", func(c *gin.Context) {
 		v, err := manager.RestartTask(c.Param("id"))
 		if err != nil {
@@ -714,6 +762,23 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 			return
 		}
 		c.Status(http.StatusNoContent)
+	})
+	api.GET("/input-attachments/:id", func(c *gin.Context) {
+		attachment, file, err := store.InputAttachmentFile(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil || info.Size() != attachment.Size {
+			writeError(c, http.StatusNotFound, errors.New("输入附件在服务端不存在或不完整"))
+			return
+		}
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name})
+		c.DataFromReader(http.StatusOK, info.Size(), attachment.MimeType, file, map[string]string{
+			"Content-Disposition": disposition, "X-Content-Type-Options": "nosniff",
+		})
 	})
 	api.POST("/issues", func(c *gin.Context) {
 		var in control.CreateIssueInput

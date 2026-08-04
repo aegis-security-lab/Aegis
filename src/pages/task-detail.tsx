@@ -5,9 +5,12 @@ import {
   CircleStop,
   Clock3,
   Copy,
+  Download,
+  FileSearch,
   HardDrive,
   LinkIcon,
   MessageSquare,
+  Paperclip,
   Radio,
   Save,
   Smartphone,
@@ -16,6 +19,7 @@ import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
+import { TaskAuditDrawer } from "@/components/task-audit-drawer"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
@@ -42,7 +46,7 @@ import {
   fetchTaskWorkspace,
   updateTaskBudget,
 } from "@/lib/api"
-import { formatTime } from "@/lib/format"
+import { formatBytes, formatTime } from "@/lib/format"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
@@ -72,6 +76,7 @@ export function TaskDetailPage() {
   const [budgetInput, setBudgetInput] = React.useState("")
   const [savingBudget, setSavingBudget] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
+  const [auditOpen, setAuditOpen] = React.useState(false)
 
   React.useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10000)
@@ -249,6 +254,14 @@ export function TaskDetailPage() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setAuditOpen(true)}
+            >
+              <FileSearch data-icon="inline-start" />
+              分析任务
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               render={<Link to={`/issues/${issue.id}`} />}
               nativeButton={false}
             >
@@ -291,6 +304,12 @@ export function TaskDetailPage() {
           )
           await refresh()
         }}
+      />
+      <TaskAuditDrawer
+        open={auditOpen}
+        onOpenChange={setAuditOpen}
+        taskId={issue.taskSourceId || issue.id}
+        taskTitle={parameters.title}
       />
       <Card>
         <CardHeader>
@@ -523,6 +542,52 @@ export function TaskDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {detail.inputAttachments.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>输入附件</CardTitle>
+            <CardDescription>
+              创建任务时上传的原始输入；所有任务 Agent 会在隔离工作区中读取同一份文件。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {detail.inputAttachments.map((attachment) => (
+              <div
+                key={attachment.id}
+                className="flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5"
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                  <Paperclip className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {attachment.name}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {attachment.mimeType} · {formatBytes(attachment.size)}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`下载 ${attachment.name}`}
+                  title="下载附件"
+                  render={
+                    <a
+                      href={`/api/input-attachments/${encodeURIComponent(attachment.id)}`}
+                      download={attachment.name}
+                    />
+                  }
+                  nativeButton={false}
+                >
+                  <Download />
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   )
 }

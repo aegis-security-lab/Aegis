@@ -162,7 +162,7 @@ func toolCatalog() map[string]ToolSnapshot {
 		},
 		"aegis_create_task": {
 			Name: "aegis_create_task", Label: "Create Aegis task", Source: "aegis_extension",
-			Description: "根据当前管家对话创建一个真实的顶层 Aegis 任务，并立即交给现有调度器选择或启动负责 Agent。",
+			Description: "根据当前管家对话创建一个真实的顶层 Aegis 任务，并立即交给现有调度器选择或启动负责 Agent；本会话中尚未转交的用户附件会自动进入新任务。",
 			Parameters: []ToolParameterSnapshot{
 				parameter("title", "string", "清晰具体的任务标题，最多 120 个字符。", true),
 				parameter("taskDescription", "string", "执行背景、范围和需要完成的交付物。", true),

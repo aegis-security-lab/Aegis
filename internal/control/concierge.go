@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -93,7 +95,14 @@ func (s *Store) deleteConciergeConversation(id string) error {
 	if err := s.db.First(&conversation, "id = ?", id).Error; err != nil {
 		return errors.New("conversation not found")
 	}
+	var staged []InputAttachment
+	if err := s.db.Where("scope = ? AND owner_id = ? AND task_id = ''", "concierge", conversation.ID).Find(&staged).Error; err != nil {
+		return err
+	}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("scope = ? AND owner_id = ? AND task_id = ''", "concierge", conversation.ID).Delete(&InputAttachment{}).Error; err != nil {
+			return err
+		}
 		for _, model := range []any{&Approval{}, &ExecutionProgress{}, &ExecutionEvent{}, &Message{}} {
 			if err := tx.Where("execution_id = ?", conversation.ExecutionID).Delete(model).Error; err != nil {
 				return err
@@ -108,6 +117,9 @@ func (s *Store) deleteConciergeConversation(id string) error {
 		return tx.Delete(&conversation).Error
 	}); err != nil {
 		return err
+	}
+	for _, attachment := range staged {
+		_ = os.RemoveAll(filepath.Dir(attachment.StoragePath))
 	}
 	s.notify()
 	return nil
