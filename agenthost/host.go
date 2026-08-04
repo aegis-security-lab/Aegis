@@ -36,6 +36,13 @@ func New(models ModelResolver, capabilities *capability.Registry) (*Host, error)
 // Run resolves all concrete resources for one execution and always closes the
 // capability bundle before returning.
 func (h *Host) Run(ctx context.Context, spec ExecutionSpec, sink agentcore.EventSink) (result Result, err error) {
+	return h.RunState(ctx, spec, agentcore.State{}, []agentcore.Message{agentcore.TextMessage(agentcore.RoleUser, spec.Prompt)}, sink)
+}
+
+// RunState executes one prompt against an existing AgentCore state. It is
+// intended for bounded continuations that must retain prior model/tool
+// messages when a model stops before satisfying a higher-level contract.
+func (h *Host) RunState(ctx context.Context, spec ExecutionSpec, state agentcore.State, messages []agentcore.Message, sink agentcore.EventSink) (result Result, err error) {
 	ctx = withExecution(ctx, spec)
 	ctx, span := (&observability.Tracer{Logger: observability.Default(), Metrics: observability.DefaultMetrics()}).Start(ctx, "agenthost.run", slog.String("provider", spec.Model.Provider), slog.String("model", spec.Model.Model), slog.Int("capability_count", len(spec.Capabilities)))
 	defer func() {
@@ -50,7 +57,7 @@ func (h *Host) Run(ctx context.Context, spec ExecutionSpec, sink agentcore.Event
 			err = errors.Join(err, fmt.Errorf("agenthost: close capabilities: %w", closeErr))
 		}
 	}()
-	coreResult, err := materialized.agent.Prompt(materialized.ctx, agentcore.State{}, []agentcore.Message{agentcore.TextMessage(agentcore.RoleUser, spec.Prompt)}, sink)
+	coreResult, err := materialized.agent.Prompt(materialized.ctx, state, messages, sink)
 	result = Result{Core: coreResult, Capabilities: append([]capability.Snapshot(nil), materialized.bundle.Snapshots...)}
 	return result, err
 }

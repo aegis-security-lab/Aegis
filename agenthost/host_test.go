@@ -89,3 +89,28 @@ func TestHostResolvesCapabilitiesAndRunsAgent(t *testing.T) {
 		t.Fatalf("system prompt = %q", model.request.SystemPrompt)
 	}
 }
+
+func TestHostRunStateRetainsPriorConversationForContinuation(t *testing.T) {
+	model := &captureModel{}
+	host, err := New(ModelResolverFunc(func(context.Context, ModelRef) (agentcore.Model, error) {
+		return model, nil
+	}), capability.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := ExecutionSpec{ExecutionID: "audit-1", AgentID: "auditor", Model: ModelRef{Provider: "test", Model: "model"}, Prompt: "initial"}
+	prior := agentcore.State{Messages: []agentcore.Message{
+		agentcore.TextMessage(agentcore.RoleUser, "initial"),
+		agentcore.TextMessage(agentcore.RoleAssistant, "Let me inspect more evidence."),
+	}}
+	result, err := host.RunState(context.Background(), spec, prior, []agentcore.Message{agentcore.TextMessage(agentcore.RoleUser, "continue and deliver")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.request.Messages) != 3 || model.request.Messages[1].Text() != "Let me inspect more evidence." || model.request.Messages[2].Text() != "continue and deliver" {
+		t.Fatalf("continuation request lost prior messages: %+v", model.request.Messages)
+	}
+	if got := result.Core.State.Messages[len(result.Core.State.Messages)-1].Text(); got != "done" {
+		t.Fatalf("final message=%q", got)
+	}
+}

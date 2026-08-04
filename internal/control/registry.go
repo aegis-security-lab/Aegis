@@ -350,6 +350,14 @@ Call aegis_report_progress after each meaningful phase. Use the task Phone: Boar
 			CreatedAt:   now, UpdatedAt: now,
 		},
 		{
+			ID: taskAnalysisAgentID, Name: "任务分析 Agent", Description: "根据冻结的任务证据快照独立评估任务质量与平台健康度，并生成可下载的审计报告。",
+			Avatar: "file-search", Category: "evaluation", Enabled: true, Builtin: true, Internal: true,
+			SystemPrompt: taskAuditSystemPrompt,
+			Tools:        []string{}, SkillIDs: []string{}, KnowledgeBaseIDs: []string{},
+			Permissions: PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: false, AllowShell: false, AllowWrite: false, ApprovalMode: "none", ReworkApprovalMode: "none"},
+			CreatedAt:   now, UpdatedAt: now,
+		},
+		{
 			ID: "acceptance-validator", Name: "验收 Agent", Description: "在 Worker 提交结果后，通过普通工作区工具核对提交消息、附件与实际产出，并给出结构化验收结论。",
 			Avatar: "shield-check", Category: "validation", Enabled: true, Builtin: true, Internal: true,
 			SystemPrompt: acceptanceValidatorSystemPrompt,
