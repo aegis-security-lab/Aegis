@@ -6,14 +6,14 @@ import {
   ListTodo,
   MoreHorizontal,
   Plus,
-  RotateCcw,
   Search,
+  MessageSquareWarning,
 } from "lucide-react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
-import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
+import { ManualRejectValidationDialog } from "@/components/manual-reject-validation-dialog"
 import { TaskAuditDrawer } from "@/components/task-audit-drawer"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Badge } from "@/components/ui/badge"
@@ -35,9 +35,7 @@ import {
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { restartTask } from "@/lib/api"
 import { formatCost, formatTime } from "@/lib/format"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { useAppState } from "@/lib/state"
@@ -49,7 +47,6 @@ export function TasksPage() {
   const { state, refresh } = useAppState()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [restarting, setRestarting] = React.useState<string | null>(null)
   const [cancelTarget, setCancelTarget] = React.useState<{
     root: Issue
     title: string
@@ -57,6 +54,7 @@ export function TasksPage() {
     activeExecutions: number
   } | null>(null)
   const [auditTarget, setAuditTarget] = React.useState<Task | null>(null)
+  const [rejectValidationTarget, setRejectValidationTarget] = React.useState<{ issueId: string; title: string } | null>(null)
   const query = searchParams.get("q") ?? ""
   const filterParam = searchParams.get("status")
   const filter: TaskFilter = isTaskFilter(filterParam) ? filterParam : "all"
@@ -130,20 +128,6 @@ export function TasksPage() {
     })
   }
 
-  const restart = async (task: Task, runs: Issue[]) => {
-    setRestarting(task.id)
-    try {
-      const next = await restartTask(task.id)
-      toast.success("已创建新的任务执行", {
-        description: `${next.identifier} · 第 ${runs.length + 1} 次执行`,
-      })
-      navigate(`/tasks/${next.id}`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "重新启动失败")
-    } finally {
-      setRestarting(null)
-    }
-  }
 
   return (
     <div className="flex w-full flex-col gap-5">
@@ -308,11 +292,7 @@ export function TasksPage() {
                           />
                         }
                       >
-                        {restarting === row.task.id ? (
-                          <Spinner />
-                        ) : (
-                          <MoreHorizontal />
-                        )}
+                        <MoreHorizontal />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-40">
                         <DropdownMenuGroup>
@@ -323,13 +303,6 @@ export function TasksPage() {
                           <DropdownMenuItem onClick={() => cloneTask(row.task)}>
                             <Copy />
                             复制为新任务
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            disabled={restarting === row.task.id}
-                            onClick={() => void restart(row.task, row.runs)}
-                          >
-                            <RotateCcw />
-                            重新启动
                           </DropdownMenuItem>
                           {row.latest && !isTerminalRuntime(row.runtime!) ? (
                             <DropdownMenuItem
@@ -345,6 +318,20 @@ export function TasksPage() {
                             >
                               <CircleStop />
                               取消任务
+                            </DropdownMenuItem>
+                          ) : null}
+                          {row.latest && (row.latest.status === "done" || row.latest.status === "in_review") ? (
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() =>
+                                setRejectValidationTarget({
+                                  issueId: row.latest!.id,
+                                  title: row.task.title,
+                                })
+                              }
+                            >
+                              <MessageSquareWarning />
+                              改判验收不通过
                             </DropdownMenuItem>
                           ) : null}
                         </DropdownMenuGroup>
@@ -378,6 +365,16 @@ export function TasksPage() {
           }}
           taskId={auditTarget.id}
           taskTitle={auditTarget.title}
+        />
+      ) : null}
+      {rejectValidationTarget ? (
+        <ManualRejectValidationDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setRejectValidationTarget(null)
+          }}
+          issueId={rejectValidationTarget.issueId}
+          onRejected={() => refresh()}
         />
       ) : null}
     </div>

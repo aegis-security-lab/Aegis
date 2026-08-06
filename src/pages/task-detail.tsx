@@ -14,11 +14,15 @@ import {
   Radio,
   Save,
   Smartphone,
+
+  MessageSquareWarning,
 } from "lucide-react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
+
+import { ManualRejectValidationDialog } from "@/components/manual-reject-validation-dialog"
 import { TaskAuditDrawer } from "@/components/task-audit-drawer"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { PageHeader } from "@/components/page-header"
@@ -77,6 +81,7 @@ export function TaskDetailPage() {
   const [savingBudget, setSavingBudget] = React.useState(false)
   const [cancelOpen, setCancelOpen] = React.useState(false)
   const [auditOpen, setAuditOpen] = React.useState(false)
+  const [rejectValidationOpen, setRejectValidationOpen] = React.useState(false)
 
   React.useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10000)
@@ -288,6 +293,16 @@ export function TaskDetailPage() {
                 取消任务
               </Button>
             ) : null}
+            {issue.status === "done" || issue.status === "in_review" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRejectValidationOpen(true)}
+              >
+                <MessageSquareWarning data-icon="inline-start" />
+                改判验收不通过
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -301,6 +316,17 @@ export function TaskDetailPage() {
         onCancelled={async (result) => {
           setDetail((current) =>
             current ? { ...current, issue: result.task } : current
+          )
+          await refresh()
+        }}
+      />
+      <ManualRejectValidationDialog
+        open={rejectValidationOpen}
+        onOpenChange={setRejectValidationOpen}
+        issueId={issue.id}
+        onRejected={async (updated) => {
+          setDetail((current) =>
+            current ? { ...current, issue: updated } : current
           )
           await refresh()
         }}
