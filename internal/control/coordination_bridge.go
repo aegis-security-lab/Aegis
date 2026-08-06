@@ -640,7 +640,23 @@ func (b *CoordinationBridge) SubmitIssueComment(ctx context.Context, comment Iss
 	if err != nil {
 		return err
 	}
-	if issueStatusTerminal(issue.Status) || issue.AssigneeAgentID == "" || issue.AssigneeTaskAgentID == "" {
+	if issue.AssigneeAgentID == "" || issue.AssigneeTaskAgentID == "" {
+		return nil
+	}
+	if issueStatusTerminal(issue.Status) {
+		// A completed Issue can still receive an operator follow-up. Persist a
+		// normal AgentWakeup so the existing wakeup path reopens the Issue,
+		// creates a fresh Execution for its owner, and delivers the comment.
+		wakeup := AgentWakeup{
+			ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID,
+			AgentID: issue.AssigneeAgentID, Reason: "issue_comment_assignee",
+			Status: "queued", CreatedAt: comment.CreatedAt,
+		}
+		if err := b.manager.store.db.Create(&wakeup).Error; err != nil {
+			return err
+		}
+		go b.manager.dispatchWakeup(wakeup.ID)
+		b.manager.store.notify()
 		return nil
 	}
 	root, err := b.manager.store.taskRoot(issue)

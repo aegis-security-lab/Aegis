@@ -110,6 +110,23 @@ export interface TaskAudit {
   completedAt?: string
   createdAt: string
   updatedAt: string
+  events?: TaskAuditEvent[]
+}
+export interface TaskAuditEvent {
+  id: string
+  auditId: string
+  sequence: number
+  kind: "assistant" | "tool" | "system"
+  status: "generating" | "streaming" | "running" | "completed" | "failed"
+  turn?: number
+  toolCallId?: string
+  toolName?: string
+  content?: string
+  arguments?: string
+  result?: string
+  isError?: boolean
+  createdAt: string
+  updatedAt: string
 }
 export interface ContainerProfile {
   id: string

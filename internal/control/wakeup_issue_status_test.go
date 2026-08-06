@@ -1,6 +1,7 @@
 package control
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,11 +31,38 @@ func TestWakeupExecutionMakesIssueActiveThenRestoresPriorTerminalState(t *testin
 	if wakeup.PriorIssueStatus != "done" || wakeup.PriorExecutionPhase != "completed" || wakeup.Status != "delivered" {
 		t.Fatalf("wakeup did not preserve prior state: %+v", wakeup)
 	}
+	root, _ := store.taskRoot(issue)
+	identity, _ := store.taskAgent(root.ID, issue.AssigneeTaskAgentID)
+	if identity.Status != "active" {
+		t.Fatalf("wakeup did not reactivate TaskAgent: %+v", identity)
+	}
 
 	manager.restoreIssueAfterWakeup(issue.ID, "execution-wakeup")
 	restored, _ := store.GetIssue(issue.ID)
 	if restored.Status != "done" || restored.ExecutionPhase != "completed" || restored.CheckoutExecutionID != "" {
 		t.Fatalf("pure wakeup did not restore prior terminal state: %+v", restored)
+	}
+}
+
+func TestWakeupPromptRequiresVisibleReplyOnCurrentIssue(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Follow-up", Objective: "Answer the operator.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment := IssueComment{ID: nextID("comment"), IssueID: issue.ID, AuthorID: "operator", Body: "请说明上次结果中的关键步骤。"}
+	if err := store.db.Create(&comment).Error; err != nil {
+		t.Fatal(err)
+	}
+	wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID, AgentID: issue.AssigneeAgentID, Reason: "issue_comment_assignee", Status: "queued"}
+	prompt, err := wakeupPrompt(issue, wakeup, store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"same Issue", "MUST explicitly call aegis_board", "action=comment", "visible as a reply"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("wakeup prompt missing %q: %s", required, prompt)
+		}
 	}
 }
 

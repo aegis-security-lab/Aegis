@@ -3133,10 +3133,18 @@ func (m *Manager) markIssueForWakeup(w *AgentWakeup, issue Issue, executionID st
 		if updated.RowsAffected != 1 {
 			return errors.New("Wakeup 已被其他执行处理")
 		}
-		return tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
 			"status": "in_progress", "execution_phase": "active", "checkout_execution_id": executionID,
 			"current_execution_id": executionID, "error": "", "updated_at": now,
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		if issue.AssigneeTaskAgentID != "" {
+			if err := tx.Model(&TaskAgent{}).Where("id = ?", issue.AssigneeTaskAgentID).Updates(map[string]any{"status": "active", "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -4136,7 +4144,7 @@ Comment from %s:
 %s
 </comment>
 
-	Respond to the comment concretely. Your plain response remains only in your employee conversation. To reply visibly on the Issue, explicitly call aegis_board with action=comment. If the comment requests a final delivery, call aegis_submit_final_result; it publishes immediately to Board. If independently executable child work is required, create and assign it through Board or the decomposition tool using the system-provided organization delegation boundary. %s`, trigger, i.Identifier, i.Title, i.Description, i.Objective, i.Workspace, comment.AuthorID, comment.Body, validationInstruction), nil
+	Respond to the operator's comment concretely in this same Issue. You MUST explicitly call aegis_board with action=comment so your answer is visible as a reply on this Issue; a plain assistant response is not sufficient. If the comment requests a final delivery, call aegis_submit_final_result; it publishes immediately to Board. If independently executable child work is required, create and assign it through Board or the decomposition tool using the system-provided organization delegation boundary. %s`, trigger, i.Identifier, i.Title, i.Description, i.Objective, i.Workspace, comment.AuthorID, comment.Body, validationInstruction), nil
 }
 
 func (m *Manager) TestConnection(ctx context.Context, input SaveConfigInput) ConnectionTestResult {

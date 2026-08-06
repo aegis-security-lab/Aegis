@@ -17,11 +17,10 @@ import (
 	"github.com/z3r2ne/agentcore"
 )
 
-type taskAuditTestModel struct{}
+type taskAuditTestModel struct{ calls int }
 
-func (taskAuditTestModel) Stream(context.Context, agentcore.ModelRequest) (agentcore.ModelStream, error) {
-	report := "# 审计报告\n\n任务质量 **82**，平台健康度 **76**。本报告依据冻结证据逐项判断，不使用执行者声明替代原始证据。以下内容分别审查目标、过程、交付、平台状态和证据完整性，并对无法证明的事项明确标记为 UNPROVEN。\n\n## 目标覆盖矩阵\n代码模块覆盖与漏洞类别覆盖需要逐项核对，不能使用文件数量代替技术质量。\n\n## Issue 拆分总结\n拆分应符合目标责任边界和单次执行预算。\n\n## 建议 Issue 树\n应按独立目标建立责任节点。\n\n## 完美度差距\n仍需补充模块覆盖证据和漏洞类别矩阵。\n"
-	input := taskAuditSubmissionInput{ReportMarkdown: report, TaskQualityScore: 82, PlatformHealthScore: 76, OverallGrade: "B", Confidence: "medium", HardGates: map[string]string{
+func (m *taskAuditTestModel) Stream(context.Context, agentcore.ModelRequest) (agentcore.ModelStream, error) {
+	input := taskAuditSubmissionInput{TaskQualityScore: 82, PlatformHealthScore: 76, OverallGrade: "B", Confidence: "medium", HardGates: map[string]string{
 		"securityAuthorization": "PASS", "resultTruthfulness": "PASS", "goalCompleteness": "UNPROVEN", "evidenceCompleteness": "PASS", "stateConsistency": "PASS", "auditTraceability": "PASS",
 	}}
 	input.Coverage.TargetInstances = 1
@@ -31,8 +30,35 @@ func (taskAuditTestModel) Stream(context.Context, agentcore.ModelRequest) (agent
 	input.Coverage.ScanCoverage = "PASS"
 	input.Coverage.CodeModuleCoverage = "UNPROVEN"
 	input.Coverage.VulnerabilityCoverage = "UNPROVEN"
-	arguments, _ := json.Marshal(input)
-	return &taskAuditTestStream{chunks: []agentcore.ModelChunk{{ToolCallDeltas: []agentcore.ToolCallDelta{{Index: 0, ID: "submit-1", Name: "task_audit_submit_report", ArgumentsDelta: string(arguments)}}, StopReason: agentcore.StopReasonToolUse, Usage: &agentcore.Usage{InputTokens: 12, OutputTokens: 8}}}}, nil
+	if m.calls > 0 {
+		arguments, _ := json.Marshal(input)
+		m.calls++
+		return &taskAuditTestStream{chunks: []agentcore.ModelChunk{{ToolCallDeltas: []agentcore.ToolCallDelta{{Index: 0, ID: "generate-1", Name: "task_audit_generate_report", ArgumentsDelta: string(arguments)}}, StopReason: agentcore.StopReasonToolUse, Usage: &agentcore.Usage{InputTokens: 12, OutputTokens: 8}}}}, nil
+	}
+	m.calls++
+	deltas := make([]agentcore.ToolCallDelta, 0, len(taskAuditSections))
+	for index, section := range taskAuditSections {
+		arguments, _ := json.Marshal(taskAuditSectionInput{SectionID: section.ID, Markdown: validTaskAuditSectionMarkdown(section.ID)})
+		deltas = append(deltas, agentcore.ToolCallDelta{Index: index, ID: "section-" + section.ID, Name: "task_audit_submit_section", ArgumentsDelta: string(arguments)})
+	}
+	return &taskAuditTestStream{chunks: []agentcore.ModelChunk{{ToolCallDeltas: deltas, StopReason: agentcore.StopReasonToolUse, Usage: &agentcore.Usage{InputTokens: 12, OutputTokens: 8}}}}, nil
+}
+
+func validTaskAuditSectionMarkdown(sectionID string) string {
+	required := map[string]string{
+		"conclusion_and_result":    "Requirement ledger；目标覆盖矩阵；审计方法充分性；正则只能辅助；必须逐模块审计；代码模块覆盖；漏洞类别覆盖；完美度差距。",
+		"issue_decomposition":      "拆分前已经理解需求；检查重复边界和阶段依赖；建议 Issue 树按责任边界组织。",
+		"agent_execution":          "检查重复执行、并行效率和信息传递是否形成行动。",
+		"key_outcomes":             "逐项列出成果、形成成果的思路和关键事件证据。",
+		"tooling":                  "工具方案必须说明输入、输出、节省步骤和复测指标。",
+		"agent_and_model":          "定位 Agent 与模型的具体错误并区分根因。",
+		"system_collaboration":     "检查系统协作机制并提出可验证优化。",
+		"other_findings":           "检查其他问题和遗漏风险并说明检查范围。",
+		"timeline_and_root_causes": "关键时间线定位首次失效点并分析根因。",
+		"remediation":              "短期、中期、长期整改都要给出复测。",
+		"evidence_limits":          "说明证据局限、UNPROVEN 项目和置信度。",
+	}
+	return required[sectionID] + strings.Repeat("本节引用冻结证据，区分事实、判断、影响和可执行改进。", 8)
 }
 
 type taskAuditTestStream struct{ chunks []agentcore.ModelChunk }
@@ -59,9 +85,13 @@ func TestTaskAuditFreezesEvidenceStreamsAndKeepsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolvedModels := make(chan agenthost.ModelRef, 1)
+	testModel := &taskAuditTestModel{}
 	host, err := agenthost.New(agenthost.ModelResolverFunc(func(_ context.Context, ref agenthost.ModelRef) (agentcore.Model, error) {
-		resolvedModels <- ref
-		return taskAuditTestModel{}, nil
+		select {
+		case resolvedModels <- ref:
+		default:
+		}
+		return testModel, nil
 	}), registry)
 	if err != nil {
 		t.Fatal(err)
@@ -93,8 +123,18 @@ func TestTaskAuditFreezesEvidenceStreamsAndKeepsHistory(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if audit.Status != "completed" || !strings.Contains(audit.ReportMarkdown, "任务质量") || audit.InputTokens != 12 || audit.OutputTokens != 8 {
+	if audit.Status != "completed" || !strings.Contains(audit.ReportMarkdown, "任务执行质量：82/100") || !strings.Contains(audit.ReportMarkdown, "## 11. 证据局限与未能证明事项") || audit.InputTokens != 24 || audit.OutputTokens != 16 {
 		t.Fatalf("unexpected audit: %+v", audit)
+	}
+	var toolEvent *TaskAuditEvent
+	for index := range audit.Events {
+		if audit.Events[index].Kind == "tool" && audit.Events[index].ToolName == "task_audit_generate_report" {
+			toolEvent = &audit.Events[index]
+			break
+		}
+	}
+	if toolEvent == nil || toolEvent.Status != "completed" || !strings.Contains(toolEvent.Arguments, "taskQualityScore") || toolEvent.Result == "" {
+		t.Fatalf("task audit tool trace was not persisted: %+v", audit.Events)
 	}
 	select {
 	case ref := <-resolvedModels:
@@ -220,6 +260,10 @@ func TestTaskAuditPromptRequiresPerTargetIssueCoverageAndPerfectionReview(t *tes
 		"名单覆盖",
 		"代码模块覆盖",
 		"漏洞类别覆盖",
+		"审计方法充分性",
+		"正则、grep、关键词、secret scan、依赖扫描和其他模式匹配只能用于候选发现和辅助定位",
+		"抽样只能用于评估器验证任务质量",
+		"不得用“只深审高风险样本”冒充完成原目标",
 		"验收 Agent、Worker 总结、QA PASS",
 		"任务执行质量不得高于 59 分",
 	} {
@@ -227,7 +271,7 @@ func TestTaskAuditPromptRequiresPerTargetIssueCoverageAndPerfectionReview(t *tes
 			t.Fatalf("task audit prompt is missing %q", required)
 		}
 	}
-	if taskAuditFrameworkVersion != "agent-evaluation-framework/Draft-v2" {
+	if taskAuditFrameworkVersion != "agent-evaluation-framework/Draft-v3" {
 		t.Fatalf("framework version=%q", taskAuditFrameworkVersion)
 	}
 }
@@ -236,16 +280,19 @@ func TestTaskAuditReportContractRejectsSuperficialReport(t *testing.T) {
 	if err := validateTaskAuditReport("# 审计报告\n185/185 报告存在，所以任务优秀。"); err == nil {
 		t.Fatal("superficial audit report unexpectedly passed the output contract")
 	}
-	complete := "目标覆盖矩阵\nIssue 拆分总结\n建议 Issue 树\n完美度差距\n代码模块覆盖\n漏洞类别覆盖"
-	if err := validateTaskAuditReport(complete); err != nil {
+	var complete strings.Builder
+	for _, section := range taskAuditSections {
+		complete.WriteString(section.Title)
+		complete.WriteByte('\n')
+	}
+	if err := validateTaskAuditReport(complete.String()); err != nil {
 		t.Fatalf("complete audit report contract failed: %v", err)
 	}
 }
 
-func TestTaskAuditSubmitReportToolIsRequiredStructuredAndTerminating(t *testing.T) {
+func TestTaskAuditSectionProtocolReportsMissingChaptersAndGeneratesReport(t *testing.T) {
 	submission := &taskAuditSubmission{}
-	report := strings.Repeat("审计证据完整。", 30) + "\n目标覆盖矩阵\nIssue 拆分总结\n建议 Issue 树\n完美度差距\n代码模块覆盖\n漏洞类别覆盖"
-	input := taskAuditSubmissionInput{ReportMarkdown: report, TaskQualityScore: 58, PlatformHealthScore: 80, OverallGrade: "D", Confidence: "medium", HardGates: map[string]string{
+	input := taskAuditSubmissionInput{TaskQualityScore: 58, PlatformHealthScore: 80, OverallGrade: "D", Confidence: "medium", HardGates: map[string]string{
 		"securityAuthorization": "PASS", "resultTruthfulness": "PASS", "goalCompleteness": "UNPROVEN", "evidenceCompleteness": "UNPROVEN", "stateConsistency": "PASS", "auditTraceability": "PASS",
 	}}
 	input.Coverage.TargetInstances = 185
@@ -257,7 +304,17 @@ func TestTaskAuditSubmitReportToolIsRequiredStructuredAndTerminating(t *testing.
 	input.Coverage.CodeModuleCoverage = "UNPROVEN"
 	input.Coverage.VulnerabilityCoverage = "UNPROVEN"
 	raw, _ := json.Marshal(input)
-	result, err := taskAuditSubmitTool(submission).Execute(context.Background(), raw, nil)
+	if _, err := taskAuditGenerateReportTool(submission).Execute(context.Background(), raw, nil); err == nil || !strings.Contains(err.Error(), "issue_decomposition (Issue 拆分质量)") {
+		t.Fatalf("missing chapter error=%v", err)
+	}
+	for _, section := range taskAuditSections {
+		sectionRaw, _ := json.Marshal(taskAuditSectionInput{SectionID: section.ID, Markdown: validTaskAuditSectionMarkdown(section.ID)})
+		result, err := taskAuditSubmitSectionTool(submission).Execute(context.Background(), sectionRaw, nil)
+		if err != nil || !result.Terminate {
+			t.Fatalf("submit section %s result=%+v err=%v", section.ID, result, err)
+		}
+	}
+	result, err := taskAuditGenerateReportTool(submission).Execute(context.Background(), raw, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +322,15 @@ func TestTaskAuditSubmitReportToolIsRequiredStructuredAndTerminating(t *testing.
 		t.Fatal("successful task audit submission must terminate the Agent loop")
 	}
 	stored, ok := submission.result()
-	if !ok || stored.ReportMarkdown != report || stored.Coverage.TargetInstances != 185 {
+	if !ok || !strings.Contains(stored.ReportMarkdown, "## 1. 审计结论与任务结果质量") || !strings.Contains(stored.ReportMarkdown, "## 11. 证据局限与未能证明事项") || stored.Coverage.TargetInstances != 185 {
 		t.Fatalf("submission=%+v ok=%v", stored, ok)
+	}
+}
+
+func TestTaskAuditSectionRejectsIncompleteAnalysis(t *testing.T) {
+	submission := &taskAuditSubmission{}
+	err := submission.submitSection(taskAuditSectionInput{SectionID: "issue_decomposition", Markdown: strings.Repeat("只有泛泛描述。", 30)})
+	if err == nil || !strings.Contains(err.Error(), "拆分前") || !strings.Contains(err.Error(), "建议 Issue 树") {
+		t.Fatalf("unexpected section validation error: %v", err)
 	}
 }

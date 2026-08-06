@@ -219,27 +219,49 @@ type Task struct {
 }
 
 // TaskAudit is one immutable evaluation attempt over a point-in-time Task
-// evidence snapshot. ReportMarkdown is updated while the evaluator streams,
-// while EvidencePath keeps the exact input used for later reproduction.
+// evidence snapshot. Events carry the evaluator's live trace, ReportMarkdown
+// stores only the validated final deliverable, and EvidencePath keeps the exact
+// input used for later reproduction.
 type TaskAudit struct {
-	ID               string     `json:"id" gorm:"primaryKey"`
-	TaskID           string     `json:"taskId,omitempty" gorm:"index"`
-	RequestedID      string     `json:"requestedId" gorm:"index"`
-	RootIssueIDs     []string   `json:"rootIssueIds" gorm:"serializer:json;type:text"`
-	Status           string     `json:"status" gorm:"index"`
-	FrameworkVersion string     `json:"frameworkVersion"`
-	EvidenceExportID string     `json:"evidenceExportId,omitempty"`
-	EvidenceComplete bool       `json:"evidenceComplete"`
-	EvidenceManifest string     `json:"evidenceManifest,omitempty" gorm:"type:text"`
-	EvidencePath     string     `json:"-"`
-	ReportMarkdown   string     `json:"reportMarkdown,omitempty" gorm:"type:text"`
-	Error            string     `json:"error,omitempty" gorm:"type:text"`
-	InputTokens      int        `json:"inputTokens"`
-	OutputTokens     int        `json:"outputTokens"`
-	StartedAt        *time.Time `json:"startedAt,omitempty"`
-	CompletedAt      *time.Time `json:"completedAt,omitempty"`
-	CreatedAt        time.Time  `json:"createdAt" gorm:"index"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
+	ID               string           `json:"id" gorm:"primaryKey"`
+	TaskID           string           `json:"taskId,omitempty" gorm:"index"`
+	RequestedID      string           `json:"requestedId" gorm:"index"`
+	RootIssueIDs     []string         `json:"rootIssueIds" gorm:"serializer:json;type:text"`
+	Status           string           `json:"status" gorm:"index"`
+	FrameworkVersion string           `json:"frameworkVersion"`
+	EvidenceExportID string           `json:"evidenceExportId,omitempty"`
+	EvidenceComplete bool             `json:"evidenceComplete"`
+	EvidenceManifest string           `json:"evidenceManifest,omitempty" gorm:"type:text"`
+	EvidencePath     string           `json:"-"`
+	ReportMarkdown   string           `json:"reportMarkdown,omitempty" gorm:"type:text"`
+	Error            string           `json:"error,omitempty" gorm:"type:text"`
+	InputTokens      int              `json:"inputTokens"`
+	OutputTokens     int              `json:"outputTokens"`
+	StartedAt        *time.Time       `json:"startedAt,omitempty"`
+	CompletedAt      *time.Time       `json:"completedAt,omitempty"`
+	CreatedAt        time.Time        `json:"createdAt" gorm:"index"`
+	UpdatedAt        time.Time        `json:"updatedAt"`
+	Events           []TaskAuditEvent `json:"events,omitempty" gorm:"-"`
+}
+
+// TaskAuditEvent is one durable, UI-facing step in an audit Agent trace. Text
+// and tool argument deltas update the same row so observability stays useful
+// without producing one database record per token.
+type TaskAuditEvent struct {
+	ID         string    `json:"id" gorm:"primaryKey"`
+	AuditID    string    `json:"auditId" gorm:"index:idx_task_audit_events_order,priority:1"`
+	Sequence   int64     `json:"sequence" gorm:"index:idx_task_audit_events_order,priority:2"`
+	Kind       string    `json:"kind"`
+	Status     string    `json:"status"`
+	Turn       int       `json:"turn,omitempty"`
+	ToolCallID string    `json:"toolCallId,omitempty" gorm:"index"`
+	ToolName   string    `json:"toolName,omitempty"`
+	Content    string    `json:"content,omitempty" gorm:"type:text"`
+	Arguments  string    `json:"arguments,omitempty" gorm:"type:text"`
+	Result     string    `json:"result,omitempty" gorm:"type:text"`
+	IsError    bool      `json:"isError,omitempty"`
+	CreatedAt  time.Time `json:"createdAt" gorm:"index"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 // Issue is the single source of truth for one run or a child execution unit.
