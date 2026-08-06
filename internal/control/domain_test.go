@@ -942,6 +942,90 @@ func TestRedTeamLeadHasMandatoryComplexTaskBoundary(t *testing.T) {
 	}
 }
 
+func TestRedTeamAgentsHaveDefaultRedAndOptionalBlueAssessmentStandards(t *testing.T) {
+	s := configuredStore(t)
+	for _, agentID := range []string{"red-team-lead", "red-team-engineer"} {
+		agent, err := s.GetAgent(agentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, required := range []string{
+			"SECURITY ASSESSMENT ORIENTATION (mandatory)",
+			"Use RED-TEAM orientation by default",
+			"RED-TEAM VALUE STANDARD (default)",
+			"RT-Critical",
+			"RCE that requires prior administrator or backend access is normally low or negligible red-team value",
+			"BLUE-TEAM RISK STANDARD",
+			"BT-Critical",
+			"including XSS, SSRF",
+			"Preconditions reduce likelihood and rating but do not erase defensive value",
+		} {
+			if !strings.Contains(agent.SystemPrompt, required) {
+				t.Fatalf("agent %s prompt is missing %q", agentID, required)
+			}
+		}
+	}
+}
+
+func TestRedTeamAssessmentOrientationMigrationIsAppliedOnce(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Delete(&registrySeedMigrationRecord{}, "id = ?", redTeamAssessmentModeMigrationID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, agentID := range []string{"red-team-lead", "red-team-engineer"} {
+		var record agentRecord
+		if err := store.db.First(&record, "id = ?", agentID).Error; err != nil {
+			t.Fatal(err)
+		}
+		record.Definition.SystemPrompt = "operator-customized prompt"
+		if err := store.db.Save(&record).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	database, _ := store.db.DB()
+	_ = database.Close()
+
+	reopened, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agentID := range []string{"red-team-lead", "red-team-engineer"} {
+		agent, getErr := reopened.GetAgent(agentID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if !strings.HasPrefix(agent.SystemPrompt, "operator-customized prompt") || !strings.Contains(agent.SystemPrompt, "RED-TEAM VALUE STANDARD (default)") {
+			t.Fatalf("migration did not append assessment standards to %s: %s", agentID, agent.SystemPrompt)
+		}
+	}
+	var leadRecord agentRecord
+	if err := reopened.db.First(&leadRecord, "id = ?", "red-team-lead").Error; err != nil {
+		t.Fatal(err)
+	}
+	leadRecord.Definition.SystemPrompt = "later operator customization"
+	if err := reopened.db.Save(&leadRecord).Error; err != nil {
+		t.Fatal(err)
+	}
+	database, _ = reopened.db.DB()
+	_ = database.Close()
+
+	reopenedAgain, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := reopenedAgain.GetAgent("red-team-lead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lead.SystemPrompt != "later operator customization" {
+		t.Fatalf("completed migration overwrote later Agent customization: %s", lead.SystemPrompt)
+	}
+}
+
 func TestRedTeamAgentsReceiveAgentBrowserSkill(t *testing.T) {
 	store := configuredStore(t)
 	if _, exists := skillIndex(store.Skills(), agentBrowserSkillID); !exists {
