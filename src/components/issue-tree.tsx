@@ -214,7 +214,7 @@ export function IssueTree({
   }
 
   return (
-    <div className={cn("min-w-0", className)}>
+    <div className={cn("flex min-h-0 flex-col", className)}>
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
         <Badge variant={summary.running > 0 ? "default" : "outline"}>
           {summary.running > 0 ? (
@@ -243,7 +243,7 @@ export function IssueTree({
       </div>
       <ScrollArea
         viewportRef={viewportRef}
-        className="h-[min(680px,calc(100dvh-260px))] min-h-[360px]"
+        className="min-h-0 flex-1 min-h-[360px]"
       >
         <div
           className="relative"

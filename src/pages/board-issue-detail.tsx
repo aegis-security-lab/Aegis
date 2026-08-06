@@ -1,12 +1,10 @@
 import * as React from "react"
 import {
-  ArrowLeft,
-  GitBranch,
-  Link2,
-  MessageSquareText,
+  ChevronRight,
   Pencil,
   Plus,
   Send,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react"
 import { Link, useNavigate, useParams } from "react-router-dom"
@@ -14,6 +12,7 @@ import { toast } from "sonner"
 
 import { IssueCommentsList } from "@/components/issue-comments-list"
 import { IssueAgentActivity } from "@/components/issue-agent-activity"
+import { IssueChildTree } from "@/components/issue-child-tree"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { MarkdownContent } from "@/components/markdown-content"
 import { Badge } from "@/components/ui/badge"
@@ -28,13 +27,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -51,6 +43,11 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -72,7 +69,13 @@ import { formatTime } from "@/lib/format"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { issueWorkflowStatus } from "@/lib/issue-workflow"
 import { useAppState } from "@/lib/state"
-import type { CreateIssueInput, IssueDetail, IssueStatus } from "@/types"
+import { cn } from "@/lib/utils"
+import type {
+  CreateIssueInput,
+  Issue,
+  IssueDetail,
+  IssueStatus,
+} from "@/types"
 
 const issueStatuses: IssueStatus[] = [
   "todo",
@@ -118,6 +121,7 @@ export function BoardIssueDetailPage() {
   const [editOpen, setEditOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
+  const [childTreeOpen, setChildTreeOpen] = React.useState(false)
   const [childForm, setChildForm] =
     React.useState<ChildIssueForm>(emptyChildIssue)
   const [editForm, setEditForm] = React.useState<IssueEditForm>({
@@ -173,6 +177,10 @@ export function BoardIssueDetailPage() {
         ? "系统"
         : issue.createdBy || "未知")
   const deleteIssueCount = countIssueTree(issue.id, state?.issues ?? [])
+  const parentIssue = issue.parentId
+    ? state?.issues.find((candidate) => candidate.id === issue.parentId)
+    : undefined
+  const subtreeIssues = collectSubtree(issue.id, state?.issues ?? [])
 
   const beginEdit = () => {
     setEditForm({
@@ -274,27 +282,24 @@ export function BoardIssueDetailPage() {
     }
   }
   return (
-    <div className="size-full overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-5 py-6 lg:px-8">
-        <header className="flex flex-col gap-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-fit"
-            render={<Link to="/issues" />}
-          >
-            <ArrowLeft />
-            返回 Board
-          </Button>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="font-mono text-xs text-muted-foreground">
-                {issue.identifier} · {issue.id}
-              </p>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-                {issue.title}
-              </h1>
-            </div>
+    <div className="relative size-full min-h-0 overflow-hidden">
+      <div className="size-full min-h-0 overflow-y-auto pr-1 lg:pr-[380px]">
+        <div className="flex min-h-full flex-col gap-4">
+          {parentIssue ? (
+            <Link
+              to={`/issues/${parentIssue.id}`}
+              className="flex h-6 min-w-0 items-center text-xs text-muted-foreground hover:text-foreground"
+              title={parentIssue.title}
+            >
+              <span className="truncate">
+                {parentIssue.identifier} · {parentIssue.title}
+              </span>
+            </Link>
+          ) : null}
+          <header className="flex flex-col gap-2">
+            <h1 className="truncate text-base font-semibold" title={issue.title}>
+              {issue.title}
+            </h1>
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" size="sm" onClick={beginEdit}>
                 <Pencil />
@@ -308,180 +313,133 @@ export function BoardIssueDetailPage() {
                 <Trash2 />
                 删除
               </Button>
+              <Popover>
+                <PopoverTrigger render={<Button variant="outline" size="sm" />}>
+                  <SlidersHorizontal data-icon="inline-start" />
+                  属性
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-80">
+                  <div className="flex flex-col gap-2.5">
+                    <Meta label="负责人" value={assignee?.name || "未委派"} />
+                    <Meta label="创建者" value={creatorName} />
+                    <Meta label="状态" value={issueWorkflowStatus(issue.status)} />
+                    <Meta label="优先级" value={issue.priority} />
+                    <Meta label="协作模式" value="Board Autonomy" />
+                    <Meta label="创建时间" value={formatTime(issue.createdAt)} />
+                    {issue.startedAt ? (
+                      <Meta label="开始时间" value={formatTime(issue.startedAt)} />
+                    ) : null}
+                    {issue.completedAt ? (
+                      <Meta
+                        label="完成时间"
+                        value={formatTime(issue.completedAt)}
+                      />
+                    ) : null}
+                    {issue.cancelledAt ? (
+                      <Meta
+                        label="取消时间"
+                        value={formatTime(issue.cancelledAt)}
+                      />
+                    ) : null}
+                    <Meta label="更新时间" value={formatTime(issue.updatedAt)} />
+                  </div>
+                </PopoverContent>
+              </Popover>
               <IssueRuntimeBadge runtime={runtime} />
               <Badge variant="outline">{issue.priority}</Badge>
               <Badge variant="secondary">{assignee?.name || "未委派"}</Badge>
             </div>
+            <section className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setChildTreeOpen((open) => !open)}
+                aria-expanded={childTreeOpen}
+                className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <ChevronRight
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    childTreeOpen && "rotate-90"
+                  )}
+                />
+                子 Issues
+                <span className="tabular-nums">{detail.children.length}</span>
+              </button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setChildForm(emptyChildIssue)
+                  setCreateOpen(true)
+                }}
+              >
+                <Plus />
+                新建
+              </Button>
+            </section>
+            {childTreeOpen ? (
+              <div className="min-w-0 pl-4">
+                <IssueChildTree
+                  rootId={issue.id}
+                  issues={subtreeIssues}
+                  runtimes={state?.issueRuntimes ?? []}
+                />
+              </div>
+            ) : null}
+          </header>
+          <div className="mt-4 flex flex-col gap-5">
+            <Section
+              label="描述"
+              value={issue.description || issue.context || "未填写"}
+            />
+            <Section label="目标" value={issue.objective || "未填写"} />
+            <Section
+              label="执行边界"
+              value={issue.constraints || "未填写"}
+            />
+            {issue.result ? (
+              <Section label="最新交付" value={issue.result} />
+            ) : null}
           </div>
-        </header>
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-          <main className="flex min-w-0 flex-col gap-5">
-            <Card>
-              <CardHeader>
-                <CardTitle>Issue 定义</CardTitle>
-                <CardDescription>
-                  Board 是该工作项的唯一事实来源。
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-5">
-                <Section
-                  label="描述"
-                  value={issue.description || issue.context || "未填写"}
-                />
-                <Section label="目标" value={issue.objective || "未填写"} />
-                <Section
-                  label="执行边界"
-                  value={issue.constraints || "未填写"}
-                />
-                {issue.result ? (
-                  <Section label="最新交付" value={issue.result} />
-                ) : null}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquareText />
-                  评论
-                </CardTitle>
-                <CardDescription>
-                  这是 Board 评论，不是私聊；协调层会把它直接送达对应的任务内
-                  Agent 实例，运行中即时引导，睡眠中立即唤醒。
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <div className="h-[420px] min-h-0 overflow-hidden">
-                  <IssueCommentsList
-                    comments={detail.comments}
-                    hasMore={false}
-                    loadingMore={false}
-                    onLoadMore={() => {}}
-                    onCopy={(value) =>
-                      void navigator.clipboard.writeText(value)
-                    }
-                  />
-                </div>
-                <InputGroup>
-                  <InputGroupTextarea
-                    value={comment}
-                    onChange={(event) => setComment(event.target.value)}
-                    placeholder="在 Board 上发表评论…"
-                  />
-                  <InputGroupAddon align="block-end" className="justify-end">
-                    <InputGroupButton
-                      variant="default"
-                      disabled={busy || !comment.trim()}
-                      onClick={() => void submit()}
-                    >
-                      <Send />
-                      发表评论
-                    </InputGroupButton>
-                  </InputGroupAddon>
-                </InputGroup>
-              </CardContent>
-            </Card>
-          </main>
-          <aside className="flex flex-col gap-5">
-            <Card>
-              <CardHeader>
-                <CardTitle>属性</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3 text-sm">
-                <Meta label="负责人" value={assignee?.name || "未委派"} />
-                <Meta label="创建者" value={creatorName} />
-                <Meta label="状态" value={issueWorkflowStatus(issue.status)} />
-                <Meta label="优先级" value={issue.priority} />
-                <Meta label="协作模式" value="Board Autonomy" />
-                <Meta label="创建时间" value={formatTime(issue.createdAt)} />
-                {issue.startedAt ? (
-                  <Meta label="开始时间" value={formatTime(issue.startedAt)} />
-                ) : null}
-                {issue.completedAt ? (
-                  <Meta
-                    label="完成时间"
-                    value={formatTime(issue.completedAt)}
-                  />
-                ) : null}
-                {issue.cancelledAt ? (
-                  <Meta
-                    label="取消时间"
-                    value={formatTime(issue.cancelledAt)}
-                  />
-                ) : null}
-                <Meta label="更新时间" value={formatTime(issue.updatedAt)} />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex-row items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2">
-                  <GitBranch />子 Issues
-                </CardTitle>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setChildForm(emptyChildIssue)
-                    setCreateOpen(true)
-                  }}
-                >
-                  <Plus />
-                  新建
-                </Button>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                {detail.children.length ? (
-                  detail.children.map((child) => (
-                    <Link
-                      key={child.id}
-                      to={`/issues/${child.id}`}
-                      className="rounded-lg border p-3 hover:bg-muted/40"
-                    >
-                      <p className="font-mono text-xs text-muted-foreground">
-                        {child.identifier}
-                      </p>
-                      <p className="mt-1 text-sm font-medium">{child.title}</p>
-                    </Link>
-                  ))
-                ) : (
-                  <p className="text-sm text-muted-foreground">没有子 Issue</p>
-                )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Link2 />
-                  依赖
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <Relation label="Blocked by" items={detail.blockedBy} />
-                <Relation label="Blocks" items={detail.blocks} />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="border-b">
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquareText />
-                  AI 实时活动
-                </CardTitle>
-                <CardDescription>
-                  对话、工具调用和验收决策。点击任意记录查看完整详情。
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <IssueAgentActivity
-                  executions={detail.executions}
-                  messages={detail.messages}
-                  events={detail.events}
-                  validations={detail.validations}
-                  approvals={detail.approvals}
-                />
-              </CardContent>
-            </Card>
-          </aside>
+          <section className="mt-4 border-t pt-3">
+            <IssueCommentsList
+              embedded
+              comments={detail.comments}
+              hasMore={false}
+              loadingMore={false}
+              onLoadMore={() => {}}
+              onCopy={(value) => void navigator.clipboard.writeText(value)}
+            />
+          </section>
+          <InputGroup className="mt-2">
+            <InputGroupTextarea
+              value={comment}
+              onChange={(event) => setComment(event.target.value)}
+              placeholder="在 Board 上发表评论…"
+            />
+            <InputGroupAddon align="block-end" className="justify-end">
+              <InputGroupButton
+                variant="default"
+                disabled={busy || !comment.trim()}
+                onClick={() => void submit()}
+              >
+                <Send />
+                发表评论
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
         </div>
       </div>
+      <aside className="absolute inset-y-0 right-2 hidden w-[360px] lg:block">
+          <IssueAgentActivity
+            className="h-full"
+            executions={detail.executions}
+            messages={detail.messages}
+            events={detail.events}
+            validations={detail.validations}
+            approvals={detail.approvals}
+          />
+      </aside>
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
@@ -811,6 +769,24 @@ function countIssueTree(issueID: string, issues: IssueDetail["children"]) {
   return visited.size
 }
 
+function collectSubtree(rootId: string, issues: Issue[]) {
+  const byID = new Map(issues.map((issue) => [issue.id, issue]))
+  const result: Issue[] = []
+  const seen = new Set<string>()
+  const visit = (id: string) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    const issue = byID.get(id)
+    if (!issue) return
+    result.push(issue)
+    for (const candidate of issues) {
+      if (candidate.parentId === id) visit(candidate.id)
+    }
+  }
+  visit(rootId)
+  return result
+}
+
 function Section({ label, value }: { label: string; value: string }) {
   return (
     <section>
@@ -826,34 +802,6 @@ function Meta({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between gap-3">
       <span className="text-muted-foreground">{label}</span>
       <span className="text-right font-medium">{value}</span>
-    </div>
-  )
-}
-function Relation({
-  label,
-  items,
-}: {
-  label: string
-  items: IssueDetail["blocks"]
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-xs font-medium text-muted-foreground">{label}</p>
-      {items.length ? (
-        <div className="flex flex-col gap-2">
-          {items.map((issue) => (
-            <Link
-              key={issue.id}
-              to={`/issues/${issue.id}`}
-              className="truncate text-sm text-primary hover:underline"
-            >
-              {issue.identifier} · {issue.title}
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">无</p>
-      )}
     </div>
   )
 }

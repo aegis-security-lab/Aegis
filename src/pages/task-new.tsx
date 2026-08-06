@@ -1,6 +1,5 @@
 import * as React from "react"
 import {
-  ArrowLeft,
   Bot,
   Copy,
   Plus,
@@ -8,10 +7,9 @@ import {
   Send,
   ShieldCheck,
 } from "lucide-react"
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
-import { PageHeader } from "@/components/page-header"
 import { InputAttachmentList } from "@/components/input-attachments"
 import { useInputAttachments } from "@/hooks/use-input-attachments"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -155,22 +153,6 @@ export function TaskNewPage() {
 
   return (
     <div className="flex flex-col gap-7">
-      <PageHeader
-        eyebrow="New task"
-        title="发布任务"
-        description="选择根 Agent 类型。发布后系统会创建任务内临时身份、独立会话和独立手机。"
-        actions={
-          <Button
-            variant="ghost"
-            render={<Link to="/tasks" />}
-            nativeButton={false}
-          >
-            <ArrowLeft data-icon="inline-start" />
-            返回
-          </Button>
-        }
-      />
-
       {clone ? (
         <Alert>
           <Copy />

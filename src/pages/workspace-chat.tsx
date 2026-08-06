@@ -1,6 +1,5 @@
 import * as React from "react"
 import {
-  ArrowLeft,
   ExternalLink,
   MessageSquare,
   Paperclip,
@@ -386,16 +385,6 @@ export function WorkspaceChatPage() {
         )}
       >
         <div className="flex h-14 shrink-0 items-center gap-3 border-b px-3 sm:px-4">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="md:hidden"
-            aria-label="返回会话列表"
-            onClick={() => navigate("/workspace")}
-          >
-            <ArrowLeft />
-          </Button>
           <span className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <Sparkles />
           </span>

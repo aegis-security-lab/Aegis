@@ -96,6 +96,11 @@ const TaskDetailPage = React.lazy(() =>
     default: module.TaskDetailPage,
   }))
 )
+const TaskBoardPage = React.lazy(() =>
+  import("@/pages/task-board").then((module) => ({
+    default: module.TaskBoardPage,
+  }))
+)
 const TasksPage = React.lazy(() =>
   import("@/pages/tasks").then((module) => ({ default: module.TasksPage }))
 )
@@ -150,6 +155,8 @@ export function App() {
           />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="tasks/new" element={<TaskNewPage />} />
+          <Route path="tasks/:issueId/issues" element={<IssuesPage />} />
+          <Route path="tasks/:issueId/board" element={<TaskBoardPage />} />
           <Route path="tasks/:issueId" element={<TaskDetailPage />} />
           <Route path="timeline" element={<TimelinePage />} />
           <Route path="issues" element={<IssuesPage />} />

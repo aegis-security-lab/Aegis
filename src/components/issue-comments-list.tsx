@@ -25,12 +25,14 @@ export function IssueCommentsList({
   loadingMore,
   onLoadMore,
   onCopy,
+  embedded = false,
 }: {
   comments: IssueComment[]
   hasMore: boolean
   loadingMore: boolean
   onLoadMore: () => void
   onCopy: (body: string) => void
+  embedded?: boolean
 }) {
   const viewportRef = React.useRef<HTMLDivElement>(null)
   const count = comments.length + (hasMore ? 1 : 0)
@@ -53,7 +55,7 @@ export function IssueCommentsList({
 
   if (comments.length === 0 && !hasMore) {
     return (
-      <Empty className="h-full border-0">
+      <Empty className={embedded ? "border-0 py-8" : "h-full border-0"}>
         <EmptyHeader>
           <EmptyTitle>还没有评论</EmptyTitle>
         </EmptyHeader>
@@ -61,10 +63,38 @@ export function IssueCommentsList({
     )
   }
 
+  if (embedded) {
+    return (
+      <div className="flex flex-col">
+        {comments.map((comment) => (
+          <CommentItem
+            key={comment.id}
+            comment={comment}
+            onCopy={onCopy}
+          />
+        ))}
+        {hasMore ? (
+          <div className="flex justify-center py-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={loadingMore}
+              onClick={onLoadMore}
+            >
+              {loadingMore ? <Spinner data-icon="inline-start" /> : null}
+              加载更早评论
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <ScrollArea
       viewportRef={viewportRef}
-      className="size-full min-h-0 rounded-xl border"
+      className="size-full min-h-0"
     >
       <div
         className="relative"
@@ -81,74 +111,7 @@ export function IssueCommentsList({
               style={{ transform: `translateY(${virtualItem.start + 12}px)` }}
             >
               {comment ? (
-                <article className="rounded-xl border p-4">
-                  <header className="flex items-center justify-between gap-3">
-                    <span className="text-xs font-medium">
-                      {comment.authorId}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <time className="text-xs text-muted-foreground">
-                        {formatTime(comment.createdAt)}
-                      </time>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        title="复制评论"
-                        aria-label={`复制 ${comment.authorId} 的评论`}
-                        onClick={() => onCopy(comment.body)}
-                      >
-                        <Copy data-icon="inline-start" />
-                      </Button>
-                    </div>
-                  </header>
-                  <MarkdownContent className="mt-2 text-sm">
-                    {comment.body}
-                  </MarkdownContent>
-                  {comment.attachments.length > 0 ? (
-                    <AttachmentGroup className="mt-3">
-                      {comment.attachments.map((attachment) => (
-                        <Attachment
-                          key={attachment.id}
-                          size="sm"
-                          className="w-72"
-                        >
-                          <AttachmentMedia>
-                            <FileText />
-                          </AttachmentMedia>
-                          <AttachmentContent>
-                            <AttachmentTitle title={attachment.name}>
-                              {attachment.name}
-                            </AttachmentTitle>
-                            <AttachmentDescription
-                              title={
-                                attachment.description || attachment.sourcePath
-                              }
-                            >
-                              {attachment.description || attachment.sourcePath}
-                              {" · "}
-                              {formatBytes(attachment.size)}
-                            </AttachmentDescription>
-                          </AttachmentContent>
-                          <AttachmentActions>
-                            <a
-                              className={buttonVariants({
-                                variant: "ghost",
-                                size: "icon-xs",
-                              })}
-                              aria-label={`下载 ${attachment.name}`}
-                              title="下载附件"
-                              href={`/api/attachments/${encodeURIComponent(attachment.id)}`}
-                              download={attachment.name}
-                            >
-                              <Download data-icon="inline-start" />
-                            </a>
-                          </AttachmentActions>
-                        </Attachment>
-                      ))}
-                    </AttachmentGroup>
-                  ) : null}
-                </article>
+                <CommentItem comment={comment} onCopy={onCopy} />
               ) : (
                 <div className="flex justify-center py-2">
                   <Button
@@ -168,5 +131,74 @@ export function IssueCommentsList({
         })}
       </div>
     </ScrollArea>
+  )
+}
+
+function CommentItem({
+  comment,
+  onCopy,
+}: {
+  comment: IssueComment
+  onCopy: (body: string) => void
+}) {
+  return (
+    <article className="px-1 pb-4">
+      <header className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium">{comment.authorId}</span>
+        <div className="flex items-center gap-1">
+          <time className="text-xs text-muted-foreground">
+            {formatTime(comment.createdAt)}
+          </time>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            title="复制评论"
+            aria-label={`复制 ${comment.authorId} 的评论`}
+            onClick={() => onCopy(comment.body)}
+          >
+            <Copy data-icon="inline-start" />
+          </Button>
+        </div>
+      </header>
+      <MarkdownContent className="mt-2 text-sm">{comment.body}</MarkdownContent>
+      {comment.attachments.length > 0 ? (
+        <AttachmentGroup className="mt-3">
+          {comment.attachments.map((attachment) => (
+            <Attachment key={attachment.id} size="sm" className="w-72">
+              <AttachmentMedia>
+                <FileText />
+              </AttachmentMedia>
+              <AttachmentContent>
+                <AttachmentTitle title={attachment.name}>
+                  {attachment.name}
+                </AttachmentTitle>
+                <AttachmentDescription
+                  title={attachment.description || attachment.sourcePath}
+                >
+                  {attachment.description || attachment.sourcePath}
+                  {" · "}
+                  {formatBytes(attachment.size)}
+                </AttachmentDescription>
+              </AttachmentContent>
+              <AttachmentActions>
+                <a
+                  className={buttonVariants({
+                    variant: "ghost",
+                    size: "icon-xs",
+                  })}
+                  aria-label={`下载 ${attachment.name}`}
+                  title="下载附件"
+                  href={`/api/attachments/${encodeURIComponent(attachment.id)}`}
+                  download={attachment.name}
+                >
+                  <Download data-icon="inline-start" />
+                </a>
+              </AttachmentActions>
+            </Attachment>
+          ))}
+        </AttachmentGroup>
+      ) : null}
+    </article>
   )
 }

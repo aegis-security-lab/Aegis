@@ -35,6 +35,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { saveSettings, testConnection, testWebSearch } from "@/lib/api"
 import { useAppState } from "@/lib/state"
 import type { SaveConfigInput, WebSearchInput, WebSearchResult } from "@/types"
+import { cn } from "@/lib/utils"
 
 const providers = [
   "opencode-go",
@@ -44,7 +45,25 @@ const providers = [
   "openrouter",
   "deepseek",
 ]
-export function SettingsPage() {
+
+export type SettingsSection =
+  | "general"
+  | "search"
+  | "runtime"
+  | "model"
+  | "workspace"
+  | "budget"
+  | "policy"
+
+export function SettingsPage({
+  embedded = false,
+  section: controlledSection,
+  onSectionChange,
+}: {
+  embedded?: boolean
+  section?: SettingsSection
+  onSectionChange?: (section: SettingsSection) => void
+} = {}) {
   const { state, setState } = useAppState()
   const config = state!.config
   const [busy, setBusy] = React.useState<"save" | "test" | null>(null)
@@ -54,9 +73,14 @@ export function SettingsPage() {
   const [form, setForm] = React.useState<SaveConfigInput>(() =>
     fromConfig(config)
   )
-  const [section, setSection] = React.useState<
-    "general" | "search" | "runtime" | "model" | "workspace" | "budget" | "policy"
-  >("general")
+  const [localSection, setLocalSection] = React.useState<SettingsSection>(
+    "general"
+  )
+  const section = controlledSection ?? localSection
+  const changeSection = (next: SettingsSection) => {
+    if (onSectionChange) onSectionChange(next)
+    else setLocalSection(next)
+  }
   const update = <K extends keyof SaveConfigInput>(
     key: K,
     value: SaveConfigInput[K]
@@ -115,33 +139,42 @@ export function SettingsPage() {
           </Button>
         }
       />
-      <div className="grid items-start gap-5 md:grid-cols-[180px_minmax(0,1fr)]">
-        <nav
-          className="flex gap-1 overflow-x-auto rounded-lg border bg-card p-1.5 md:sticky md:top-20 md:flex-col"
-          aria-label="设置分类"
-        >
-          {(
-            [
-              ["general", "全局配置"],
-              ["runtime", "AgentCore"],
-              ["model", "模型与认证"],
-              ["search", "Web 搜索"],
-              ["workspace", "工作区"],
-              ["budget", "预算与心跳"],
-              ["policy", "执行与拆分策略"],
-            ] as const
-          ).map(([value, label]) => (
-            <Button
-              key={value}
-              type="button"
-              variant={section === value ? "secondary" : "ghost"}
-              className="shrink-0 justify-start"
-              onClick={() => setSection(value)}
-            >
-              {label}
-            </Button>
-          ))}
-        </nav>
+      <div
+        className={cn(
+          "items-start gap-5",
+          embedded
+            ? "flex flex-col"
+            : "grid md:grid-cols-[180px_minmax(0,1fr)]"
+        )}
+      >
+        {embedded ? null : (
+          <nav
+            className="flex gap-1 overflow-x-auto rounded-lg border bg-card p-1.5 md:sticky md:top-20 md:flex-col"
+            aria-label="设置分类"
+          >
+            {(
+              [
+                ["general", "全局配置"],
+                ["runtime", "AgentCore"],
+                ["model", "模型与认证"],
+                ["search", "Web 搜索"],
+                ["workspace", "工作区"],
+                ["budget", "预算与心跳"],
+                ["policy", "执行与拆分策略"],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                variant={section === value ? "secondary" : "ghost"}
+                className="shrink-0 justify-start"
+                onClick={() => changeSection(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </nav>
+        )}
         <div className="min-w-0">
           <div className="flex flex-col gap-5">
             <Card className={section === "general" ? undefined : "hidden"}>

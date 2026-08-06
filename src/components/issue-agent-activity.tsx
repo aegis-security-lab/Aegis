@@ -30,6 +30,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { fetchExecutionEvent } from "@/lib/api"
 import { formatTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import type {
   Approval,
   Execution,
@@ -55,12 +56,14 @@ export function IssueAgentActivity({
   events,
   validations,
   approvals,
+  className,
 }: {
   executions: Execution[]
   messages: ChatMessage[]
   events: ExecutionEvent[]
   validations: IssueValidation[]
   approvals: Approval[]
+  className?: string
 }) {
   const [selected, setSelected] = React.useState<ActivityItem | null>(null)
   const executionMap = React.useMemo(
@@ -112,7 +115,7 @@ export function IssueAgentActivity({
   return (
     <>
       <MessageScrollerProvider defaultScrollPosition="end" autoScroll={active}>
-        <MessageScroller className="h-[34rem] min-h-0">
+        <MessageScroller className={cn("h-[34rem] min-h-0", className)}>
           <MessageScrollerViewport className="h-full px-3 py-3">
             <MessageScrollerContent className="gap-2.5">
               {items.length === 0 ? (

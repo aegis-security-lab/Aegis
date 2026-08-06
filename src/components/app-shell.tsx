@@ -2,30 +2,28 @@ import * as React from "react"
 import {
   Activity,
   Bot,
-  Boxes,
-  CheckSquare2,
-  ClipboardCheck,
-  FileSearch,
-  History,
-  LibraryBig,
-  ListTodo,
-  MessagesSquare,
+  ChevronsUp,
   Moon,
-  Plus,
-  Radar,
   Settings,
   ShieldAlert,
   Sparkles,
   Sun,
-  Wrench,
   type LucideIcon,
 } from "lucide-react"
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 
 import { AegisLogo } from "@/components/aegis-logo"
+import { ContentArea } from "@/components/content-area"
+import { SettingsOverlay, type OverlayGroup } from "@/components/settings-overlay"
+import { SidebarTaskGroup } from "@/components/sidebar-tasks"
 import { useTheme } from "@/components/theme-provider"
-import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Sidebar,
   SidebarContent,
@@ -44,7 +42,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { useAppState } from "@/lib/state"
-import { cn } from "@/lib/utils"
 
 type NavigationItem = {
   to: string
@@ -59,51 +56,14 @@ type NavigationGroup = {
   items: NavigationItem[]
 }
 
-const navigation: NavigationGroup[] = [
+const workNavigation: NavigationGroup[] = [
   {
     label: "工作",
     items: [
       { to: "/", label: "概览", icon: Activity, end: true },
       { to: "/workspace", label: "管家", icon: Sparkles },
-      { to: "/tasks", label: "任务", icon: ListTodo },
-      { to: "/issues", label: "计划树", icon: CheckSquare2 },
-      { to: "/timeline", label: "时间线", icon: History },
     ],
   },
-  {
-    label: "Agent 与能力",
-    items: [
-      { to: "/agents", label: "Agent 类型", icon: Bot },
-      { to: "/capabilities", label: "能力控制台", icon: Wrench },
-      { to: "/skills", label: "Skills", icon: Sparkles },
-      { to: "/knowledge-bases", label: "知识库", icon: LibraryBig },
-    ],
-  },
-  {
-    label: "运行与安全",
-    items: [
-      {
-        to: "/approvals",
-        label: "审批",
-        icon: ClipboardCheck,
-        badge: "approvals",
-      },
-      { to: "/sessions", label: "执行会话", icon: MessagesSquare },
-      { to: "/containers", label: "环境与容器", icon: Boxes },
-      { to: "/security", label: "安全态势", icon: ShieldAlert, end: true },
-      { to: "/security/findings", label: "安全发现", icon: FileSearch },
-      { to: "/security/uncover", label: "网络空间检索", icon: Radar },
-    ],
-  },
-]
-
-const footerNavigation: NavigationItem[] = [
-  { to: "/settings", label: "设置", icon: Settings },
-]
-
-const allNavigation = [
-  ...navigation.flatMap((group) => group.items),
-  ...footerNavigation,
 ]
 
 function isRouteActive(pathname: string, item: NavigationItem) {
@@ -111,32 +71,23 @@ function isRouteActive(pathname: string, item: NavigationItem) {
   return pathname === item.to || pathname.startsWith(`${item.to}/`)
 }
 
-function currentNavigation(pathname: string) {
-  return allNavigation
-    .filter((item) => isRouteActive(pathname, item))
-    .sort((left, right) => right.to.length - left.to.length)[0]
-}
-
 export function AppShell() {
-  const { state, error } = useAppState()
+  const { state } = useAppState()
   const location = useLocation()
   const { theme, setTheme } = useTheme()
-  const activeExecutions =
-    state?.executions.filter((execution) =>
-      ["queued", "starting", "running", "waiting_approval"].includes(
-        execution.status
-      )
-    ).length ?? 0
+  const [overlayGroup, setOverlayGroup] = React.useState<OverlayGroup | null>(
+    null
+  )
   const pendingApprovals =
     state?.approvals.filter((approval) => approval.status === "pending")
       .length ?? 0
-  const current = currentNavigation(location.pathname)
-  const currentGroup = navigation.find((group) =>
-    group.items.some((item) => item.to === current?.to)
-  )
   const workspaceRoute =
     location.pathname.startsWith("/workspace") ||
     /^\/issues\/[^/]+$/.test(location.pathname)
+  const fullHeightRoute =
+    workspaceRoute ||
+    /^\/tasks\/[^/]+$/.test(location.pathname) ||
+    /^\/tasks\/[^/]+\/(issues|board)$/.test(location.pathname)
 
   return (
     <SidebarProvider
@@ -176,7 +127,7 @@ export function AppShell() {
         </SidebarHeader>
 
         <SidebarContent aria-label="主导航">
-          {navigation.map((group) => (
+          {workNavigation.map((group) => (
             <SidebarGroup key={group.label}>
               <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
               <SidebarGroupContent>
@@ -202,6 +153,7 @@ export function AppShell() {
                     )
                   })}
                 </SidebarMenu>
+                {group.label === "工作" ? <SidebarTaskGroup /> : null}
               </SidebarGroupContent>
             </SidebarGroup>
           ))}
@@ -209,18 +161,50 @@ export function AppShell() {
 
         <SidebarFooter className="border-t border-sidebar-border">
           <SidebarMenu>
-            {footerNavigation.map((item) => (
-              <SidebarMenuItem key={item.to}>
-                <SidebarMenuButton
-                  isActive={isRouteActive(location.pathname, item)}
-                  tooltip={item.label}
-                  render={<NavLink to={item.to} />}
+            <SidebarMenuItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<SidebarMenuButton tooltip="设置" />}
+                  openOnHover
+                  closeDelay={150}
                 >
-                  <item.icon />
-                  <span>{item.label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
+                  <Settings />
+                  <span>设置</span>
+                  <ChevronsUp className="ml-auto" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="top"
+                  align="start"
+                  className="w-64"
+                >
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem
+                      onClick={() => setOverlayGroup("agents")}
+                    >
+                      <Bot data-icon="inline-start" />
+                      Agent 与能力
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setOverlayGroup("runtime")}
+                    >
+                      <ShieldAlert data-icon="inline-start" />
+                      运行与安全
+                      {pendingApprovals > 0 ? (
+                        <span className="ml-auto rounded-md bg-muted px-1.5 text-xs tabular-nums">
+                          {pendingApprovals}
+                        </span>
+                      ) : null}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setOverlayGroup("system")}
+                    >
+                      <Settings data-icon="inline-start" />
+                      系统设置
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip={theme === "dark" ? "切换到浅色" : "切换到深色"}
@@ -239,86 +223,21 @@ export function AppShell() {
         <SidebarRail />
       </Sidebar>
 
-      <SidebarInset className="h-svh min-h-0 overflow-hidden">
-        <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur-sm sm:gap-3 lg:px-5">
-          <SidebarTrigger className="size-10 md:size-7" />
-          <Separator orientation="vertical" className="h-4" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs text-muted-foreground">
-              {currentGroup?.label ?? "Aegis"}
-            </p>
-            <p className="truncate text-sm font-medium">
-              {current?.label ?? "工作区"}
-            </p>
-          </div>
-          {error ? (
-            <p
-              role="status"
-              aria-live="polite"
-              className="hidden max-w-60 truncate text-xs text-destructive lg:block"
-            >
-              {error}
-            </p>
-          ) : null}
-          {activeExecutions > 0 ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="hidden sm:inline-flex"
-              render={<Link to="/sessions" />}
-              nativeButton={false}
-            >
-              <Activity data-icon="inline-start" />
-              运行 {activeExecutions}
-            </Button>
-          ) : null}
-          {pendingApprovals > 0 ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              render={<Link to="/approvals" />}
-              nativeButton={false}
-            >
-              <ClipboardCheck data-icon="inline-start" />
-              <span className="hidden sm:inline">待审批</span>
-              <span className="tabular-nums">{pendingApprovals}</span>
-            </Button>
-          ) : null}
-          <Button
-            size="sm"
-            className="min-h-10 min-w-11 px-3 md:min-h-0 md:min-w-0"
-            aria-label="发布任务"
-            render={<Link to="/tasks/new" />}
-            nativeButton={false}
-          >
-            <Plus data-icon="inline-start" />
-            <span className="hidden sm:inline">发布任务</span>
-          </Button>
-        </header>
-
-        <div
-          id="main-content"
-          tabIndex={-1}
-          data-slot="app-content-scroller"
-          className={cn(
-            "min-h-0 w-full flex-1 scroll-mt-14 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-            workspaceRoute
-              ? "overflow-hidden"
-              : "overflow-y-auto overscroll-y-contain"
-          )}
-        >
-          <div
-            data-slot="app-content"
-            className={cn(
-              workspaceRoute
-                ? "flex size-full min-h-0"
-                : "mx-auto w-full max-w-[1600px] px-4 py-5 lg:px-6 lg:py-6"
-            )}
-          >
+      <SidebarInset className="flex h-svh min-h-0 flex-col p-1.5 sm:p-2">
+        <SidebarTrigger className="fixed right-4 bottom-4 z-40 size-11 rounded-full shadow-lg ring-1 ring-foreground/10 md:hidden" />
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-card shadow-sm ring-1 ring-foreground/5">
+          <ContentArea fullHeight={fullHeightRoute}>
             <Outlet />
-          </div>
+          </ContentArea>
         </div>
       </SidebarInset>
+      <SettingsOverlay
+        group={overlayGroup ?? "agents"}
+        open={overlayGroup !== null}
+        onOpenChange={(open) => {
+          if (!open) setOverlayGroup(null)
+        }}
+      />
     </SidebarProvider>
   )
 }

@@ -71,7 +71,7 @@ export function DashboardPage() {
 
       <section
         aria-label="运行摘要"
-        className="grid gap-px overflow-hidden rounded-lg bg-border ring-1 ring-foreground/10 sm:grid-cols-2 xl:grid-cols-4"
+        className="grid divide-y divide-border/70 sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4"
       >
         <MetricLink
           icon={ListTodo}
@@ -269,24 +269,24 @@ function MetricLink({
   return (
     <Link
       to={to}
-      className="group relative flex min-h-20 items-center gap-3 bg-card px-4 py-3 transition-colors duration-150 hover:bg-muted focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
+      className="group relative flex min-h-16 items-center gap-3 px-3 py-2.5 transition-colors duration-150 hover:bg-muted/50 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
     >
       <Icon
         className={
-          urgent ? "size-4 text-warning" : "size-4 text-muted-foreground"
+          urgent ? "size-3.5 text-warning" : "size-3.5 text-muted-foreground"
         }
       />
       <span className="min-w-0 flex-1">
-        <span className="block text-xs text-muted-foreground">{label}</span>
-        <span className="mt-0.5 block text-xs text-muted-foreground/80">
+        <span className="block text-[11px] text-muted-foreground">{label}</span>
+        <span className="mt-0.5 block text-[11px] text-muted-foreground/80">
           {detail}
         </span>
       </span>
       <span
         className={
           urgent
-            ? "text-2xl font-semibold text-warning tabular-nums"
-            : "text-2xl font-semibold tabular-nums"
+            ? "text-xl font-semibold text-warning tabular-nums"
+            : "text-xl font-semibold tabular-nums"
         }
       >
         {value}

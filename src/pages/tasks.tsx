@@ -1,31 +1,16 @@
-import * as React from "react"
 import {
-  CircleStop,
-  Copy,
-  FileSearch,
   ListTodo,
-  MoreHorizontal,
   Plus,
   Search,
-  MessageSquareWarning,
 } from "lucide-react"
-import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
-import { CancelTaskDialog } from "@/components/cancel-task-dialog"
-import { ManualRejectValidationDialog } from "@/components/manual-reject-validation-dialog"
-import { TaskAuditDrawer } from "@/components/task-audit-drawer"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
+import { TaskRowMenu } from "@/components/task-row-menu"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Empty,
   EmptyDescription,
@@ -44,17 +29,8 @@ import type { Issue, IssueRuntimeView, Task } from "@/types"
 type TaskFilter = "all" | "active" | "review" | "done" | "attention"
 
 export function TasksPage() {
-  const { state, refresh } = useAppState()
-  const navigate = useNavigate()
+  const { state } = useAppState()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [cancelTarget, setCancelTarget] = React.useState<{
-    root: Issue
-    title: string
-    totalIssues: number
-    activeExecutions: number
-  } | null>(null)
-  const [auditTarget, setAuditTarget] = React.useState<Task | null>(null)
-  const [rejectValidationTarget, setRejectValidationTarget] = React.useState<{ issueId: string; title: string } | null>(null)
   const query = searchParams.get("q") ?? ""
   const filterParam = searchParams.get("status")
   const filter: TaskFilter = isTaskFilter(filterParam) ? filterParam : "all"
@@ -101,33 +77,6 @@ export function TasksPage() {
     .sort((left, right) =>
       right.task.updatedAt.localeCompare(left.task.updatedAt)
     )
-
-  const cloneTask = (task: Task) => {
-    navigate("/tasks/new", {
-      state: {
-        clone: {
-          projectId: task.projectId,
-          title: task.title,
-          description: task.description,
-          objective: task.objective,
-          priority: task.priority,
-          workMode: task.workMode,
-          assigneeAgentId: task.assigneeAgentId,
-          containerProfileId: state?.containerProfiles.some(
-            (profile) =>
-              profile.id === task.containerProfileId && profile.enabled
-          )
-            ? task.containerProfileId
-            : undefined,
-          context: task.context,
-          constraints: task.constraints,
-          timeBudgetMinutes: task.timeBudgetMinutes,
-          humanValidationFallback: task.humanValidationFallback,
-        },
-      },
-    })
-  }
-
 
   return (
     <div className="flex w-full flex-col gap-5">
@@ -281,102 +230,13 @@ export function TasksPage() {
                     value={formatTime(row.task.updatedAt)}
                   />
 
-                  <div className="absolute top-3 right-3 xl:static">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`任务操作：${row.task.title}`}
-                          />
-                        }
-                      >
-                        <MoreHorizontal />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-40">
-                        <DropdownMenuGroup>
-                          <DropdownMenuItem onClick={() => setAuditTarget(row.task)}>
-                            <FileSearch />
-                            分析任务
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => cloneTask(row.task)}>
-                            <Copy />
-                            复制为新任务
-                          </DropdownMenuItem>
-                          {row.latest && !isTerminalRuntime(row.runtime!) ? (
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onClick={() =>
-                                setCancelTarget({
-                                  root: row.latest!,
-                                  title: row.task.title,
-                                  totalIssues: row.issueCount,
-                                  activeExecutions: row.active,
-                                })
-                              }
-                            >
-                              <CircleStop />
-                              取消任务
-                            </DropdownMenuItem>
-                          ) : null}
-                          {row.latest && (row.latest.status === "done" || row.latest.status === "in_review") ? (
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onClick={() =>
-                                setRejectValidationTarget({
-                                  issueId: row.latest!.id,
-                                  title: row.task.title,
-                                })
-                              }
-                            >
-                              <MessageSquareWarning />
-                              改判验收不通过
-                            </DropdownMenuItem>
-                          ) : null}
-                        </DropdownMenuGroup>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                  <TaskRowMenu task={row.task} />
                 </div>
               ))}
             </div>
           )}
         </CardContent>
       </Card>
-      {cancelTarget ? (
-        <CancelTaskDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setCancelTarget(null)
-          }}
-          rootIssueId={cancelTarget.root.id}
-          taskTitle={cancelTarget.title}
-          totalIssues={cancelTarget.totalIssues}
-          activeExecutions={cancelTarget.activeExecutions}
-          onCancelled={() => refresh()}
-        />
-      ) : null}
-      {auditTarget ? (
-        <TaskAuditDrawer
-          open
-          onOpenChange={(open) => {
-            if (!open) setAuditTarget(null)
-          }}
-          taskId={auditTarget.id}
-          taskTitle={auditTarget.title}
-        />
-      ) : null}
-      {rejectValidationTarget ? (
-        <ManualRejectValidationDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setRejectValidationTarget(null)
-          }}
-          issueId={rejectValidationTarget.issueId}
-          onRejected={() => refresh()}
-        />
-      ) : null}
     </div>
   )
 }
@@ -431,10 +291,6 @@ function taskRow(
     cost,
     issueCount: issueIDs.size,
   }
-}
-
-function isTerminalRuntime(runtime: IssueRuntimeView) {
-  return ["completed", "failed", "cancelled"].includes(runtime.kind)
 }
 
 function isTaskFilter(value: string | null): value is TaskFilter {

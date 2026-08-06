@@ -2,7 +2,6 @@ import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
-  ArrowLeft,
   Bot,
   CircleCheckBig,
   ChevronDown,
@@ -41,7 +40,6 @@ import {
 } from "@/components/ui/collapsible"
 import {
   Empty,
-  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
@@ -240,16 +238,6 @@ export function SessionDetailPage() {
           <EmptyTitle>无法打开 Session</EmptyTitle>
           <EmptyDescription>{error}</EmptyDescription>
         </EmptyHeader>
-        <EmptyContent>
-          <Button
-            variant="outline"
-            render={<Link to="/sessions" />}
-            nativeButton={false}
-          >
-            <ArrowLeft data-icon="inline-start" />
-            返回 Sessions
-          </Button>
-        </EmptyContent>
       </Empty>
     )
   }
@@ -274,14 +262,6 @@ export function SessionDetailPage() {
         description={execution.sessionId}
         actions={
           <>
-            <Button
-              variant="ghost"
-              render={<Link to="/sessions" />}
-              nativeButton={false}
-            >
-              <ArrowLeft data-icon="inline-start" />
-              返回
-            </Button>
             <Button
               variant="outline"
               render={<Link to={`/issues/${execution.issueId}`} />}

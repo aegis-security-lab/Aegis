@@ -1,14 +1,13 @@
 import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
 import {
-  ArrowLeft,
   FilePlus2,
   FileText,
   Pencil,
   Trash2,
   Upload,
 } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { KnowledgeBaseDialog } from "@/components/knowledge-base-dialog"
@@ -189,15 +188,7 @@ export function KnowledgeBaseDetailPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button
-          variant="ghost"
-          render={<Link to="/knowledge-bases" />}
-          nativeButton={false}
-        >
-          <ArrowLeft data-icon="inline-start" />
-          返回知识库
-        </Button>
+      <div className="flex flex-wrap items-center justify-start gap-3">
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => setEditingBase(true)}>
             <Pencil data-icon="inline-start" />
