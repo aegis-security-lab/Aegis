@@ -39,13 +39,18 @@ export function SearchInput({
     <div ref={containerRef} className={cn("flex items-center", className)}>
       <div
         className={cn(
-          "relative overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]",
+          "relative transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]",
           open
             ? "mr-2 w-40 opacity-100 sm:w-60"
             : "mr-0 w-0 opacity-0"
         )}
       >
-        <Search className="pointer-events-none absolute top-1/2 left-3.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Search
+          className={cn(
+            "pointer-events-none absolute top-1/2 left-3.5 size-3.5 -translate-y-1/2 text-muted-foreground transition-opacity duration-300",
+            open ? "opacity-100" : "opacity-0"
+          )}
+        />
         <Input
           ref={inputRef}
           value={value}
@@ -64,7 +69,7 @@ export function SearchInput({
           tabIndex={open ? 0 : -1}
           aria-label={ariaLabel}
           placeholder={placeholder}
-          className="h-9 rounded-full border-border bg-background/70 pl-9 pr-4 shadow-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="h-9 rounded-full border-border bg-background/70 pl-9 pr-4 shadow-sm focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-input/30"
         />
       </div>
       <Button
@@ -76,7 +81,7 @@ export function SearchInput({
         className={cn(
           "size-9 shrink-0 rounded-full shadow-sm transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]",
           open
-            ? "border-primary/60 bg-primary/5 text-primary ring-2 ring-primary/15"
+            ? "border-primary/50 bg-primary/5 text-primary ring-2 ring-primary/10"
             : "hover:border-ring/40 hover:shadow-md active:scale-95"
         )}
         onClick={() => {
