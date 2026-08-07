@@ -81,7 +81,6 @@ export function TasksPage() {
       <PageHeader
         eyebrow="Work"
         title="任务"
-        description="按状态定位目标，进入任务后查看计划树、执行记录和交付文件。"
       />
 
       <Card className="min-w-0">

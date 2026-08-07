@@ -169,7 +169,6 @@ export function FindingsPage() {
   const pageParam = parseInt(searchParams.get("page") || "1", 10)
 
   const [data, setData] = React.useState<Finding[] | null>(null)
-  const [total, setTotal] = React.useState(0)
   const [totalPages, setTotalPages] = React.useState(0)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -187,7 +186,6 @@ export function FindingsPage() {
         pageSize: 50,
       })
       setData(result.findings)
-      setTotal(result.total)
       setTotalPages(Math.ceil(result.total / result.pageSize))
     } catch (e) {
       setError(e instanceof Error ? e.message : "获取安全发现失败")
@@ -249,7 +247,6 @@ export function FindingsPage() {
         <PageHeader
           eyebrow="Security"
           title="安全发现"
-          description="查看和筛选所有安全发现，管理处置状态。"
         />
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -267,7 +264,6 @@ export function FindingsPage() {
         <PageHeader
           eyebrow="Security"
           title="安全发现"
-          description="查看和筛选所有安全发现，管理处置状态。"
         />
         <Card>
           <CardContent className="py-16">
@@ -297,7 +293,6 @@ export function FindingsPage() {
         <PageHeader
           eyebrow="Security"
           title="安全发现"
-          description="查看和筛选所有安全发现，管理处置状态。"
         />
         <div className="flex flex-wrap items-center gap-3">
           <FilterSelect
@@ -360,7 +355,6 @@ export function FindingsPage() {
       <PageHeader
         eyebrow="Security"
         title="安全发现"
-        description={`共 ${total} 项发现 · 按类别和严重级别筛选`}
         actions={
           <Button variant="outline" size="sm" onClick={() => void load()}>
             <RefreshCw data-icon="inline-start" />

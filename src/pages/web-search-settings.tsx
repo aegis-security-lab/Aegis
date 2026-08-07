@@ -64,7 +64,6 @@ export function WebSearchSettingsPage() {
     <div className="flex min-h-full flex-col gap-5">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight">搜索服务</h2>
-        <p className="mt-1 text-sm text-muted-foreground">配置所有 Agent 共用的公开 Web 搜索能力，并在保存前测试返回结果。</p>
       </div>
       <div className="grid min-h-[620px] flex-1 gap-5 xl:grid-cols-[180px_minmax(320px,0.9fr)_minmax(360px,1.1fr)]">
         <Card>

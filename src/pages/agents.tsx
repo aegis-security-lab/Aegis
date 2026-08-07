@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -120,7 +119,6 @@ export function AgentsPage() {
       <PageHeader
         eyebrow="Agent type registry"
         title="Agent 类型"
-        description="这里定义可复用的角色能力。它不是员工名册：任务发布后，系统才为每个 Issue 创建独立的临时身份、会话和手机。"
         actions={
           <Button onClick={() => setEditing("new")}>
             <Plus data-icon="inline-start" />
@@ -138,9 +136,6 @@ export function AgentsPage() {
       <Card className="overflow-hidden">
         <CardHeader className="border-b bg-muted/25">
           <CardTitle>运行模型</CardTitle>
-          <CardDescription>
-            Agent 类型决定“会做什么”；任务成员实例决定“这次是谁、在哪个 Issue、使用哪部手机”。同一类型可以在一个任务中并行创建多个实例。
-          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="hidden grid-cols-[minmax(12rem,1.2fr)_minmax(14rem,2fr)_8rem_8rem_6rem] gap-4 border-b px-5 py-2 text-xs font-medium text-muted-foreground lg:grid">

@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -38,16 +37,11 @@ export function SessionsPage() {
       <PageHeader
         eyebrow="Runtime observability"
         title="Sessions"
-        description="查看每次 AgentCore Execution 的完整对话、工具事件和运行信息。"
       />
       <Card>
         <CardHeader className="gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <CardTitle>AgentCore 会话</CardTitle>
-            <CardDescription>
-              每个 Issue 中的每个 Agent 对应一个当前 AgentCore
-              Session，多次执行会继续同一段对话。
-            </CardDescription>
           </div>
           <SearchInput
             value={query}

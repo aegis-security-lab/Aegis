@@ -54,7 +54,6 @@ export function DashboardPage() {
       <PageHeader
         eyebrow="Control plane"
         title="运行概览"
-        description="先处理需要人工介入的事项，再查看任务与执行进度。"
         actions={
           pending.length ? (
             <Button

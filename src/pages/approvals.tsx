@@ -67,7 +67,6 @@ export function ApprovalsPage() {
       <PageHeader
         eyebrow="Human in the loop"
         title="审批中心"
-        description="统一处理工具调用和 Issue 返工审批；不同类型可独立配置全局策略，并由 Agent 覆盖。"
       />
       {pending.length === 0 ? (
         <Card>

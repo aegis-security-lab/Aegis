@@ -29,7 +29,6 @@ import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -141,7 +140,6 @@ export function SkillsPage() {
       <PageHeader
         eyebrow="Capability library"
         title="Skills"
-        description="管理 SKILL.md 能力与知识包。可创建、编辑、导入、导出或从本地目录安装。"
         actions={
           <>
             <input
@@ -188,10 +186,6 @@ export function SkillsPage() {
       <Card>
         <CardHeader>
           <CardTitle>能力目录</CardTitle>
-          <CardDescription>
-            导出包包含 SKILL.md 与 Aegis
-            元数据；安装来源当前支持本地文件或目录。
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {skills.length === 0 ? (

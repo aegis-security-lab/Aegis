@@ -366,7 +366,6 @@ export function ContainersPage() {
       <PageHeader
         eyebrow="Execution runtime"
         title="容器管理"
-        description={`环境配置只保存创建模板；任务开始前才创建并绑定独立容器。当前有 ${profiles.length} 个配置、${containers.length} 个任务容器。`}
         actions={
           <>
             <Button
@@ -544,9 +543,6 @@ export function ContainersPage() {
             <Card className="overflow-visible">
               <CardHeader>
                 <CardTitle>全部任务容器</CardTitle>
-                <CardDescription>
-                  停止容器会保留任务数据；再次执行任务时会自动启动。删除容器会同时删除绑定的任务和 Issues。
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="sticky top-2 z-20 mb-3 flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/85">

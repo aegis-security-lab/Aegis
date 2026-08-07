@@ -17,7 +17,6 @@ import { Badge } from "@/components/ui/badge"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -179,9 +178,6 @@ export function TaskDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>原始任务参数</CardTitle>
-          <CardDescription>
-            发布任务时保存的参数；重新执行会从这份定义创建新的根 Issue。
-          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2">
           <TaskParameter label="标题" value={parameters.title} />
@@ -256,10 +252,6 @@ export function TaskDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>执行记录</CardTitle>
-          <CardDescription>
-            每次执行都会创建独立的根 Issue；进入记录可查看该次执行的 Issue
-            协作过程。
-          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           {runs.map((run, index) => (
@@ -295,9 +287,6 @@ export function TaskDetailPage() {
         <Card>
           <CardHeader>
             <CardTitle>输入附件</CardTitle>
-            <CardDescription>
-              创建任务时上传的原始输入；所有任务 Agent 会在隔离工作区中读取同一份文件。
-            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {detail.inputAttachments.map((attachment) => (
@@ -382,10 +371,6 @@ function TaskPhoneBelt({
               <Smartphone className="size-4" />
               任务小队设备
             </CardTitle>
-            <CardDescription className="mt-1">
-              每个任务成员实例拥有独立会话与独立手机；页面栈、草稿、Relay
-              收件箱和操作审计写入 SQLite，并由 taskAgentId 隔离。
-            </CardDescription>
           </div>
           <Badge variant="outline" className="gap-1.5 tabular-nums">
             <span className="size-1.5 rounded-full bg-success" />

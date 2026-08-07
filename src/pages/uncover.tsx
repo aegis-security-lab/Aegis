@@ -219,9 +219,6 @@ export function UncoverPage() {
                 <Radar className="size-5" />
               </div>
               <CardTitle className="mt-3">网络空间检索</CardTitle>
-              <CardDescription>
-                选择一个引擎，查询会以该引擎的原生语法原样交给 uncover。
-              </CardDescription>
               <CardAction>
                 <Badge variant="outline">uncover v1.2.1</Badge>
               </CardAction>

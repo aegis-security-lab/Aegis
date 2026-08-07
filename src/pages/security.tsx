@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -242,7 +242,7 @@ export function SecurityPage() {
   if (loading) {
     return (
       <div className="flex flex-col gap-7">
-        <PageHeader eyebrow="Security" title="安全态势" description="安全发现概览与威胁模型入口。" />
+        <PageHeader eyebrow="Security" title="安全态势" />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>
@@ -285,7 +285,7 @@ export function SecurityPage() {
   if (error) {
     return (
       <div className="flex flex-col gap-7">
-        <PageHeader eyebrow="Security" title="安全态势" description="安全发现概览与威胁模型入口。" />
+        <PageHeader eyebrow="Security" title="安全态势" />
         <Card>
           <CardContent className="py-16">
             <Empty>
@@ -311,7 +311,7 @@ export function SecurityPage() {
   if (findings.length === 0) {
     return (
       <div className="flex flex-col gap-7">
-        <PageHeader eyebrow="Security" title="安全态势" description="安全发现概览与威胁模型入口。" />
+        <PageHeader eyebrow="Security" title="安全态势" />
         <Card>
           <CardContent className="py-16">
             <Empty>
@@ -335,7 +335,6 @@ export function SecurityPage() {
       <PageHeader
         eyebrow="Security"
         title="安全态势"
-        description="安全发现概览与威胁模型入口。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void load()}>
             <RefreshCw data-icon="inline-start" />
@@ -371,7 +370,6 @@ export function SecurityPage() {
         <Card>
           <CardHeader>
             <CardTitle>严重级别分布</CardTitle>
-            <CardDescription>按严重程度统计发现数量</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
             <DonutChart
@@ -403,7 +401,6 @@ export function SecurityPage() {
         <Card>
           <CardHeader>
             <CardTitle>按类别统计</CardTitle>
-            <CardDescription>各类别的发现数量及最高严重级别</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
@@ -438,7 +435,6 @@ export function SecurityPage() {
         <Card>
           <CardHeader>
             <CardTitle>最新发现</CardTitle>
-            <CardDescription>最近 6 条安全发现</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 p-0">
             {latest.map((f) => (
@@ -493,7 +489,6 @@ export function SecurityPage() {
           <Card>
             <CardHeader>
               <CardTitle>威胁模型</CardTitle>
-              <CardDescription>快速入口</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
               {threatModelLinks.map((link) => (

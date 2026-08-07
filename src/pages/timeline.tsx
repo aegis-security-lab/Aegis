@@ -48,7 +48,6 @@ export function TimelinePage() {
       <PageHeader
         eyebrow="Work"
         title="时间线"
-        description="跨任务查看 Issue、执行、验收与审批的关键事件。"
       />
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="w-72 shrink-0">

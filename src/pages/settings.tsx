@@ -132,7 +132,6 @@ export function SettingsPage({
       <PageHeader
         eyebrow="System"
         title="设置"
-        description="配置 AgentCore、Provider、默认工作区与全局安全策略。"
         actions={
           <Button type="submit" disabled={busy !== null}>
             {busy === "save" ? <Spinner /> : <Save />}保存设置

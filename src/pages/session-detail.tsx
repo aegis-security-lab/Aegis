@@ -259,7 +259,6 @@ export function SessionDetailPage() {
       <PageHeader
         eyebrow={`${detail.session.issueIdentifier} · Session detail`}
         title={detail.session.agentName}
-        description={execution.sessionId}
         actions={
           <>
             <Button
@@ -319,9 +318,6 @@ export function SessionDetailPage() {
                   {detail.session.issueTitle}
                 </span>
               </CardTitle>
-              <CardDescription>
-                这里展示该 AgentCore Session 中实际持久化的用户与 AI 消息。
-              </CardDescription>
             </CardHeader>
             <CardContent className="min-h-0 flex-1 p-0">
               <SessionConversation
@@ -488,9 +484,6 @@ function WorkProgressPanel({
           <ListChecks className="size-4" />
           工作进度
         </CardTitle>
-        <CardDescription>
-          Agent 完成阶段性工作后主动记录；最后一项表示它当前正在进行的工作。
-        </CardDescription>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 p-0">
         {updates.length === 0 ? (
@@ -597,9 +590,6 @@ function ToolSnapshotPanel({ tools }: { tools: ToolSnapshot[] }) {
           <Wrench className="size-4" />
           工具快照
         </CardTitle>
-        <CardDescription>
-          Session 创建时实际启用的工具定义；后续修改 Agent 不会影响这里。
-        </CardDescription>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 p-0">
         {tools.length === 0 ? (

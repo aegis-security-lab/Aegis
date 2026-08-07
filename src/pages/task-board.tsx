@@ -15,7 +15,6 @@ export function TaskBoardPage() {
       <PageHeader
         eyebrow="Board"
         title="Board"
-        description="以看板方式查看该任务下的 Issue 流转。"
       />
       <div className="flex min-h-64 items-center justify-center rounded-xl border bg-muted/20">
         <Empty>

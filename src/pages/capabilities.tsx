@@ -126,7 +126,6 @@ export function CapabilitiesPage() {
       <PageHeader
         eyebrow="Capability control plane"
         title="能力控制台"
-        description="管理系统能力、Agent 类型默认分配，以及任务实例运行时的最终授权。"
         actions={
           <Button variant="outline" render={<Link to="/skills" />} nativeButton={false}>
             <Sparkles data-icon="inline-start" />
@@ -175,9 +174,6 @@ export function CapabilitiesPage() {
           <Card>
             <CardHeader>
               <CardTitle>Agent 类型默认分配</CardTitle>
-              <CardDescription>
-                这是进入任务前的基线。Task policy 可以进一步收窄，但不能绕过 Runtime Registry。
-              </CardDescription>
             </CardHeader>
             <CardContent className="divide-y p-0">
               {agents.map((agent) => (
@@ -314,7 +310,6 @@ function PolicyModel() {
       <Card>
         <CardHeader>
           <CardTitle>任务级授权</CardTitle>
-          <CardDescription>策略绑定在任务根节点，整棵 Issue 树共享同一条安全边界。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {rules.map(([name, description, note]) => (
@@ -329,7 +324,6 @@ function PolicyModel() {
       <Card>
         <CardHeader>
           <CardTitle>强制约束</CardTitle>
-          <CardDescription>最终结果始终由后端计算，前端不能自行放行。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           <PolicyLine label="Allowed" value="能力白名单；为空时不代表全部允许" />
