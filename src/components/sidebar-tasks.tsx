@@ -49,7 +49,7 @@ export function SidebarTaskGroup() {
   )
 
   return (
-    <div className="mt-4 border-t pt-2 group-data-[collapsible=icon]:hidden">
+    <div className="mt-2 pt-2 group-data-[collapsible=icon]:hidden">
       <div className="flex items-center justify-between px-2 pb-1">
         <p className="px-1 text-xs font-medium text-sidebar-foreground/70">
           任务

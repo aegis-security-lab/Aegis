@@ -32,7 +32,7 @@ export function TabBar({
     <div
       role="tablist"
       aria-label="页面标签"
-      className="flex h-11 shrink-0 items-center gap-1.5 overflow-x-auto px-1.5 pb-1.5 sm:px-2"
+      className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto px-1.5 sm:px-2"
     >
       {tabs.map((tab) => {
         const active = tab.id === activeId
@@ -62,10 +62,10 @@ export function TabBar({
             }}
             onClick={() => onActivate(tab.id)}
             className={cn(
-              "group flex h-8 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-2xl px-3 text-sm select-none",
+              "group flex h-7 w-40 shrink-0 cursor-pointer items-center gap-1.5 rounded-2xl px-3 text-sm select-none",
               active
                 ? "bg-card text-foreground shadow-sm ring-1 ring-foreground/5"
-                : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+                : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground",
               isDropTarget && "ring-2 ring-primary/50"
             )}
           >
@@ -91,7 +91,7 @@ export function TabBar({
         type="button"
         aria-label="新建标签页"
         onClick={onAdd}
-        className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-2xl text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+        className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-2xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <Plus className="size-4" />
       </button>
