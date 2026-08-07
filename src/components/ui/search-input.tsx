@@ -40,9 +40,7 @@ export function SearchInput({
       <div
         className={cn(
           "relative transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]",
-          open
-            ? "mr-2 w-36 opacity-100 sm:w-56"
-            : "mr-0 w-0 opacity-0"
+          open ? "mr-2" : "mr-0"
         )}
       >
         <Search
@@ -67,9 +65,15 @@ export function SearchInput({
             closeSearch(false)
           }}
           tabIndex={open ? 0 : -1}
+          aria-hidden={!open}
           aria-label={ariaLabel}
           placeholder={placeholder}
-          className="h-6 rounded-full border-border bg-background/70 pl-7 pr-3 text-[13px] shadow-sm focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-input/30"
+          className={cn(
+            "h-6 rounded-full border-border bg-background/70 pl-7 pr-3 text-[13px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-input/30",
+            open
+              ? "pointer-events-auto w-36 opacity-100 sm:w-56"
+              : "pointer-events-none w-0 opacity-0"
+          )}
         />
       </div>
       <Button
