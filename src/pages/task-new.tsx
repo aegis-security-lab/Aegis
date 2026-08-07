@@ -184,6 +184,37 @@ export function TaskNewPage() {
                   ariaLabel="任务说明"
                   attachments={attachments}
                 />
+                <div className="flex items-center justify-end gap-2 pt-1.5">
+                  <span className="text-xs text-muted-foreground">
+                    负责 Agent
+                  </span>
+                  <Select
+                    items={agentItems}
+                    value={selectedAgentId}
+                    onValueChange={(value) =>
+                      update("assigneeAgentId", value || undefined)
+                    }
+                  >
+                    <SelectTrigger
+                      id="task-agent"
+                      size="sm"
+                      className="w-44"
+                      aria-invalid={enabledAgentTypes.length === 0 || undefined}
+                    >
+                      <SelectValue placeholder="选择 Agent 类型" />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {enabledAgentTypes.map((agent) => (
+                          <SelectItem key={agent.id} value={agent.id}>
+                            {agent.name} ·{" "}
+                            {categoryLabels[agent.category] ?? agent.category}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
               </Field>
               <Field>
                 <FieldLabel htmlFor="title">
@@ -254,58 +285,6 @@ export function TaskNewPage() {
         <div className="flex flex-col gap-5 xl:sticky xl:top-20">
           <Card>
             <CardHeader>
-              <CardTitle>根 Agent</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <Field
-                  data-invalid={enabledAgentTypes.length === 0 || undefined}
-                >
-                  <FieldLabel htmlFor="task-agent">根 Agent 类型</FieldLabel>
-                  <Select
-                    items={agentItems}
-                    value={selectedAgentId}
-                    onValueChange={(value) =>
-                      update("assigneeAgentId", value || undefined)
-                    }
-                  >
-                    <SelectTrigger
-                      id="task-agent"
-                      className="w-full"
-                      aria-invalid={enabledAgentTypes.length === 0 || undefined}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      {enabledAgentTypes.map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>
-                          {agent.name} ·{" "}
-                          {categoryLabels[agent.category] ?? agent.category}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="task-human-validation"
-                    checked={form.humanValidationFallback ?? false}
-                    onCheckedChange={(checked) =>
-                      update("humanValidationFallback", checked === true)
-                    }
-                  />
-                  <FieldContent>
-                    <FieldLabel htmlFor="task-human-validation">
-                      启用人工兜底验收
-                    </FieldLabel>
-                  </FieldContent>
-                </Field>
-              </FieldGroup>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
               <CardTitle>执行与协作</CardTitle>
             </CardHeader>
             <CardContent>
@@ -354,6 +333,20 @@ export function TaskNewPage() {
                     }}
                     placeholder="留空表示不限制"
                   />
+                </Field>
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="task-human-validation"
+                    checked={form.humanValidationFallback ?? false}
+                    onCheckedChange={(checked) =>
+                      update("humanValidationFallback", checked === true)
+                    }
+                  />
+                  <FieldContent>
+                    <FieldLabel htmlFor="task-human-validation">
+                      启用人工兜底验收
+                    </FieldLabel>
+                  </FieldContent>
                 </Field>
               </FieldGroup>
             </CardContent>
