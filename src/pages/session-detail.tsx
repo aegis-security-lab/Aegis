@@ -263,6 +263,7 @@ export function SessionDetailPage() {
           <>
             <Button
               variant="outline"
+              size="sm"
               render={<Link to={`/issues/${execution.issueId}`} />}
               nativeButton={false}
             >

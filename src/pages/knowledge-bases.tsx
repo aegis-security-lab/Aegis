@@ -102,7 +102,7 @@ export function KnowledgeBasesPage() {
             ariaLabel="搜索知识库"
             placeholder="搜索名称或介绍"
           />
-          <Button onClick={() => setEditing("new")}>
+          <Button size="sm" onClick={() => setEditing("new")}>
             <Plus data-icon="inline-start" />
             创建知识库
           </Button>

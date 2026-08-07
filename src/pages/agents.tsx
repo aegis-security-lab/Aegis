@@ -120,7 +120,7 @@ export function AgentsPage() {
         eyebrow="Agent type registry"
         title="Agent 类型"
         actions={
-          <Button onClick={() => setEditing("new")}>
+          <Button size="sm" onClick={() => setEditing("new")}>
             <Plus data-icon="inline-start" />
             新建 Agent 类型
           </Button>

@@ -127,7 +127,7 @@ export function CapabilitiesPage() {
         eyebrow="Capability control plane"
         title="能力控制台"
         actions={
-          <Button variant="outline" render={<Link to="/skills" />} nativeButton={false}>
+          <Button variant="outline" size="sm" render={<Link to="/skills" />} nativeButton={false}>
             <Sparkles data-icon="inline-start" />
             管理 Skills
           </Button>

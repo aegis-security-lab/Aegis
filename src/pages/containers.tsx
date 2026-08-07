@@ -370,6 +370,7 @@ export function ContainersPage() {
           <>
             <Button
               variant="outline"
+              size="sm"
               disabled={busyAction !== null}
               onClick={() => void checkDocker()}
             >
@@ -382,6 +383,7 @@ export function ContainersPage() {
             </Button>
             <Button
               variant="outline"
+              size="sm"
               disabled={busyAction !== null}
               onClick={() => void buildImage()}
             >
@@ -393,6 +395,7 @@ export function ContainersPage() {
               {busyAction === "build" ? "构建中…" : "构建 Worker 镜像"}
             </Button>
             <Button
+              size="sm"
               onClick={() => {
                 setActiveTab("profiles")
                 setEditing("new")

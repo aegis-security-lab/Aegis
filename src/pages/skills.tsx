@@ -151,6 +151,7 @@ export function SkillsPage() {
             />
             <Button
               variant="outline"
+              size="sm"
               disabled={importing}
               onClick={() => fileRef.current?.click()}
             >
@@ -161,11 +162,11 @@ export function SkillsPage() {
               )}
               导入
             </Button>
-            <Button variant="outline" onClick={() => setInstallOpen(true)}>
+            <Button variant="outline" size="sm" onClick={() => setInstallOpen(true)}>
               <FolderDown data-icon="inline-start" />
               安装
             </Button>
-            <Button onClick={() => setEditing("new")}>
+            <Button size="sm" onClick={() => setEditing("new")}>
               <Plus data-icon="inline-start" />
               新增 Skill
             </Button>
