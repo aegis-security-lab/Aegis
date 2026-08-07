@@ -1,20 +1,10 @@
 import * as React from "react"
-import {
-  ExternalLink,
-  MessageSquare,
-  Paperclip,
-  Plus,
-  Send,
-  Sparkles,
-  Trash2,
-} from "lucide-react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import { ConciergeConversationView } from "@/components/concierge-conversation"
-import { InputAttachmentList } from "@/components/input-attachments"
+import { ConciergeChatPanel } from "@/components/concierge-chat-panel"
+import { ConciergeSessionDrawer } from "@/components/concierge-session-drawer"
 import { useInputAttachments } from "@/hooks/use-input-attachments"
-import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,24 +15,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupTextarea,
-} from "@/components/ui/input-group"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
-import { Spinner } from "@/components/ui/spinner"
-import { isSendMessageKey } from "@/lib/keyboard"
 import {
   createConciergeConversation,
   deleteConciergeConversation,
@@ -54,9 +26,7 @@ import {
   uploadConciergeAttachment,
 } from "@/lib/api"
 import { chronological, mergeById } from "@/lib/collections"
-import { formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
-import { cn } from "@/lib/utils"
 import type {
   ConciergeConversation,
   ConciergeConversationDetail,
@@ -79,7 +49,6 @@ export function WorkspaceChatPage() {
   const [deleteTarget, setDeleteTarget] =
     React.useState<ConciergeConversation | null>(null)
   const watermarkRef = React.useRef("")
-  const fileInputRef = React.useRef<HTMLInputElement>(null)
   const attachmentOwnerRef = React.useRef(conversationId ?? "")
 
   const ensureConversation = React.useCallback(async () => {
@@ -290,228 +259,27 @@ export function WorkspaceChatPage() {
     }
   }
 
-  const busy = ["queued", "starting", "running", "waiting_approval"].includes(
-    detail?.execution.status ?? ""
-  )
-
   return (
-    <div className="flex size-full max-h-full min-h-0 overflow-hidden bg-background">
-      <aside
-        className={cn(
-          "min-h-0 w-full shrink-0 flex-col border-r bg-muted/20 md:flex md:w-72",
-          conversationId ? "hidden" : "flex"
-        )}
-      >
-        <div className="flex h-14 shrink-0 items-center justify-between gap-3 px-4">
-          <span className="font-medium">管家会话</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="新建会话"
-            disabled={creating}
-            onClick={() => void newConversation()}
-          >
-            {creating ? <Spinner /> : <Plus />}
-          </Button>
-        </div>
-        <Separator />
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-1 p-2">
-            {loading && conversations.length === 0 ? (
-              <div className="flex justify-center py-10">
-                <Spinner />
-              </div>
-            ) : conversations.length === 0 ? (
-              <Empty className="border-0 py-12">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <MessageSquare />
-                  </EmptyMedia>
-                  <EmptyTitle>还没有会话</EmptyTitle>
-                  <EmptyDescription>
-                    新建会话，直接告诉管家你的需求。
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              conversations.map((conversation) => (
-                <div
-                  key={conversation.id}
-                  className={cn(
-                    "group/conversation flex items-center rounded-lg",
-                    conversation.id === conversationId && "bg-secondary"
-                  )}
-                >
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-auto min-w-0 flex-1 justify-start px-3 py-2.5 text-left hover:bg-transparent"
-                    onClick={() => navigate(`/workspace/${conversation.id}`)}
-                  >
-                    <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
-                      <span className="w-full truncate text-sm font-medium">
-                        {conversation.title}
-                      </span>
-                      <span className="w-full truncate text-xs text-muted-foreground">
-                        {conversation.lastMessage || "开始一段新对话"}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {formatTime(conversation.updatedAt)}
-                      </span>
-                    </span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className="mr-2 shrink-0 opacity-100 focus-visible:opacity-100 md:opacity-0 md:group-hover/conversation:opacity-100"
-                    aria-label={`删除会话 ${conversation.title}`}
-                    onClick={() => setDeleteTarget(conversation)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              ))
-            )}
-          </div>
-        </ScrollArea>
-      </aside>
-
-      <section
-        className={cn(
-          "h-full min-h-0 min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto]",
-          conversationId ? "grid" : "hidden md:grid"
-        )}
-      >
-        <div className="flex h-14 shrink-0 items-center gap-3 border-b px-3 sm:px-4">
-          <span className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Sparkles />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">
-              {detail?.conversation.title ?? "Aegis 管家"}
-            </p>
-            <p className="truncate text-xs text-muted-foreground">
-              {busy ? "正在处理你的消息" : "可以直接回答，也可以创建并调度任务"}
-            </p>
-          </div>
-          {busy ? (
-            <Badge variant="secondary">
-              <Spinner />
-              思考中
-            </Badge>
-          ) : null}
-          {detail?.conversation.createdTaskId ? (
-            <Button
-              variant="outline"
-              size="sm"
-              render={
-                <Link to={`/tasks/${detail.conversation.createdTaskId}`} />
-              }
-              nativeButton={false}
-            >
-              查看任务
-              <ExternalLink data-icon="inline-end" />
-            </Button>
-          ) : null}
-        </div>
-
-        {detail?.messages.length ? (
-          <ConciergeConversationView
-            messages={detail.messages}
-            hasMore={detail.messagesPage.hasMore}
-            loadingMore={loadingMore}
-            onLoadMore={() => void loadMore()}
-          />
-        ) : (
-          <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-            <Empty className="max-w-lg border-0">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Sparkles />
-                </EmptyMedia>
-                <EmptyTitle>有什么需要我处理？</EmptyTitle>
-                <EmptyDescription>
-                  你可以询问产品和任务情况，也可以直接描述要执行的工作。需求明确时，管家会创建真实任务并交给调度器。
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </div>
-        )}
-
-        <div className="shrink-0 border-t bg-background p-3">
-          <form
-            className="mx-auto max-w-4xl"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void send()
-            }}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(event) => {
-                if (event.target.files) attachments.addFiles(event.target.files)
-                event.target.value = ""
-              }}
-            />
-            <InputAttachmentList
-              items={attachments.items}
-              onRemove={(clientId) => void attachments.remove(clientId)}
-              className="mb-2 flex-wrap overflow-visible"
-            />
-            <InputGroup className="min-h-24 items-stretch rounded-lg bg-background">
-              <InputGroupTextarea
-                value={draft}
-                maxLength={50000}
-                aria-label="给管家发送消息"
-                placeholder="告诉管家你的需求…"
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (isSendMessageKey(event)) {
-                    event.preventDefault()
-                    void send()
-                  }
-                }}
-                className="min-h-14 resize-none text-[13px]"
-              />
-              <InputGroupAddon align="block-end" className="justify-between">
-                <InputGroupButton
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="上传附件"
-                  title="上传附件"
-                  disabled={sending || attachments.uploading}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Paperclip />
-                </InputGroupButton>
-                <span className="ml-auto px-1 text-xs font-normal text-muted-foreground">
-                  Enter 发送 · Shift+Enter 换行
-                </span>
-                <InputGroupButton
-                  type="submit"
-                  variant="default"
-                  size="icon-sm"
-                  aria-label="发送消息"
-                  disabled={
-                    sending ||
-                    attachments.uploading ||
-                    attachments.hasErrors ||
-                    (!draft.trim() && attachments.attachmentIds.length === 0)
-                  }
-                >
-                  {sending ? <Spinner /> : <Send />}
-                </InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
-          </form>
-        </div>
-      </section>
+    <div className="relative flex size-full max-h-full min-h-0 overflow-hidden">
+      <ConciergeSessionDrawer
+        conversations={conversations}
+        selectedId={conversationId}
+        loading={loading}
+        creating={creating}
+        onSelect={(id) => navigate(`/workspace/${id}`)}
+        onDelete={setDeleteTarget}
+        onCreate={() => void newConversation()}
+      />
+      <ConciergeChatPanel
+        detail={detail}
+        draft={draft}
+        onDraftChange={setDraft}
+        sending={sending}
+        loadingMore={loadingMore}
+        onLoadMore={() => void loadMore()}
+        onSend={() => void send()}
+        attachments={attachments}
+      />
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
