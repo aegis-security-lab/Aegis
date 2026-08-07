@@ -2,14 +2,21 @@ import * as React from "react"
 import {
   Bot,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
   ClipboardCheck,
+  LoaderCircle,
   TerminalSquare,
 } from "lucide-react"
 
 import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
-import { Bubble, BubbleContent } from "@/components/ui/bubble"
+import { Button } from "@/components/ui/button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Dialog,
   DialogContent,
@@ -49,6 +56,10 @@ type ActivityItem =
       validation: IssueValidation
     }
   | { kind: "approval"; id: string; createdAt: string; approval: Approval }
+
+type ActivityGroup =
+  | { kind: "pinned"; id: string; item: ActivityItem }
+  | { kind: "process"; id: string; items: ActivityItem[] }
 
 export function IssueAgentActivity({
   executions,
@@ -106,38 +117,48 @@ export function IssueAgentActivity({
       ),
     [approvals, events, messages, validations]
   )
+  const groups = React.useMemo<ActivityGroup[]>(() => {
+    const grouped: ActivityGroup[] = []
+    for (const item of items) {
+      if (item.kind !== "event") {
+        grouped.push({ kind: "pinned", id: item.id, item })
+        continue
+      }
+      const previous = grouped.at(-1)
+      if (previous?.kind === "process") previous.items.push(item)
+      else grouped.push({ kind: "process", id: item.id, items: [item] })
+    }
+    return grouped
+  }, [items])
   const active = executions.some((execution) =>
     ["queued", "starting", "running", "waiting_approval"].includes(
       execution.status
     )
   )
+  const lastGroup = groups.at(-1)
+  const activeGroup = Boolean(active && lastGroup?.kind === "process")
 
   return (
     <>
       <MessageScrollerProvider defaultScrollPosition="end" autoScroll={active}>
         <MessageScroller className={cn("min-h-0 flex-1", className)}>
-          <MessageScrollerViewport className="h-full px-3 py-3">
+          <MessageScrollerViewport className="h-full min-w-0 overflow-x-hidden px-3 py-3">
             <MessageScrollerContent className="gap-2.5">
-              {items.length === 0 ? (
+              {groups.length === 0 ? (
                 <div className="m-auto flex max-w-56 flex-col items-center gap-2 text-center text-sm text-muted-foreground">
                   <Bot />
                   Agent 开始工作后，对话、工具调用和验收决策会实时显示在这里。
                 </div>
               ) : null}
-              {items.map((item) => (
-                <ActivityRow
-                  key={`${item.kind}-${item.id}`}
-                  item={item}
-                  execution={
-                    item.kind === "message"
-                      ? executionMap.get(item.message.executionId)
-                      : item.kind === "event"
-                        ? executionMap.get(item.event.executionId)
-                        : item.kind === "approval"
-                          ? executionMap.get(item.approval.executionId)
-                          : executionMap.get(item.validation.sourceExecutionId)
+              {groups.map((group) => (
+                <ActivityGroupRow
+                  key={group.id}
+                  group={group}
+                  active={
+                    activeGroup && group === lastGroup
                   }
-                  onSelect={() => setSelected(item)}
+                  executionMap={executionMap}
+                  onSelect={setSelected}
                 />
               ))}
             </MessageScrollerContent>
@@ -156,70 +177,224 @@ export function IssueAgentActivity({
   )
 }
 
-function ActivityRow({
-  item,
-  execution,
+function ActivityGroupRow({
+  group,
+  active,
+  executionMap,
   onSelect,
 }: {
-  item: ActivityItem
-  execution?: Execution
-  onSelect: () => void
+  group: ActivityGroup
+  active: boolean
+  executionMap: Map<string, Execution>
+  onSelect: (item: ActivityItem) => void
 }) {
-  if (item.kind === "message") {
-    return (
-      <MessageScrollerItem messageId={item.id}>
-        <Message>
-          <MessageContent>
-            <MessageHeader>
-              {execution?.kind ?? "Agent"} · {formatTime(item.createdAt)}
-            </MessageHeader>
-            <Bubble variant="muted" className="w-full max-w-full">
-              <BubbleContent
-                className="w-full"
-                render={
-                  <button
-                    type="button"
-                    onClick={onSelect}
-                    className="w-full text-left"
-                  />
-                }
+  if (group.kind === "pinned") {
+    const item = group.item
+    if (item.kind === "message") {
+      const execution = executionMap.get(item.message.executionId)
+      return (
+        <MessageScrollerItem messageId={item.id}>
+          <Message>
+            <MessageContent>
+              <MessageHeader className="px-0">
+                {execution?.kind ?? "Agent"} · {formatTime(item.createdAt)}
+              </MessageHeader>
+              <button
+                type="button"
+                onClick={() => onSelect(item)}
+                className="w-full min-w-0 rounded-lg text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50"
               >
                 <MarkdownContent className="line-clamp-5 text-xs !leading-5 [&>*+*]:!mt-1.5">
                   {item.message.content}
                 </MarkdownContent>
-              </BubbleContent>
-            </Bubble>
-          </MessageContent>
-        </Message>
+              </button>
+            </MessageContent>
+          </Message>
+        </MessageScrollerItem>
+      )
+    }
+    const presentation = activityPresentation(item)
+    return (
+      <MessageScrollerItem messageId={item.id}>
+        <Marker
+          render={
+            <button
+              type="button"
+              onClick={() => onSelect(item)}
+              className="rounded-lg px-2 py-1.5 hover:bg-muted hover:text-foreground"
+            />
+          }
+        >
+          <MarkerIcon>{presentation.icon}</MarkerIcon>
+          <MarkerContent className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+              {presentation.title}
+            </span>
+            {presentation.status ? (
+              <StatusBadge status={presentation.status} />
+            ) : null}
+            <time className="shrink-0 text-[11px]">
+              {formatTime(item.createdAt)}
+            </time>
+          </MarkerContent>
+        </Marker>
       </MessageScrollerItem>
     )
   }
-  const presentation = activityPresentation(item)
   return (
-    <MessageScrollerItem messageId={item.id}>
-      <Marker
-        render={
-          <button
-            type="button"
-            onClick={onSelect}
-            className="rounded-lg px-2 py-1.5 hover:bg-muted hover:text-foreground"
-          />
-        }
-      >
-        <MarkerIcon>{presentation.icon}</MarkerIcon>
-        <MarkerContent className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">
-            {presentation.title}
-          </span>
-          {presentation.status ? (
-            <StatusBadge status={presentation.status} />
-          ) : null}
-          <time className="shrink-0 text-[11px]">
-            {formatTime(item.createdAt)}
-          </time>
-        </MarkerContent>
-      </Marker>
+    <MessageScrollerItem messageId={group.items.at(-1)!.id}>
+      <AgentProcess
+        items={group.items.filter(
+          (item): item is ActivityItem & { kind: "event" } =>
+            item.kind === "event"
+        )}
+        active={active}
+        onSelect={onSelect}
+      />
     </MessageScrollerItem>
+  )
+}
+
+function AgentProcess({
+  items,
+  active,
+  onSelect,
+}: {
+  items: Array<ActivityItem & { kind: "event" }>
+  active: boolean
+  onSelect: (item: ActivityItem) => void
+}) {
+  const [historyOpen, setHistoryOpen] = React.useState(false)
+  const [fullEvents, setFullEvents] = React.useState<
+    Map<string, ExecutionEvent>
+  >(new Map())
+  const open = active || historyOpen
+
+  React.useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    const toolEvents = items.filter(
+      (item) =>
+        item.event.type === "tool" && !fullEvents.has(item.event.id)
+    )
+    if (toolEvents.length === 0) return
+    void Promise.all(
+      toolEvents.map((item) =>
+        fetchExecutionEvent(item.event.id).catch(() => undefined)
+      )
+    ).then((events) => {
+      if (cancelled) return
+      const next = new Map(fullEvents)
+      for (const event of events) {
+        if (event) next.set(event.id, event)
+      }
+      setFullEvents(next)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, items, fullEvents])
+
+  const processViewport = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    if (active && processViewport.current) {
+      processViewport.current.scrollTop = processViewport.current.scrollHeight
+    }
+  }, [active, items])
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(value) => {
+        if (!active) setHistoryOpen(value)
+      }}
+      className="ml-3 min-w-0"
+    >
+      <CollapsibleTrigger
+        render={<Button variant="ghost" size="xs" />}
+        className="text-muted-foreground"
+      >
+        {active ? (
+          <LoaderCircle className="animate-spin" />
+        ) : (
+          <ChevronDown
+            className={cn("transition-transform", open && "rotate-180")}
+          />
+        )}
+        {active
+          ? "Agent 正在执行"
+          : `查看执行过程 · ${items.length} 条`}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-1 overflow-hidden data-[ending-style]:animate-out data-[starting-style]:animate-in">
+        <div
+          ref={processViewport}
+          className="flex max-h-56 flex-col gap-2 overflow-y-auto py-1 pl-1 pr-1"
+        >
+          {items.map((item) => (
+            <ToolEventRow
+              key={item.id}
+              item={item}
+              fullEvent={fullEvents.get(item.event.id)}
+              onSelect={() => onSelect(item)}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function ToolEventRow({
+  item,
+  fullEvent,
+  onSelect,
+}: {
+  item: ActivityItem & { kind: "event" }
+  fullEvent: ExecutionEvent | undefined
+  onSelect: () => void
+}) {
+  const event = item.event
+  const isTool = event.type === "tool"
+  const summary = eventSummary(event)
+  const output = fullEvent?.outputJson || fullEvent?.inputJson
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex w-full min-w-0 items-start gap-2 rounded-md text-left text-xs leading-5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        {event.isError ? (
+          <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+        ) : (
+          <TerminalSquare className="mt-0.5 size-3.5 shrink-0" />
+        )}
+        {isTool ? (
+          <span
+            className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            title={summary}
+            onWheel={(event) => {
+              event.currentTarget.scrollLeft +=
+                event.deltaY || event.deltaX
+            }}
+          >
+            {summary}
+          </span>
+        ) : (
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+        )}
+      </button>
+      {output ? (
+        <pre
+          className={cn(
+            "mt-1 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-2 font-mono text-[11px] leading-4 break-words",
+            event.isError && "text-destructive"
+          )}
+        >
+          {formatJSON(output)}
+        </pre>
+      ) : null}
+    </div>
   )
 }
 
