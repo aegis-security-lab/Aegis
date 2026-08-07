@@ -307,7 +307,7 @@ function BoardCard({
 }) {
   return (
     <Link
-      to={`/issues/${issue.id}`}
+      to={`/issues/${issue.id}?view=board`}
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}

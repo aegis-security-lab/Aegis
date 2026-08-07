@@ -6,7 +6,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from "lucide-react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { ChatComposer } from "@/components/chat-composer"
@@ -108,7 +108,9 @@ const emptyChildIssue: ChildIssueForm = {
 export function BoardIssueDetailPage() {
   const { issueId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { state } = useAppState()
+  const fromBoard = new URLSearchParams(location.search).get("view") === "board"
   const [detail, setDetail] = React.useState<IssueDetail | null>(null)
   const [comment, setComment] = React.useState("")
   const [busy, setBusy] = React.useState(false)
@@ -219,7 +221,10 @@ export function BoardIssueDetailPage() {
     try {
       const result = await deleteIssue(issue.id)
       toast.success(`已删除 ${result.deletedIssues} 个 Issue`)
-      navigate("/issues")
+      const root = rootIssueOf(issue.id, state?.issues ?? [])
+      navigate(
+        fromBoard && root ? `/tasks/${root.id}/board` : "/issues"
+      )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除 Issue 失败")
     } finally {
@@ -280,7 +285,7 @@ export function BoardIssueDetailPage() {
         <div className="flex min-h-full flex-col gap-4">
           {parentIssue ? (
             <Link
-              to={`/issues/${parentIssue.id}`}
+              to={`/issues/${parentIssue.id}${fromBoard ? "?view=board" : ""}`}
               className="flex h-6 min-w-0 items-center text-xs text-muted-foreground hover:text-foreground"
               title={parentIssue.title}
             >
@@ -376,6 +381,7 @@ export function BoardIssueDetailPage() {
                   rootId={issue.id}
                   issues={subtreeIssues}
                   runtimes={state?.issueRuntimes ?? []}
+                  view={fromBoard ? "board" : undefined}
                 />
               </div>
             ) : null}
@@ -771,6 +777,17 @@ function collectSubtree(rootId: string, issues: Issue[]) {
   }
   visit(rootId)
   return result
+}
+
+function rootIssueOf(issueId: string, issues: Issue[]) {
+  const byID = new Map(issues.map((issue) => [issue.id, issue]))
+  let current = byID.get(issueId)
+  const seen = new Set<string>()
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id)
+    current = byID.get(current.parentId)
+  }
+  return current
 }
 
 function Section({ label, value }: { label: string; value: string }) {
