@@ -14,6 +14,7 @@ import { SearchInput } from "@/components/ui/search-input"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
+import { issuesInSubtree } from "@/lib/collections"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import { issueWorkflowStatus } from "@/lib/issue-workflow"
@@ -259,24 +260,6 @@ function includeAncestors(matched: Issue[], allIssues: Issue[]) {
     }
   }
   return [...visible.values()]
-}
-
-function issuesInSubtree(rootId: string, issues: Issue[]) {
-  const byID = new Map(issues.map((issue) => [issue.id, issue]))
-  const result: Issue[] = []
-  const seen = new Set<string>()
-  const visit = (id: string) => {
-    if (seen.has(id)) return
-    seen.add(id)
-    const issue = byID.get(id)
-    if (!issue) return
-    result.push(issue)
-    for (const candidate of issues) {
-      if (candidate.parentId === id) visit(candidate.id)
-    }
-  }
-  visit(rootId)
-  return result
 }
 
 function classifyIssue(
