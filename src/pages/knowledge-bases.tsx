@@ -40,7 +40,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
 import { SearchInput } from "@/components/ui/search-input"
 import { deleteKnowledgeBase } from "@/lib/api"
 import { useAppState } from "@/lib/state"

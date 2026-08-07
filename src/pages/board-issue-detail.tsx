@@ -3,13 +3,13 @@ import {
   ChevronRight,
   Pencil,
   Plus,
-  Send,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
+import { ChatComposer } from "@/components/chat-composer"
 import { IssueCommentsList } from "@/components/issue-comments-list"
 import { IssueAgentActivity } from "@/components/issue-agent-activity"
 import { IssueChildTree } from "@/components/issue-child-tree"
@@ -36,12 +36,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupTextarea,
-} from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
 import {
   Popover,
@@ -410,23 +404,17 @@ export function BoardIssueDetailPage() {
               onCopy={(value) => void navigator.clipboard.writeText(value)}
             />
           </section>
-          <InputGroup className="mt-2">
-            <InputGroupTextarea
-              value={comment}
-              onChange={(event) => setComment(event.target.value)}
-              placeholder="在 Board 上发表评论…"
-            />
-            <InputGroupAddon align="block-end" className="justify-end">
-              <InputGroupButton
-                variant="default"
-                disabled={busy || !comment.trim()}
-                onClick={() => void submit()}
-              >
-                <Send />
-                发表评论
-              </InputGroupButton>
-            </InputGroupAddon>
-          </InputGroup>
+          <ChatComposer
+            className="mt-2"
+            value={comment}
+            onValueChange={setComment}
+            onSend={() => void submit()}
+            sending={busy}
+            placeholder="在 Board 上发表评论…"
+            ariaLabel="发表评论"
+            sendLabel="发表评论"
+            hint=""
+          />
         </div>
       </div>
       <aside className="absolute inset-y-0 right-2 hidden w-[360px] flex-col overflow-hidden rounded-xl bg-card lg:flex">

@@ -1,10 +1,7 @@
 import * as React from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { Paperclip } from "lucide-react"
-import { MarkdownContent } from "@/components/markdown-content"
-import { Bubble, BubbleContent } from "@/components/ui/bubble"
+import { ChatMessage } from "@/components/chat-message"
 import { Button } from "@/components/ui/button"
-import { Message, MessageContent, MessageHeader } from "@/components/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -12,8 +9,8 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { Spinner } from "@/components/ui/spinner"
-import { formatBytes, formatTime } from "@/lib/format"
-import type { Message as ChatMessage } from "@/types"
+import { formatTime } from "@/lib/format"
+import type { Message as ChatMessageType } from "@/types"
 
 export function ConciergeConversationView({
   messages,
@@ -21,7 +18,7 @@ export function ConciergeConversationView({
   loadingMore,
   onLoadMore,
 }: {
-  messages: ChatMessage[]
+  messages: ChatMessageType[]
   hasMore: boolean
   loadingMore: boolean
   onLoadMore: () => void
@@ -69,7 +66,11 @@ export function ConciergeConversationView({
                   }}
                 >
                   {message ? (
-                    <ConversationMessage message={message} />
+                    <ChatMessage
+                      message={message}
+                      label="管家"
+                      time={formatTime(message.createdAt)}
+                    />
                   ) : (
                     <div className="flex justify-center">
                       <Button
@@ -97,57 +98,3 @@ export function ConciergeConversationView({
   )
 }
 
-function ConversationMessage({ message }: { message: ChatMessage }) {
-  const assistant = message.role === "assistant"
-  if (assistant) {
-    return (
-      <Message>
-        <MessageContent>
-          <MessageHeader className="px-0">
-            管家 · {formatTime(message.createdAt)}
-          </MessageHeader>
-          <MarkdownContent className="text-[13px] !leading-5 [&>*+*]:!mt-2">
-            {message.content || "正在思考…"}
-          </MarkdownContent>
-          {message.streaming ? (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="inline-block size-1.5 animate-pulse rounded-full bg-current" />
-              正在生成…
-            </span>
-          ) : null}
-        </MessageContent>
-      </Message>
-    )
-  }
-  return (
-    <Message align="end">
-      <MessageContent>
-        <Bubble variant="secondary" align="end">
-          <BubbleContent className="text-[13px] leading-5">
-            <MarkdownContent className="!leading-5 [&>*+*]:!mt-2">
-              {message.content}
-            </MarkdownContent>
-            {message.attachments?.length ? (
-              <div className="mt-2 flex max-w-md flex-col gap-1.5 border-t border-border/60 pt-2">
-                {message.attachments.map((attachment) => (
-                  <div
-                    key={attachment.id}
-                    className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"
-                  >
-                    <Paperclip className="size-3.5 shrink-0" />
-                    <span className="min-w-0 flex-1 truncate text-foreground">
-                      {attachment.name}
-                    </span>
-                    <span className="shrink-0 tabular-nums">
-                      {formatBytes(attachment.size)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </BubbleContent>
-        </Bubble>
-      </MessageContent>
-    </Message>
-  )
-}

@@ -9,6 +9,7 @@ import {
   TerminalSquare,
 } from "lucide-react"
 
+import { ChatMessage as ChatMessageView } from "@/components/chat-message"
 import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -25,7 +26,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
-import { Message, MessageContent, MessageHeader } from "@/components/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -194,22 +194,13 @@ function ActivityGroupRow({
       const execution = executionMap.get(item.message.executionId)
       return (
         <MessageScrollerItem messageId={item.id}>
-          <Message>
-            <MessageContent>
-              <MessageHeader className="px-0">
-                {execution?.kind ?? "Agent"} · {formatTime(item.createdAt)}
-              </MessageHeader>
-              <button
-                type="button"
-                onClick={() => onSelect(item)}
-                className="w-full min-w-0 rounded-lg text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50"
-              >
-                <MarkdownContent className="line-clamp-5 text-xs !leading-5 [&>*+*]:!mt-1.5">
-                  {item.message.content}
-                </MarkdownContent>
-              </button>
-            </MessageContent>
-          </Message>
+          <ChatMessageView
+            message={item.message}
+            label={execution?.kind ?? "Agent"}
+            time={formatTime(item.createdAt)}
+            onSelect={() => onSelect(item)}
+            compact
+          />
         </MessageScrollerItem>
       )
     }

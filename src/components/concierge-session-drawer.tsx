@@ -67,8 +67,10 @@ export function ConciergeSessionDrawer({
       />
       <aside
         className={cn(
-          "absolute inset-y-0 left-0 z-30 flex w-72 min-w-0 flex-col border-r bg-card shadow-xl shadow-foreground/10 transition-transform duration-200 ease-out",
-          open ? "translate-x-0" : "-translate-x-full pointer-events-none"
+          "absolute inset-y-0 left-0 z-30 flex w-72 min-w-0 flex-col bg-card transition-transform duration-200 ease-out",
+          open
+            ? "translate-x-0 border-r shadow-xl shadow-foreground/10"
+            : "-translate-x-full pointer-events-none"
         )}
         onMouseEnter={openNow}
         onMouseLeave={scheduleClose}

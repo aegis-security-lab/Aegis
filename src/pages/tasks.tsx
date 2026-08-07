@@ -8,6 +8,7 @@ import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { SearchInput } from "@/components/ui/search-input"
 import { TaskRowMenu } from "@/components/task-row-menu"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Empty,

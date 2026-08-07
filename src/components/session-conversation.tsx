@@ -1,10 +1,8 @@
 import * as React from "react"
-import { Bot, MessageSquareText, UserRound } from "lucide-react"
+import { Bot, MessageSquareText } from "lucide-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 
-import { MarkdownContent } from "@/components/markdown-content"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Bubble, BubbleContent } from "@/components/ui/bubble"
+import { ChatMessage } from "@/components/chat-message"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -14,13 +12,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
-import {
-  Message,
-  MessageAvatar,
-  MessageContent,
-  MessageFooter,
-  MessageHeader,
-} from "@/components/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -159,10 +150,16 @@ export function SessionConversation({
                       <MarkerContent>{message.content}</MarkerContent>
                     </Marker>
                   ) : message ? (
-                    <ConversationMessage
+                    <ChatMessage
                       message={message}
-                      agentName={agentName}
-                      isInitialPrompt={message.id === initialPromptMessageId}
+                      label={
+                        message.id === initialPromptMessageId
+                          ? "启动提示词"
+                          : message.role === "user"
+                            ? "你"
+                            : agentName
+                      }
+                      time={formatTime(message.createdAt)}
                     />
                   ) : null}
                 </MessageScrollerItem>
@@ -173,45 +170,5 @@ export function SessionConversation({
         <MessageScrollerButton />
       </MessageScroller>
     </MessageScrollerProvider>
-  )
-}
-
-function ConversationMessage({
-  message,
-  agentName,
-  isInitialPrompt,
-}: {
-  message: SessionMessage
-  agentName: string
-  isInitialPrompt: boolean
-}) {
-  const isUser = message.role === "user"
-  return (
-    <Message align={isUser ? "end" : "start"}>
-      <MessageAvatar>
-        <Avatar>
-          <AvatarFallback>{isUser ? <UserRound /> : <Bot />}</AvatarFallback>
-        </Avatar>
-      </MessageAvatar>
-      <MessageContent>
-        <MessageHeader>
-          {isInitialPrompt ? "启动提示词" : isUser ? "你" : agentName}
-        </MessageHeader>
-        <Bubble
-          align={isUser ? "end" : "start"}
-          variant={isUser ? "default" : "ghost"}
-        >
-          <BubbleContent>
-            <MarkdownContent>{message.content}</MarkdownContent>
-          </BubbleContent>
-        </Bubble>
-        <MessageFooter>
-          {formatTime(message.createdAt)}
-          {message.streaming ? (
-            <span className="ml-2 shimmer">正在生成…</span>
-          ) : null}
-        </MessageFooter>
-      </MessageContent>
-    </Message>
   )
 }
