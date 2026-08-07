@@ -220,7 +220,7 @@ func (m *Manager) completeIssueWithoutValidation(issue Issue, sourceExecutionID,
 		status = "in_review"
 	}
 	updates := map[string]any{
-		"status": status, "execution_phase": "completed", "result": strings.TrimSpace(result),
+		"status": status, "labels": issueLabelsColumn(withoutIssueLabels(issue, issueLabelBlocked)), "execution_phase": "completed", "result": strings.TrimSpace(result),
 		"checkout_execution_id": "", "current_execution_id": sourceExecutionID, "error": "", "completed_at": nil, "updated_at": now,
 	}
 	if status == "done" {

@@ -51,7 +51,7 @@ func TestStartupRepairsFailedPlanningParseAfterToolCreatedChildren(t *testing.T)
 		t.Fatal(err)
 	}
 	if err := store.db.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{
-		"status": "blocked", "execution_phase": "blocked", "error": parseError,
+		"status": "in_progress", "labels": issueLabelsColumn([]string{"blocked"}), "execution_phase": "blocked", "error": parseError,
 		"current_execution_id": execution.ID, "updated_at": now,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestStartupMigratesBlockedExecutionFailureToTerminalIssue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if migrated.Status != "failed" || migrated.ExecutionPhase != "completed" || migrated.CompletedAt == nil || migrated.CheckoutExecutionID != "" {
+	if migrated.Status != "done" || !hasIssueLabel(migrated, issueLabelFailed) || migrated.ExecutionPhase != "completed" || migrated.CompletedAt == nil || migrated.CheckoutExecutionID != "" {
 		t.Fatalf("legacy blocked execution failure was not migrated: %+v", migrated)
 	}
 }
@@ -466,7 +466,7 @@ func TestOrphanedValidationInfrastructureFailureIsRecoveredInPlace(t *testing.T)
 		t.Fatal(err)
 	}
 	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-		"status": "failed", "execution_phase": "completed", "current_execution_id": validator.ID,
+		"status": "done", "labels": issueLabelsColumn([]string{"failed"}), "execution_phase": "completed", "current_execution_id": validator.ID,
 		"validation_execution_id": validator.ID, "error": "验收附件 report.md 在服务端不存在或不完整", "completed_at": time.Now(),
 	}).Error; err != nil {
 		t.Fatal(err)

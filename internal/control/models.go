@@ -275,6 +275,7 @@ type Issue struct {
 	Description             string           `json:"description"`
 	Objective               string           `json:"objective" gorm:"type:text"`
 	Status                  string           `json:"status" gorm:"index"`
+	Labels                  []string         `json:"labels,omitempty" gorm:"serializer:json;type:text"`
 	Priority                string           `json:"priority" gorm:"index"`
 	WorkMode                string           `json:"workMode"`
 	ExecutionPhase          string           `json:"executionPhase" gorm:"index"`
@@ -1152,14 +1153,15 @@ type TaskWorkspace struct {
 	Entries []WorkspaceEntry `json:"entries"`
 }
 type UpdateIssueInput struct {
-	Title             *string `json:"title"`
-	Description       *string `json:"description"`
-	Objective         *string `json:"objective"`
-	Priority          *string `json:"priority"`
-	Status            *string `json:"status"`
-	AssigneeAgentID   *string `json:"assigneeAgentId"`
-	ParentID          *string `json:"parentId"`
-	TimeBudgetMinutes *int    `json:"timeBudgetMinutes"`
+	Title             *string   `json:"title"`
+	Description       *string   `json:"description"`
+	Objective         *string   `json:"objective"`
+	Priority          *string   `json:"priority"`
+	Status            *string   `json:"status"`
+	Labels            *[]string `json:"labels"`
+	AssigneeAgentID   *string   `json:"assigneeAgentId"`
+	ParentID          *string   `json:"parentId"`
+	TimeBudgetMinutes *int      `json:"timeBudgetMinutes"`
 }
 
 type CancelTaskInput struct {

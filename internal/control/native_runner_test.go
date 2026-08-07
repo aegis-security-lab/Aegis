@@ -98,7 +98,7 @@ func TestNativeIssueRunnerReconcilesPreparedValidationStartupFailure(t *testing.
 		t.Fatalf("active validation was not reconciled: err=%v validation=%+v", err, validation)
 	}
 	failedIssue, err := store.GetIssue(issue.ID)
-	if err != nil || failedIssue.Status != "failed" || failedIssue.ExecutionPhase != "completed" {
+	if err != nil || failedIssue.Status != "done" || !hasIssueLabel(failedIssue, issueLabelFailed) || failedIssue.ExecutionPhase != "completed" {
 		t.Fatalf("Issue remained stuck after startup failure: err=%v issue=%+v", err, failedIssue)
 	}
 }
@@ -582,10 +582,10 @@ func TestResumePromptIncludesFailedAndBudgetExceededChildrenThatArrivedWhileQueu
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	failed, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Failed child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	exceeded, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Budget child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
-	if err := store.db.Model(&Issue{}).Where("id = ?", failed.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "error": "connection failed"}).Error; err != nil {
+	if err := store.db.Model(&Issue{}).Where("id = ?", failed.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"failed"}), "execution_phase": "completed", "error": "connection failed"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.Model(&Issue{}).Where("id = ?", exceeded.ID).Updates(map[string]any{"status": "budget_exceeded", "execution_phase": "budget_exceeded", "result": "partial audit evidence"}).Error; err != nil {
+	if err := store.db.Model(&Issue{}).Where("id = ?", exceeded.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"budget_exceeded"}), "execution_phase": "budget_exceeded", "result": "partial audit evidence"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	prompt := (NativeIssueRunner{Manager: manager}).terminalChildAttentionPrompt(parent.ID)

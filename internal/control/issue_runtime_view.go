@@ -95,18 +95,22 @@ func resolveIssueRuntimeView(issue Issue, facts issueRuntimeFacts) IssueRuntimeV
 
 	switch issue.Status {
 	case "done":
+		if hasIssueLabel(issue, issueLabelBudgetExceeded) {
+			return set("budget_exceeded", issueRuntimeKindFailed, "error", issue.Error)
+		}
+		if hasIssueLabel(issue, issueLabelFailed) {
+			return set("failed", issueRuntimeKindFailed, "error", firstNonEmpty(issue.Error, executionError(facts.currentExecution)))
+		}
 		return set("completed", issueRuntimeKindCompleted, "healthy", "")
 	case "cancelled":
 		if issue.ObjectiveAbandoned {
 			return set("abandoned", issueRuntimeKindCancelled, "healthy", issue.AbandonmentReason)
 		}
 		return set("cancelled", issueRuntimeKindCancelled, "healthy", issue.AbandonmentReason)
-	case "budget_exceeded":
-		return set("budget_exceeded", issueRuntimeKindFailed, "error", issue.Error)
-	case "failed":
-		return set("failed", issueRuntimeKindFailed, "error", firstNonEmpty(issue.Error, executionError(facts.currentExecution)))
-	case "blocked":
-		return set("blocked", issueRuntimeKindFailed, "error", firstNonEmpty(issue.Error, executionError(facts.currentExecution)))
+	case "in_progress":
+		if hasIssueLabel(issue, issueLabelBlocked) {
+			return set("blocked", issueRuntimeKindFailed, "error", firstNonEmpty(issue.Error, executionError(facts.currentExecution)))
+		}
 	}
 
 	if issue.ExecutionPhase == "recovering" {

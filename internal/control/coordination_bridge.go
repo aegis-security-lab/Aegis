@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"time"
 
@@ -291,7 +290,7 @@ func (b *CoordinationBridge) BindIssue(ctx context.Context, issueID, mode, versi
 		return coordination.Binding{}, err
 	}
 	// Re-evaluate currently assignable work under the new mode.
-	if (issue.Status == "todo" || issue.Status == "backlog") && issue.AssigneeAgentID != "" {
+	if (issue.Status == "todo") && issue.AssigneeAgentID != "" {
 		_ = b.SubmitIssueAssigned(ctx, issue)
 	}
 	return binding, nil
@@ -339,7 +338,7 @@ func (b *CoordinationBridge) submitSchedulableIssue(ctx context.Context, eventTy
 	if strings.TrimSpace(issue.AssigneeAgentID) == "" {
 		return b.submitIssue(ctx, eventType, issue, suffix)
 	}
-	if issue.Status != "todo" && issue.Status != "backlog" {
+	if issue.Status != "todo" {
 		return errors.New("Issue 当前不可调度")
 	}
 	if issue.ExecutionPhase == "scheduled" {
@@ -348,21 +347,21 @@ func (b *CoordinationBridge) submitSchedulableIssue(ctx context.Context, eventTy
 	previousPhase := fallback(strings.TrimSpace(issue.ExecutionPhase), "active")
 	now := time.Now()
 	reserved := b.manager.store.db.Model(&Issue{}).
-		Where("id = ? AND status IN ? AND execution_phase = ?", issue.ID, []string{"todo", "backlog"}, issue.ExecutionPhase).
+		Where("id = ? AND status IN ? AND execution_phase = ?", issue.ID, []string{"todo"}, issue.ExecutionPhase).
 		Updates(map[string]any{"execution_phase": "scheduled", "updated_at": now})
 	if reserved.Error != nil {
 		return reserved.Error
 	}
 	if reserved.RowsAffected != 1 {
 		current, err := b.manager.store.GetIssue(issue.ID)
-		if err == nil && current.ExecutionPhase == "scheduled" && (current.Status == "todo" || current.Status == "backlog") {
+		if err == nil && current.ExecutionPhase == "scheduled" && (current.Status == "todo") {
 			return nil
 		}
 		return errors.New("Issue 派发状态已发生变化")
 	}
 	if err := b.submitIssue(ctx, eventType, issue, suffix); err != nil {
 		_ = b.manager.store.db.Model(&Issue{}).
-			Where("id = ? AND status IN ? AND execution_phase = ? AND checkout_execution_id = ''", issue.ID, []string{"todo", "backlog"}, "scheduled").
+			Where("id = ? AND status IN ? AND execution_phase = ? AND checkout_execution_id = ''", issue.ID, []string{"todo"}, "scheduled").
 			Updates(map[string]any{"execution_phase": previousPhase, "updated_at": time.Now()}).Error
 		return err
 	}
@@ -416,7 +415,7 @@ func (b *CoordinationBridge) ContinueTerminalChildIssue(ctx context.Context, inv
 	if child.ParentID != parent.ID {
 		return errors.New("control coordination: only a direct parent may continue a budget-exceeded child")
 	}
-	if !slices.Contains([]string{"failed", "budget_exceeded"}, child.Status) {
+	if child.Status != "done" || !hasIssueLabel(child, issueLabelFailed, issueLabelBudgetExceeded) {
 		return errors.New("control coordination: child Issue is neither failed nor budget_exceeded")
 	}
 	root, err := b.manager.store.taskRoot(parent)
@@ -429,9 +428,9 @@ func (b *CoordinationBridge) ContinueTerminalChildIssue(ctx context.Context, inv
 	now := time.Now()
 	err = b.manager.store.db.Transaction(func(tx *gorm.DB) error {
 		updated := tx.Model(&Issue{}).
-			Where("id = ? AND parent_id = ? AND status IN ?", child.ID, parent.ID, []string{"failed", "budget_exceeded"}).
+			Where("id = ? AND parent_id = ? AND status = ?", child.ID, parent.ID, "done").
 			Updates(map[string]any{
-				"status": "todo", "execution_phase": "active", "checkout_execution_id": "",
+				"status": "todo", "labels": issueLabelsColumn(withoutIssueLabels(child, issueLabelFailed, issueLabelBudgetExceeded)), "execution_phase": "active", "checkout_execution_id": "",
 				"completed_at": nil, "cancelled_at": nil, "error": "", "updated_at": now,
 			})
 		if updated.Error != nil {
@@ -768,12 +767,18 @@ func (b *CoordinationBridge) snapshot(_ context.Context, event coordination.Even
 func (b *CoordinationBridge) workItem(issue Issue) *coordination.WorkItem {
 	status := coordination.WorkPending
 	switch issue.Status {
-	case "in_progress", "in_review":
+	case "in_progress":
+		if !hasIssueLabel(issue, issueLabelBlocked) {
+			status = coordination.WorkRunning
+		}
+	case "in_review":
 		status = coordination.WorkRunning
 	case "done":
-		status = coordination.WorkSucceeded
-	case "failed", "budget_exceeded":
-		status = coordination.WorkFailed
+		if hasIssueLabel(issue, issueLabelFailed, issueLabelBudgetExceeded) {
+			status = coordination.WorkFailed
+		} else {
+			status = coordination.WorkSucceeded
+		}
 	case "cancelled":
 		status = coordination.WorkCancelled
 	}
@@ -823,7 +828,7 @@ func (b *CoordinationBridge) EnqueueIssueExecution(ctx context.Context, issueID 
 	if err != nil {
 		return err
 	}
-	if issue.Status != "todo" && issue.Status != "backlog" {
+	if issue.Status != "todo" {
 		return errors.New("Issue 当前不可调度")
 	}
 	taskID := issue.ID
@@ -844,7 +849,7 @@ func (b *CoordinationBridge) EnqueueIssueExecution(ctx context.Context, issueID 
 		}
 		return err
 	}
-	updated := b.manager.store.db.Model(&Issue{}).Where("id = ? AND status IN ?", issue.ID, []string{"todo", "backlog"}).Updates(map[string]any{"execution_phase": "scheduled", "updated_at": time.Now()})
+	updated := b.manager.store.db.Model(&Issue{}).Where("id = ? AND status IN ?", issue.ID, []string{"todo"}).Updates(map[string]any{"execution_phase": "scheduled", "updated_at": time.Now()})
 	if updated.Error != nil || updated.RowsAffected != 1 {
 		_ = b.executions.Cancel(ctx, coordinationExecutionID, "Issue became unavailable before Coordination execution ownership was recorded")
 		if updated.Error != nil {
@@ -934,7 +939,7 @@ func (b *CoordinationBridge) EnqueueIssueResumeExecution(ctx context.Context, co
 	if err != nil {
 		return err
 	}
-	if issueStatusTerminal(issue.Status) || issue.Status == "todo" || issue.Status == "backlog" {
+	if issueStatusTerminal(issue.Status) || issue.Status == "todo" {
 		// Assignment delivery is redundant with the initial Issue prompt, and a
 		// terminal Issue cannot be resumed.
 		return nil

@@ -775,12 +775,12 @@ func buildEvaluationContext(scope TaskEvidenceScope, issues []Issue, executions 
 	}
 	for _, issue := range issues {
 		result.IssueStatusCounts[issue.Status]++
-		switch issue.Status {
-		case "failed":
+		switch {
+		case hasIssueLabel(issue, issueLabelFailed, issueLabelBudgetExceeded):
 			result.FailedIssueIDs = append(result.FailedIssueIDs, issue.ID)
-		case "cancelled":
+		case issue.Status == "cancelled":
 			result.CancelledIssueIDs = append(result.CancelledIssueIDs, issue.ID)
-		case "done":
+		case issue.Status == "done":
 		default:
 			result.UnfinishedIssueIDs = append(result.UnfinishedIssueIDs, issue.ID)
 		}

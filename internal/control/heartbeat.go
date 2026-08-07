@@ -46,7 +46,7 @@ func (m *Manager) queueDueIssueHeartbeats(now time.Time) []string {
 	var issues []Issue
 	if err := m.store.db.Where(
 		"hidden = ? AND assignee_agent_id <> '' AND ((status = ? AND execution_phase = ?) OR status IN ?)",
-		false, "in_progress", "waiting_children", []string{"todo", "backlog"},
+		false, "in_progress", "waiting_children", []string{"todo"},
 	).Order("updated_at asc").Find(&issues).Error; err != nil {
 		return nil
 	}

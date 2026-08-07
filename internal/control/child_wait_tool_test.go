@@ -57,7 +57,8 @@ func TestWaitForChildIssuesPersistsSelectionAndReleasesParent(t *testing.T) {
 	if childWaitConditionSatisfied(IssueChildWait{WaitForAll: true, CreatedAt: completedAt.Add(time.Second)}, children) {
 		t.Fatal("an old completion triggered a later wait again")
 	}
-	children[1].Status = "failed"
+	children[1].Status = "done"
+	children[1].Labels = []string{"failed"}
 	children[1].UpdatedAt = completedAt.Add(2 * time.Second)
 	if !childWaitConditionSatisfied(IssueChildWait{WaitForAll: true, CreatedAt: completedAt.Add(time.Second)}, children) {
 		t.Fatal("a subsequent child completion did not trigger the next wait")

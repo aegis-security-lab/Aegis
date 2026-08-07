@@ -49,7 +49,7 @@ func TestFailedChildIsTerminalForCompletionAndDependencies(t *testing.T) {
 	if err := store.db.Create(&IssueRelation{ID: nextID("relation"), IssueID: failedChild.ID, RelatedIssueID: dependent.ID, Type: "blocks", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := store.db.Model(&Issue{}).Where("id = ?", failedChild.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "completed_at": now, "error": "execution failed"}).Error; err != nil {
+	if err := store.db.Model(&Issue{}).Where("id = ?", failedChild.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"failed"}), "execution_phase": "completed", "completed_at": now, "error": "execution failed"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	blockers, err := store.unresolvedBlockers(dependent.ID)
@@ -81,7 +81,7 @@ func TestExecutionFailureMarksIssueTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Status != "failed" || failed.ExecutionPhase != "completed" || failed.CompletedAt == nil || failed.CheckoutExecutionID != "" {
+	if failed.Status != "done" || !hasIssueLabel(failed, issueLabelFailed) || failed.ExecutionPhase != "completed" || failed.CompletedAt == nil || failed.CheckoutExecutionID != "" {
 		t.Fatalf("execution failure did not terminate Issue: %+v", failed)
 	}
 }

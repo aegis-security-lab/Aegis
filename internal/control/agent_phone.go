@@ -239,7 +239,7 @@ func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.
 	if err != nil {
 		return agentapp.BoardIssue{}, err
 	}
-	if assigneeID != "" && (created.Status == "todo" || created.Status == "backlog") {
+	if assigneeID != "" && created.Status == "todo" {
 		if bridge := r.manager.Coordination(); bridge != nil {
 			if err = bridge.SubmitIssueCreated(ctx, created); err != nil {
 				return agentapp.BoardIssue{}, err
@@ -389,7 +389,7 @@ func (r controlBoardRepository) boardIssue(issue Issue) agentapp.BoardIssue {
 	result := agentapp.BoardIssue{
 		ID: issue.ID, Identifier: issue.Identifier, Title: issue.Title, Objective: issue.Objective,
 		Status: issue.Status, WorkflowStatus: issueWorkflowStatus(issue.Status), Priority: issue.Priority, AssigneeID: issue.AssigneeAgentID, AssigneeTaskAgentID: issue.AssigneeTaskAgentID,
-		ExecutionPhase: issue.ExecutionPhase, Blocked: issue.Status == "blocked" || issue.ExecutionPhase == "blocked", UpdatedAt: issue.UpdatedAt,
+		ExecutionPhase: issue.ExecutionPhase, Blocked: hasIssueLabel(issue, issueLabelBlocked) || issue.ExecutionPhase == "blocked", UpdatedAt: issue.UpdatedAt,
 	}
 	if views := r.manager.store.issueRuntimeViews([]Issue{issue}); len(views) == 1 {
 		result.ExecutionPhase = views[0].State

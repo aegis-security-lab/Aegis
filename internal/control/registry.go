@@ -1211,7 +1211,7 @@ func (s *Store) DeleteAgent(id string) error {
 		return err
 	}
 	s.agents = append(s.agents[:index], s.agents[index+1:]...)
-	s.updatedAt = time.Now()
+	s.touchLocked()
 	s.broadcastLocked()
 	return nil
 }
@@ -1323,7 +1323,7 @@ func (s *Store) DeleteSkill(id string) error {
 		return err
 	}
 	s.skills = append(s.skills[:index], s.skills[index+1:]...)
-	s.updatedAt = time.Now()
+	s.touchLocked()
 	s.broadcastLocked()
 	return nil
 }

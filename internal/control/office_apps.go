@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -301,8 +300,8 @@ func (m *Manager) UpdateBoardIssue(issueID string, input UpdateIssueInput) (Issu
 		return Issue{}, err
 	}
 	m.ReconcileIssue(updated)
-	reopenedTerminalOutcome := slices.Contains([]string{"failed", "budget_exceeded"}, before.Status) && slices.Contains([]string{"todo", "backlog"}, updated.Status)
-	becameSchedulable := !slices.Contains([]string{"todo", "backlog"}, before.Status) && slices.Contains([]string{"todo", "backlog"}, updated.Status)
+	reopenedTerminalOutcome := hasIssueLabel(before, issueLabelFailed, issueLabelBudgetExceeded) && updated.Status == "todo"
+	becameSchedulable := before.Status != "todo" && updated.Status == "todo"
 	if updated.AssigneeAgentID != "" && (updated.AssigneeAgentID != before.AssigneeAgentID || reopenedTerminalOutcome || becameSchedulable || requestedStart) {
 		if bridge := m.Coordination(); bridge != nil {
 			if err := bridge.SubmitIssueAssigned(context.Background(), updated); err != nil {

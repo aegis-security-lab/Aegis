@@ -282,7 +282,7 @@ func (m *Manager) prepareIssueExecution(id string) (preparedIssueExecution, erro
 	if m.store.belongsToCancelledTask(issue) {
 		return preparedIssueExecution{}, errors.New("所属任务已取消，不能继续调度")
 	}
-	if !slices.Contains([]string{"todo", "backlog"}, issue.Status) {
+	if !slices.Contains([]string{"todo"}, issue.Status) {
 		return preparedIssueExecution{}, errors.New("Issue 当前不可调度")
 	}
 	if issue.ExecutionPhase == "recovering" && issue.RecoveryExecutionID != "" {
@@ -300,7 +300,7 @@ func (m *Manager) prepareIssueExecution(id string) (preparedIssueExecution, erro
 	if err != nil {
 		return preparedIssueExecution{}, err
 	}
-	if _, err = m.store.CheckoutIssue(issue.ID, CheckoutIssueInput{AgentID: agent.ID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo", "backlog"}}); err != nil {
+	if _, err = m.store.CheckoutIssue(issue.ID, CheckoutIssueInput{AgentID: agent.ID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"}}); err != nil {
 		_ = m.store.updateExecution(execution.ID, map[string]any{"status": "failed", "error": err.Error(), "finished_at": time.Now()})
 		return preparedIssueExecution{}, err
 	}
@@ -414,7 +414,7 @@ func (m *Manager) dispatchNextForEmployee(agentID string) {
 		}
 	}
 	var next Issue
-	if err := m.store.db.Where("hidden = ? AND assignee_agent_id = ? AND status IN ?", false, agentID, []string{"todo", "backlog"}).
+	if err := m.store.db.Where("hidden = ? AND assignee_agent_id = ? AND status IN ?", false, agentID, []string{"todo"}).
 		Order("CASE priority WHEN 'high' THEN 0 WHEN 'critical' THEN 0 WHEN 'middle' THEN 1 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, created_at asc").First(&next).Error; err != nil {
 		return
 	}
@@ -1386,7 +1386,7 @@ func (m *Manager) abandonValidatedObjective(issue Issue, validation IssueValidat
 func (m *Manager) blockValidationAfterLimit(issue Issue, validation IssueValidation, decision validationDecision, now time.Time) {
 	message := "固定验收次数已耗尽，但验收 Agent 未能提供足以放弃目标的证明，需要人工决定。"
 	if !issue.HumanValidationFallback {
-		_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "checkout_execution_id": "", "current_execution_id": validation.ValidationExecutionID, "result": validation.CandidateResult, "error": message, "completed_at": now, "updated_at": now}).Error
+		_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn(withIssueLabels(issue, issueLabelFailed)), "execution_phase": "completed", "checkout_execution_id": "", "current_execution_id": validation.ValidationExecutionID, "result": validation.CandidateResult, "error": message, "completed_at": now, "updated_at": now}).Error
 		m.addTypedAgentComment(issue.ID, "acceptance-validator", "validation_failed", fmt.Sprintf("## 验收失败\n\n**判断：** %s\n\n%s\n\n已保留最后一次 Worker 交付结果。", decision.Summary, message), validation.ValidationExecutionID, []commentWakeupTarget{})
 		m.store.addEvent(validation.ValidationExecutionID, issue.ID, "validation", "验收次数耗尽，任务失败但释放依赖", decision.Summary)
 		m.store.notify()
@@ -1402,7 +1402,7 @@ func (m *Manager) blockValidationAfterLimit(issue Issue, validation IssueValidat
 		return
 	}
 	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-		"status": "blocked", "execution_phase": "blocked", "checkout_execution_id": "",
+		"status": "in_progress", "labels": issueLabelsColumn(withIssueLabels(issue, issueLabelBlocked)), "execution_phase": "blocked", "checkout_execution_id": "",
 		"current_execution_id": validation.ValidationExecutionID, "error": message, "updated_at": now,
 	}).Error
 	m.addTypedAgentComment(issue.ID, "acceptance-validator", "validation_blocked", fmt.Sprintf("## 验收次数已耗尽\n\n**判断：** %s\n\n%s", decision.Summary, message), validation.ValidationExecutionID, []commentWakeupTarget{})
@@ -1463,7 +1463,7 @@ func (m *Manager) completePlanningDecomposition(parent Issue, executionID, resul
 			return err
 		}
 		updates := map[string]any{
-			"status": "in_progress", "execution_phase": "waiting_children", "checkout_execution_id": "",
+			"status": "in_progress", "labels": issueLabelsColumn(withoutIssueLabels(parent, issueLabelBlocked)), "execution_phase": "waiting_children", "checkout_execution_id": "",
 			"current_execution_id": executionID, "error": "", "updated_at": now,
 		}
 		updated := tx.Model(&Issue{}).Where("id = ? AND status <> ?", parent.ID, "cancelled").Updates(updates)
@@ -1510,7 +1510,7 @@ func (m *Manager) scheduleChildren(parentID string) {
 			if !issueStatusTerminal(c.Status) {
 				allTerminal = false
 			}
-			if slices.Contains([]string{"failed", "budget_exceeded", "cancelled"}, c.Status) && c.UpdatedAt.After(parent.UpdatedAt) {
+			if (c.Status == "cancelled" || hasIssueLabel(c, issueLabelFailed, issueLabelBudgetExceeded)) && c.UpdatedAt.After(parent.UpdatedAt) {
 				failedChildNeedsAttention = true
 			}
 		}
@@ -1524,14 +1524,14 @@ func (m *Manager) scheduleChildren(parentID string) {
 		}
 		var active, scheduled int64
 		m.store.db.Model(&Execution{}).Where("status IN ? AND issue_id IN (?)", []string{"queued", "starting", "running", "waiting_approval"}, m.store.db.Model(&Issue{}).Select("id").Where("parent_id = ?", parent.ID)).Count(&active)
-		m.store.db.Model(&Issue{}).Where("parent_id = ? AND status IN ? AND execution_phase = ?", parent.ID, []string{"todo", "backlog"}, "scheduled").Count(&scheduled)
+		m.store.db.Model(&Issue{}).Where("parent_id = ? AND status IN ? AND execution_phase = ?", parent.ID, []string{"todo"}, "scheduled").Count(&scheduled)
 		limit := m.store.Config().Concurrency
 		if int(active+scheduled) >= limit {
 			return
 		}
 		madeProgress := false
 		for i := range children {
-			if children[i].Status != "todo" && children[i].Status != "backlog" {
+			if children[i].Status != "todo" {
 				continue
 			}
 			if strings.TrimSpace(children[i].AssigneeAgentID) == "" {
@@ -1638,7 +1638,7 @@ func childOutcomeWakeMessage(parent Issue, children []Issue) string {
 	hasFailure := false
 	for _, child := range children {
 		fmt.Fprintf(&summary, "- %s · %s [%s]：%s\n", child.Identifier, child.Title, child.Status, fallback(child.Result, fallback(child.Error, "没有结果摘要")))
-		if slices.Contains([]string{"failed", "budget_exceeded", "cancelled"}, child.Status) {
+		if child.Status == "cancelled" || hasIssueLabel(child, issueLabelFailed, issueLabelBudgetExceeded) {
 			hasFailure = true
 		}
 	}
@@ -1984,7 +1984,7 @@ func (m *Manager) ResumeIssueTreeFromExecution(executionID, token string, input 
 	if err != nil {
 		return Issue{}, err
 	}
-	if _, err = m.store.CheckoutIssue(restored.ID, CheckoutIssueInput{AgentID: agent.ID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo", "backlog", "cancelled"}}); err != nil {
+	if _, err = m.store.CheckoutIssue(restored.ID, CheckoutIssueInput{AgentID: agent.ID, ExecutionID: execution.ID, ExpectedStatuses: []string{"todo", "cancelled"}}); err != nil {
 		return Issue{}, err
 	}
 	prompt := fmt.Sprintf("任务树已被明确恢复。请继续完成 Issue %s：%s。系统已恢复所有被取消的子 Issue；先检查子树状态，再决定直接工作、评论纠正或等待子任务。恢复原因：%s", restored.Identifier, restored.Title, reason)
@@ -2439,7 +2439,7 @@ func (m *Manager) failExecution(issue Issue, e Execution, cause error) {
 	if e.ID != "" {
 		_ = m.store.updateExecution(e.ID, map[string]any{"status": "failed", "error": cause.Error(), "finished_at": now, "pid": 0})
 	}
-	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "error": cause.Error(), "checkout_execution_id": "", "completed_at": now, "updated_at": now}).Error
+	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn(withIssueLabels(issue, issueLabelFailed)), "execution_phase": "completed", "error": cause.Error(), "checkout_execution_id": "", "completed_at": now, "updated_at": now}).Error
 	m.store.addEvent(e.ID, issue.ID, "error", "执行失败", cause.Error())
 	m.store.notify()
 	m.reconcileIssueID(issue.ID)
@@ -2450,7 +2450,7 @@ func (m *Manager) failExecution(issue Issue, e Execution, cause error) {
 
 func (m *Manager) blockIssue(issue Issue, title string, cause error) {
 	now := time.Now()
-	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "error": cause.Error(), "checkout_execution_id": "", "completed_at": now, "updated_at": now}).Error
+	_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn(withIssueLabels(issue, issueLabelFailed)), "execution_phase": "completed", "error": cause.Error(), "checkout_execution_id": "", "completed_at": now, "updated_at": now}).Error
 	m.store.addEvent("", issue.ID, "error", title, cause.Error())
 	m.store.notify()
 	m.reconcileIssueID(issue.ID)
@@ -3436,7 +3436,7 @@ func (m *Manager) reconcileOrphanedValidations() {
 	}
 	for _, validation := range validations {
 		issue, err := m.store.GetIssue(validation.IssueID)
-		if err != nil || issue.Status != "failed" || issue.ExecutionPhase != "completed" || issue.CurrentExecutionID != validation.ValidationExecutionID || issue.ValidationExecutionID != validation.ValidationExecutionID {
+		if err != nil || issue.Status != "done" || !hasIssueLabel(issue, issueLabelFailed) || issue.ExecutionPhase != "completed" || issue.CurrentExecutionID != validation.ValidationExecutionID || issue.ValidationExecutionID != validation.ValidationExecutionID {
 			continue
 		}
 		var execution Execution
@@ -3458,8 +3458,8 @@ func (m *Manager) reconcileOrphanedValidations() {
 			}).Error; err != nil {
 				return err
 			}
-			return tx.Model(&Issue{}).Where("id = ? AND status = ? AND current_execution_id = ?", issue.ID, "failed", execution.ID).Updates(map[string]any{
-				"status": "todo", "execution_phase": "recovering", "checkout_execution_id": "",
+			return tx.Model(&Issue{}).Where("id = ? AND status = ? AND current_execution_id = ?", issue.ID, "done", execution.ID).Updates(map[string]any{
+				"status": "todo", "labels": issueLabelsColumn(withoutIssueLabels(issue, issueLabelFailed)), "execution_phase": "recovering", "checkout_execution_id": "",
 				"recovery_execution_id": execution.ID, "recovery_phase": "validating", "recovery_requested_at": now,
 				"error": "", "completed_at": nil, "updated_at": now,
 			}).Error
@@ -3485,7 +3485,7 @@ func (m *Manager) reconcileCompletedPlanningTools() {
 			continue
 		}
 		issue, err := m.store.GetIssue(execution.IssueID)
-		if err != nil || issue.Status != "blocked" || issue.ExecutionPhase != "blocked" || issue.CurrentExecutionID != execution.ID {
+		if err != nil || !hasIssueLabel(issue, issueLabelBlocked) || issue.ExecutionPhase != "blocked" || issue.CurrentExecutionID != execution.ID {
 			continue
 		}
 		result := strings.TrimSpace(execution.Result)

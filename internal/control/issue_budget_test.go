@@ -133,7 +133,7 @@ func TestBudgetOutcomeIsBusinessStatusAndCanBeReopened(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished, _ := store.GetIssue(child.ID)
-	if finished.Status != "budget_exceeded" || !issueStatusTerminal(finished.Status) || finished.Result == "" {
+	if finished.Status != "done" || !hasIssueLabel(finished, issueLabelBudgetExceeded) || !issueStatusTerminal(finished.Status) || finished.Result == "" {
 		t.Fatalf("unexpected budget outcome: %+v", finished)
 	}
 	todo := "todo"
@@ -157,7 +157,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 	root, _ := store.CreateIssue(CreateIssueInput{Title: "Root", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	child, _ := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Child", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	now := time.Now()
-	_ = store.db.Model(&Issue{}).Where("id = ?", child.ID).Updates(map[string]any{"status": "budget_exceeded", "execution_phase": "budget_exceeded", "result": "promising evidence", "completed_at": now}).Error
+	_ = store.db.Model(&Issue{}).Where("id = ?", child.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"budget_exceeded"}), "execution_phase": "budget_exceeded", "result": "promising evidence", "completed_at": now}).Error
 	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: child.ID, Reason: "证据有价值，继续验证"}); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 		t.Fatalf("assignment events=%d, want 1", pending)
 	}
 	failedChild, _ := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Failed child", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
-	_ = store.db.Model(&Issue{}).Where("id = ?", failedChild.ID).Updates(map[string]any{"status": "failed", "execution_phase": "completed", "error": "provider unavailable", "completed_at": now}).Error
+	_ = store.db.Model(&Issue{}).Where("id = ?", failedChild.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"failed"}), "execution_phase": "completed", "error": "provider unavailable", "completed_at": now}).Error
 	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: failedChild.ID, Reason: "临时错误，可以恢复"}); err != nil {
 		t.Fatal(err)
 	}

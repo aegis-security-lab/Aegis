@@ -104,7 +104,7 @@ func (m *Manager) SubmitFinalResult(executionID, token string, input SubmitFinal
 	var existing int64
 	_ = m.store.db.Model(&IssueComment{}).Where("issue_id = ? AND execution_id = ? AND type = ?", issue.ID, execution.ID, "delivery").Count(&existing).Error
 	if existing == 0 {
-		if issue.Status == "todo" || issue.Status == "backlog" {
+		if issue.Status == "todo" {
 			_ = m.store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
 				"status": "in_progress", "execution_phase": "active", "current_execution_id": execution.ID,
 				"checkout_execution_id": execution.ID, "started_at": time.Now(), "updated_at": time.Now(),

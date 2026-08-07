@@ -35,6 +35,7 @@ type Store struct {
 	updatedAt        time.Time
 	subscribers      map[chan StateView]struct{}
 	broadcastPending bool
+	cachedState      *StateView
 	observabilityMu  sync.RWMutex
 	observability    *SystemObservability
 }
@@ -419,7 +420,7 @@ func NewStore(dataDir string) (*Store, error) {
 			return err
 		}
 		var interruptedIssues []Issue
-		if err := tx.Where("hidden = ? AND status = ? AND execution_phase NOT IN ?", false, "in_progress", []string{"waiting_children", "sleeping", "summarizing"}).Find(&interruptedIssues).Error; err != nil {
+		if err := tx.Where("hidden = ? AND status = ? AND execution_phase NOT IN ?", false, "in_progress", []string{"waiting_children", "sleeping", "summarizing", "blocked"}).Find(&interruptedIssues).Error; err != nil {
 			return err
 		}
 		for _, issue := range interruptedIssues {
@@ -485,11 +486,40 @@ func NewStore(dataDir string) (*Store, error) {
 				return err
 			}
 		}
+		if err := migrateLegacyIssueStatuses(tx, now); err != nil {
+			return err
+		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// migrateLegacyIssueStatuses rewrites pre-label statuses onto the five-state
+// workflow. Operational outcomes are preserved as labels so historical boards
+// keep their signal. The function is idempotent: it only touches rows whose
+// status is still in the legacy vocabulary, so it may run on every startup.
+func migrateLegacyIssueStatuses(tx *gorm.DB, now time.Time) error {
+	var issues []Issue
+	if err := tx.Where("status IN ?", []string{"backlog", "blocked", "failed", "budget_exceeded"}).Find(&issues).Error; err != nil {
+		return err
+	}
+	for _, issue := range issues {
+		status, labels := normalizeIssueStatus(issue.Status)
+		updates := map[string]any{
+			"status":     status,
+			"labels":     issueLabelsColumn(withIssueLabels(issue, labels...)),
+			"updated_at": now,
+		}
+		if status == "done" && issue.CompletedAt == nil {
+			updates["completed_at"] = &now
+		}
+		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func migrateTaskWorkspaceIsolation(db *gorm.DB) error {
@@ -812,7 +842,16 @@ func normalizeValidationPolicy(mode string, attempts int) (string, int) {
 	}
 	return mode, attempts
 }
-func (s *Store) State() StateView { s.mu.RLock(); defer s.mu.RUnlock(); return s.stateViewLocked() }
+func (s *Store) State() StateView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cachedState != nil {
+		return *s.cachedState
+	}
+	view := s.stateViewLocked()
+	s.cachedState = &view
+	return view
+}
 func (s *Store) stateViewLocked() StateView {
 	var projects []Project
 	var containerProfiles []ContainerProfile
@@ -872,7 +911,14 @@ func (s *Store) broadcastLocked() {
 		}
 	}
 }
-func (s *Store) changedLocked() { s.updatedAt = time.Now(); s.broadcastLocked() }
+func (s *Store) touchLocked() {
+	s.updatedAt = time.Now()
+	s.cachedState = nil
+}
+func (s *Store) changedLocked() {
+	s.touchLocked()
+	s.broadcastLocked()
+}
 
 func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	requestedWorkspace := strings.TrimSpace(input.Workspace)
@@ -1016,6 +1062,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	if status == "" {
 		status = "todo"
 	}
+	status, derivedLabels := normalizeIssueStatus(status)
 	if !validIssueStatus(status) {
 		return Issue{}, errors.New("invalid issue status")
 	}
@@ -1031,7 +1078,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Labels: derivedLabels, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -1383,31 +1430,51 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		}
 		updates["parent_id"] = *input.ParentID
 	}
+	labels := issue.Labels
+	labelsChanged := false
+	if input.Labels != nil {
+		next := slices.Clone(*input.Labels)
+		slices.Sort(next)
+		labels = next
+		labelsChanged = !slices.Equal(labels, issue.Labels)
+	}
 	if input.Status != nil {
-		if !validIssueStatus(*input.Status) {
+		status, legacyLabels := normalizeIssueStatus(*input.Status)
+		if !validIssueStatus(status) {
 			return Issue{}, errors.New("invalid issue status")
 		}
-		updates["status"] = *input.Status
+		updates["status"] = status
 		now := time.Now()
-		if *input.Status == "done" || *input.Status == "failed" || *input.Status == "budget_exceeded" {
+		if status == "done" {
 			updates["completed_at"] = &now
 			updates["checkout_execution_id"] = ""
-			updates["execution_phase"] = fallback(map[string]string{"budget_exceeded": "budget_exceeded"}[*input.Status], "completed")
-		} else if *input.Status == "cancelled" {
+			updates["execution_phase"] = "completed"
+		} else if status == "cancelled" {
 			updates["cancelled_at"] = &now
 			updates["checkout_execution_id"] = ""
 			updates["execution_phase"] = "completed"
 		} else {
 			updates["completed_at"] = nil
 			updates["cancelled_at"] = nil
-			if *input.Status == "todo" || *input.Status == "backlog" {
+			if status == "todo" {
 				updates["execution_phase"] = "active"
-				if slices.Contains([]string{"failed", "budget_exceeded"}, issue.Status) {
+				if hasIssueLabel(issue, issueLabelFailed, issueLabelBudgetExceeded, issueLabelBlocked) {
+					// Reopening a failed/blocked outcome drops the operational
+					// labels and error so the issue re-enters the schedulable queue.
 					updates["error"] = ""
 					updates["checkout_execution_id"] = ""
+					labels = withoutIssueLabels(issue, issueLabelFailed, issueLabelBudgetExceeded, issueLabelBlocked)
+					labelsChanged = true
 				}
 			}
 		}
+		if len(legacyLabels) > 0 {
+			labels = withIssueLabels(issue, legacyLabels...)
+			labelsChanged = true
+		}
+	}
+	if labelsChanged {
+		updates["labels"] = issueLabelsColumn(labels)
 	}
 	if err := s.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
 		return Issue{}, err
@@ -1429,7 +1496,30 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 }
 
 func validIssueStatus(v string) bool {
-	return slices.Contains([]string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "failed", "budget_exceeded", "cancelled"}, v)
+	return slices.Contains(workflowIssueStatuses, v)
+}
+
+// workflowIssueStatuses is the five-state business projection. Operational
+// outcomes such as blocked, failed and budget_exceeded are carried as Issue
+// labels instead of competing statuses.
+var workflowIssueStatuses = []string{"todo", "in_progress", "in_review", "done", "cancelled"}
+
+// normalizeIssueStatus maps legacy status values onto the five-state workflow
+// and returns any labels that should accompany the transition. Legacy values
+// may still exist in old databases until the startup migration rewrites them.
+func normalizeIssueStatus(value string) (string, []string) {
+	switch value {
+	case "backlog":
+		return "todo", nil
+	case "blocked":
+		return "in_progress", []string{issueLabelBlocked}
+	case "failed":
+		return "done", []string{issueLabelFailed}
+	case "budget_exceeded":
+		return "done", []string{issueLabelBudgetExceeded}
+	default:
+		return value, nil
+	}
 }
 
 func normalizeIssuePriority(value string) string {
@@ -1445,7 +1535,7 @@ func normalizeIssuePriority(value string) string {
 	}
 }
 
-var terminalIssueStatuses = []string{"done", "failed", "budget_exceeded", "cancelled"}
+var terminalIssueStatuses = []string{"done", "cancelled"}
 
 func issueStatusTerminal(status string) bool {
 	return slices.Contains(terminalIssueStatuses, status)
@@ -1470,7 +1560,7 @@ func (s *Store) CheckoutIssue(id string, input CheckoutIssueInput) (Issue, error
 		return Issue{}, errors.New("agentId 和 executionId 必填")
 	}
 	if len(input.ExpectedStatuses) == 0 {
-		input.ExpectedStatuses = []string{"todo", "backlog"}
+		input.ExpectedStatuses = []string{"todo"}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1803,7 +1893,7 @@ func (s *Store) addEvent(executionID, issueID, kind, title, detail string) {
 }
 func (s *Store) notify() {
 	s.mu.Lock()
-	s.updatedAt = time.Now()
+	s.touchLocked()
 	if len(s.subscribers) == 0 {
 		s.mu.Unlock()
 		return

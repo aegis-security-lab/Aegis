@@ -354,7 +354,7 @@ func (r NativeIssueRunner) finalizeBudgetExceeded(prepared preparedIssueExecutio
 	updated := r.Manager.store.db.Model(&Issue{}).
 		Where("id = ? AND current_execution_id = ? AND status NOT IN ?", prepared.issue.ID, prepared.execution.ID, terminalIssueStatuses).
 		Updates(map[string]any{
-			"status": "budget_exceeded", "execution_phase": "budget_exceeded", "result": summary,
+			"status": "done", "labels": issueLabelsColumn(withIssueLabels(prepared.issue, issueLabelBudgetExceeded)), "execution_phase": "budget_exceeded", "result": summary,
 			"error": outcome.Reason, "checkout_execution_id": "", "completed_at": now, "updated_at": now,
 		})
 	if updated.Error != nil {
@@ -494,13 +494,25 @@ func (r NativeIssueRunner) terminalChildAttentionPrompt(parentID string) string 
 		return ""
 	}
 	var children []Issue
-	if err := r.Manager.store.db.Where("parent_id = ? AND status IN ?", parentID, []string{"failed", "budget_exceeded"}).Order("updated_at desc, number asc").Limit(20).Find(&children).Error; err != nil || len(children) == 0 {
+	if err := r.Manager.store.db.Where("parent_id = ?", parentID).Order("updated_at desc, number asc").Limit(100).Find(&children).Error; err != nil || len(children) == 0 {
 		return ""
+	}
+	failed := make([]Issue, 0, len(children))
+	for _, child := range children {
+		if child.Status == "done" && hasIssueLabel(child, issueLabelFailed, issueLabelBudgetExceeded) {
+			failed = append(failed, child)
+		}
+	}
+	if len(failed) == 0 {
+		return ""
+	}
+	if len(failed) > 20 {
+		failed = failed[:20]
 	}
 	var summary strings.Builder
 	summary.WriteString("## 必须处理的直属子 Issue 异常结果\n\n恢复 Execution 排队期间出现了以下失败或超预算结果。不要继续被动等待；逐项明确选择 phone_board_continue_issue、使用 phone_board_delegate 委派替代方向，或接受部分结果并继续父目标：\n")
-	for _, child := range children {
-		fmt.Fprintf(&summary, "\n- %s · %s [%s]\n  结果：%s\n  错误：%s\n", child.Identifier, child.Title, child.Status, fallback(truncate(strings.TrimSpace(child.Result), 2400), "无结果摘要"), fallback(truncate(strings.TrimSpace(child.Error), 1000), "无"))
+	for _, child := range failed {
+		fmt.Fprintf(&summary, "\n- %s · %s [%s]\n  结果：%s\n  错误：%s\n", child.Identifier, child.Title, strings.Join(child.Labels, ","), fallback(truncate(strings.TrimSpace(child.Result), 2400), "无结果摘要"), fallback(truncate(strings.TrimSpace(child.Error), 1000), "无"))
 	}
 	return summary.String()
 }

@@ -231,7 +231,7 @@ func TestDisableValidationAdoptsCandidateBlockedAtValidationLimit(t *testing.T) 
 		t.Fatal(err)
 	}
 	if err := store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-		"status": "blocked", "execution_phase": "blocked", "result": candidate,
+		"status": "in_progress", "labels": issueLabelsColumn([]string{"blocked"}), "execution_phase": "blocked", "result": candidate,
 		"current_execution_id": validator.ID, "validation_execution_id": validator.ID,
 	}).Error; err != nil {
 		t.Fatal(err)
