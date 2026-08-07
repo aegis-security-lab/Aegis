@@ -65,11 +65,11 @@ export function TabBar({
               "group flex h-7 w-40 shrink-0 cursor-pointer items-center gap-1.5 rounded-2xl px-3 text-sm select-none",
               active
                 ? "bg-card text-foreground shadow-sm ring-1 ring-foreground/5"
-                : "bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground",
+                : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground",
               isDropTarget && "ring-2 ring-primary/50"
             )}
           >
-            <span className="truncate">{tab.title}</span>
+            <span className="min-w-0 flex-1 truncate">{tab.title}</span>
             <button
               type="button"
               aria-label={`关闭 ${tab.title}`}
@@ -78,7 +78,7 @@ export function TabBar({
                 onRemove(tab.id)
               }}
               className={cn(
-                "size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground",
+                "ml-auto flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground",
                 active ? "flex" : "hidden group-hover:flex"
               )}
             >
