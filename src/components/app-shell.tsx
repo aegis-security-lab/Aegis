@@ -10,12 +10,13 @@ import {
   Sun,
   type LucideIcon,
 } from "lucide-react"
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 
 import { AegisLogo } from "@/components/aegis-logo"
 import { ContentArea } from "@/components/content-area"
 import { SettingsOverlay, type OverlayGroup } from "@/components/settings-overlay"
 import { SidebarTaskGroup } from "@/components/sidebar-tasks"
+import { TabBar, type TabItem } from "@/components/tab-bar"
 import { useTheme } from "@/components/theme-provider"
 import {
   DropdownMenu,
@@ -42,6 +43,8 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { useAppState } from "@/lib/state"
+import { lastCrumbLabel } from "@/lib/route-crumbs"
+import type { Issue, Task } from "@/types"
 
 type NavigationItem = {
   to: string
@@ -71,13 +74,97 @@ function isRouteActive(pathname: string, item: NavigationItem) {
   return pathname === item.to || pathname.startsWith(`${item.to}/`)
 }
 
+let tabSeq = 0
+function newTabId() {
+  tabSeq += 1
+  return `tab-${tabSeq}`
+}
+
+type TabState = {
+  id: string
+  path: string
+}
+
+function routeTitle(pathname: string, issues: Issue[], tasks: Task[]) {
+  return lastCrumbLabel(pathname, issues, tasks) ?? "页面"
+}
+
 export function AppShell() {
   const { state } = useAppState()
   const location = useLocation()
+  const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
   const [overlayGroup, setOverlayGroup] = React.useState<OverlayGroup | null>(
     null
   )
+  const [tabs, setTabs] = React.useState<TabState[]>(() => [
+    { id: newTabId(), path: location.pathname },
+  ])
+  const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0].id)
+  const [syncedPath, setSyncedPath] = React.useState(location.pathname)
+
+  if (syncedPath !== location.pathname) {
+    setSyncedPath(location.pathname)
+    setTabs((previous) =>
+      previous.map((tab) =>
+        tab.id === activeTabId && tab.path !== location.pathname
+          ? { ...tab, path: location.pathname }
+          : tab
+      )
+    )
+  }
+
+  const tabItems: TabItem[] = tabs.map((tab) => ({
+    ...tab,
+    title: routeTitle(tab.path, state?.issues ?? [], state?.tasks ?? []),
+  }))
+
+  const activateTab = (id: string) => {
+    if (id === activeTabId) return
+    const tab = tabs.find((candidate) => candidate.id === id)
+    if (!tab) return
+    setActiveTabId(id)
+    navigate(tab.path)
+  }
+
+  const addTab = () => {
+    const tab: TabState = { id: newTabId(), path: "/workspace" }
+    setTabs((previous) => [...previous, tab])
+    setActiveTabId(tab.id)
+    navigate("/workspace")
+  }
+
+  const removeTab = (id: string) => {
+    const index = tabs.findIndex((candidate) => candidate.id === id)
+    if (index === -1) return
+    const next = tabs.filter((candidate) => candidate.id !== id)
+    if (next.length === 0) {
+      const fresh: TabState = { id: newTabId(), path: "/workspace" }
+      setTabs([fresh])
+      setActiveTabId(fresh.id)
+      navigate("/workspace")
+      return
+    }
+    setTabs(next)
+    if (id === activeTabId) {
+      const target = next[Math.min(index, next.length - 1)]
+      setActiveTabId(target.id)
+      navigate(target.path)
+    }
+  }
+
+  const reorderTabs = (fromId: string, toId: string) => {
+    if (fromId === toId) return
+    setTabs((previous) => {
+      const from = previous.findIndex((candidate) => candidate.id === fromId)
+      const to = previous.findIndex((candidate) => candidate.id === toId)
+      if (from === -1 || to === -1) return previous
+      const next = [...previous]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
+  }
   const pendingApprovals =
     state?.approvals.filter((approval) => approval.status === "pending")
       .length ?? 0
@@ -226,6 +313,14 @@ export function AppShell() {
 
       <SidebarInset className="flex h-svh min-h-0 flex-col p-1.5 sm:p-2">
         <SidebarTrigger className="fixed right-4 bottom-4 z-40 size-11 rounded-full shadow-lg ring-1 ring-foreground/10 md:hidden" />
+        <TabBar
+          tabs={tabItems}
+          activeId={activeTabId}
+          onActivate={activateTab}
+          onAdd={addTab}
+          onRemove={removeTab}
+          onReorder={reorderTabs}
+        />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-card shadow-sm ring-1 ring-foreground/5">
           <ContentArea fullHeight={fullHeightRoute}>
             <Outlet />
