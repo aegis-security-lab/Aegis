@@ -159,172 +159,174 @@ export function TaskDetailPage() {
   const runs = taskRuns(issue, source, state?.issues ?? [issue])
 
   return (
-    <div className="flex size-full min-h-0 flex-col gap-5 overflow-y-auto">
-      <TimelinePanel
-        taskId={issue.id}
-        className="h-[480px] rounded-lg border bg-muted/10"
-      />
+    <div className="relative size-full min-h-0 overflow-hidden">
+      <div className="size-full min-h-0 overflow-y-auto pr-1 lg:pr-[380px]">
+        <div className="flex min-h-full flex-col gap-5">
+          <TaskPhoneBelt
+            root={issue}
+            issues={state?.issues ?? [issue]}
+            agents={state?.agents ?? []}
+            taskAgents={taskAgents}
+            phones={phones}
+            runtimes={state?.issueRuntimes ?? []}
+            error={phoneError}
+          />
 
-      <TaskPhoneBelt
-        root={issue}
-        issues={state?.issues ?? [issue]}
-        agents={state?.agents ?? []}
-        taskAgents={taskAgents}
-        phones={phones}
-        runtimes={state?.issueRuntimes ?? []}
-        error={phoneError}
-      />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>原始任务参数</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2">
-          <TaskParameter label="标题" value={parameters.title} />
-          <TaskParameter
-            label="项目"
-            value={referenceName(
-              parameters.projectId,
-              state?.projects.find(
-                (candidate) => candidate.id === parameters.projectId
-              )?.name
-            )}
-          />
-          <TaskParameter
-            label="描述"
-            value={parameters.description || "未填写"}
-          />
-          <TaskParameter
-            label="目标"
-            value={parameters.objective || "未填写"}
-          />
-          <TaskParameter
-            label="执行边界"
-            value={parameters.constraints || "未填写"}
-          />
-          <TaskParameter
-            label={parameters.containerProfileId ? "容器工作目录" : "工作目录"}
-            value={
-              parameters.containerProfileId
-                ? (state?.containers.find(
-                    (container) => container.id === parameters.containerId
-                  )?.workspacePath ??
-                  state?.containerProfiles.find(
-                    (profile) => profile.id === parameters.containerProfileId
-                  )?.workspacePath ??
-                  "容器尚未创建")
-                : parameters.workspace
-            }
-            mono
-          />
-          <TaskParameter
-            label="执行环境"
-            value={
-              parameters.containerProfileId
-                ? referenceName(
-                    parameters.containerProfileId,
-                    state?.containerProfiles.find(
-                      (candidate) =>
-                        candidate.id === parameters.containerProfileId
-                    )?.name
-                  )
-                : "宿主机"
-            }
-          />
-          <TaskParameter
-            label="负责 Agent"
-            value={referenceName(
-              parameters.assigneeAgentId,
-              state?.agents.find(
-                (candidate) => candidate.id === parameters.assigneeAgentId
-              )?.name
-            )}
-          />
-          <TaskParameter label="协作模式" value="Board Autonomy" />
-          <TaskParameter label="优先级" value={parameters.priority} />
-          <TaskParameter
-            label="创建时间"
-            value={formatTime(parameters.createdAt)}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>执行记录</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {runs.map((run, index) => (
-            <Link
-              key={run.id}
-              to={`/issues/${run.id}`}
-              className="flex items-center gap-4 rounded-lg border px-4 py-3 transition-colors hover:bg-muted/40"
-            >
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    第 {runs.length - index} 次
-                  </span>
-                  <span className="truncate text-sm font-medium">
-                    {run.identifier} · {run.title}
-                  </span>
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {formatTime(run.createdAt)} ·{" "}
-                  {agentLabel(run, state?.agents ?? [])}
-                </span>
-              </div>
-              <IssueRuntimeBadge
-                runtime={issueRuntimeOrUnavailable(runtimeMap, run.id)}
+          <Card>
+            <CardHeader>
+              <CardTitle>原始任务参数</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2">
+              <TaskParameter label="标题" value={parameters.title} />
+              <TaskParameter
+                label="项目"
+                value={referenceName(
+                  parameters.projectId,
+                  state?.projects.find(
+                    (candidate) => candidate.id === parameters.projectId
+                  )?.name
+                )}
               />
-              <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
-            </Link>
-          ))}
-        </CardContent>
-      </Card>
+              <TaskParameter
+                label="描述"
+                value={parameters.description || "未填写"}
+              />
+              <TaskParameter
+                label="目标"
+                value={parameters.objective || "未填写"}
+              />
+              <TaskParameter
+                label="执行边界"
+                value={parameters.constraints || "未填写"}
+              />
+              <TaskParameter
+                label={parameters.containerProfileId ? "容器工作目录" : "工作目录"}
+                value={
+                  parameters.containerProfileId
+                    ? (state?.containers.find(
+                        (container) => container.id === parameters.containerId
+                      )?.workspacePath ??
+                      state?.containerProfiles.find(
+                        (profile) => profile.id === parameters.containerProfileId
+                      )?.workspacePath ??
+                      "容器尚未创建")
+                    : parameters.workspace
+                }
+                mono
+              />
+              <TaskParameter
+                label="执行环境"
+                value={
+                  parameters.containerProfileId
+                    ? referenceName(
+                        parameters.containerProfileId,
+                        state?.containerProfiles.find(
+                          (candidate) =>
+                            candidate.id === parameters.containerProfileId
+                        )?.name
+                      )
+                    : "宿主机"
+                }
+              />
+              <TaskParameter
+                label="负责 Agent"
+                value={referenceName(
+                  parameters.assigneeAgentId,
+                  state?.agents.find(
+                    (candidate) => candidate.id === parameters.assigneeAgentId
+                  )?.name
+                )}
+              />
+              <TaskParameter label="协作模式" value="Board Autonomy" />
+              <TaskParameter label="优先级" value={parameters.priority} />
+              <TaskParameter
+                label="创建时间"
+                value={formatTime(parameters.createdAt)}
+              />
+            </CardContent>
+          </Card>
 
-      {detail.inputAttachments.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>输入附件</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {detail.inputAttachments.map((attachment) => (
-              <div
-                key={attachment.id}
-                className="flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5"
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                  <Paperclip className="size-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
-                    {attachment.name}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {attachment.mimeType} · {formatBytes(attachment.size)}
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`下载 ${attachment.name}`}
-                  title="下载附件"
-                  render={
-                    <a
-                      href={`/api/input-attachments/${encodeURIComponent(attachment.id)}`}
-                      download={attachment.name}
-                    />
-                  }
-                  nativeButton={false}
+          <Card>
+            <CardHeader>
+              <CardTitle>执行记录</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {runs.map((run, index) => (
+                <Link
+                  key={run.id}
+                  to={`/issues/${run.id}`}
+                  className="flex items-center gap-4 rounded-lg border px-4 py-3 transition-colors hover:bg-muted/40"
                 >
-                  <Download />
-                </Button>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      ) : null}
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                        第 {runs.length - index} 次
+                      </span>
+                      <span className="truncate text-sm font-medium">
+                        {run.identifier} · {run.title}
+                      </span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {formatTime(run.createdAt)} ·{" "}
+                      {agentLabel(run, state?.agents ?? [])}
+                    </span>
+                  </div>
+                  <IssueRuntimeBadge
+                    runtime={issueRuntimeOrUnavailable(runtimeMap, run.id)}
+                  />
+                  <LinkIcon className="size-4 shrink-0 text-muted-foreground" />
+                </Link>
+              ))}
+            </CardContent>
+          </Card>
+
+          {detail.inputAttachments.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>输入附件</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {detail.inputAttachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5"
+                  >
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                      <Paperclip className="size-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {attachment.name}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {attachment.mimeType} · {formatBytes(attachment.size)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`下载 ${attachment.name}`}
+                      title="下载附件"
+                      render={
+                        <a
+                          href={`/api/input-attachments/${encodeURIComponent(attachment.id)}`}
+                          download={attachment.name}
+                        />
+                      }
+                      nativeButton={false}
+                    >
+                      <Download />
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
+      </div>
+      <aside className="absolute inset-y-0 right-2 hidden w-[360px] flex-col overflow-hidden rounded-xl bg-card lg:flex">
+        <TimelinePanel taskId={issue.id} className="h-full" />
+      </aside>
     </div>
   )
 }
