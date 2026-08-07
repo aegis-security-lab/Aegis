@@ -27,7 +27,8 @@ const simpleCrumbs: Array<{ prefix: string; label: string }> = [
 export function buildCrumbs(
   pathname: string,
   issues: Issue[],
-  tasks: Task[]
+  tasks: Task[],
+  fromBoard = false
 ): Crumb[] {
   if (pathname === "/") return [{ label: "概览", current: true }]
   if (pathname === "/tasks/new") {
@@ -66,10 +67,15 @@ export function buildCrumbs(
         label: taskTitle(root, tasks) ?? "任务",
         to: root ? `/tasks/${root.id}` : "/tasks",
       },
-      {
-        label: "Issues",
-        to: root ? `/tasks/${root.id}/issues` : "/issues",
-      },
+      fromBoard
+        ? {
+            label: "Board",
+            to: root ? `/tasks/${root.id}/board` : "/tasks",
+          }
+        : {
+            label: "Issues",
+            to: root ? `/tasks/${root.id}/issues` : "/issues",
+          },
       { label: issue?.title ?? "Issue", current: true },
     ]
   }
