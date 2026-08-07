@@ -1,15 +1,13 @@
 import {
   ListTodo,
-  Plus,
-  Search,
 } from "lucide-react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
+import { SearchInput } from "@/components/ui/search-input"
 import { TaskRowMenu } from "@/components/task-row-menu"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import {
   Empty,
@@ -18,7 +16,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { formatCost, formatTime } from "@/lib/format"
@@ -84,30 +81,16 @@ export function TasksPage() {
         eyebrow="Work"
         title="任务"
         description="按状态定位目标，进入任务后查看计划树、执行记录和交付文件。"
-        actions={
-          <Button
-            size="sm"
-            render={<Link to="/tasks/new" />}
-            nativeButton={false}
-          >
-            <Plus data-icon="inline-start" />
-            新建任务
-          </Button>
-        }
       />
 
       <Card className="min-w-0">
         <CardHeader className="flex flex-col gap-3 border-b pb-3 lg:flex-row lg:items-center">
-          <div className="relative min-w-0 flex-1 lg:max-w-sm">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              aria-label="搜索任务"
-              placeholder="搜索标题或编号…"
-              className="pl-8"
-            />
-          </div>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            ariaLabel="搜索任务"
+            placeholder="搜索标题或编号…"
+          />
           <ToggleGroup
             value={[filter]}
             onValueChange={(value) =>
@@ -138,14 +121,6 @@ export function TasksPage() {
                   发布目标后，Aegis 会创建计划并启动真实执行。
                 </EmptyDescription>
               </EmptyHeader>
-              <Button
-                size="sm"
-                render={<Link to="/tasks/new" />}
-                nativeButton={false}
-              >
-                <Plus data-icon="inline-start" />
-                发布第一个任务
-              </Button>
             </Empty>
           ) : rows.length === 0 ? (
             <Empty className="border-0 py-14">

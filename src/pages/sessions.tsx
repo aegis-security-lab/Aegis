@@ -1,5 +1,5 @@
 import * as React from "react"
-import { MessageSquareText, Search } from "lucide-react"
+import { MessageSquareText } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
@@ -12,7 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import {
   Table,
   TableBody,
@@ -49,15 +49,11 @@ export function SessionsPage() {
               Session，多次执行会继续同一段对话。
             </CardDescription>
           </div>
-          <div className="relative w-full md:w-80">
-            <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索 Agent、Issue、Session…"
-            />
-          </div>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="搜索 Agent、Issue、Session…"
+          />
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <Table>

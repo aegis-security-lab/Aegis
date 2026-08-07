@@ -5,7 +5,6 @@ import {
   LibraryBig,
   Pencil,
   Plus,
-  Search,
   Trash2,
 } from "lucide-react"
 import { Link } from "react-router-dom"
@@ -42,6 +41,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import { deleteKnowledgeBase } from "@/lib/api"
 import { useAppState } from "@/lib/state"
 import type { KnowledgeBase } from "@/types"
@@ -97,16 +97,12 @@ export function KnowledgeBasesPage() {
 
       <Card size="sm">
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              aria-label="搜索知识库"
-              className="pl-9"
-              placeholder="搜索名称或介绍"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            ariaLabel="搜索知识库"
+            placeholder="搜索名称或介绍"
+          />
           <Button onClick={() => setEditing("new")}>
             <Plus data-icon="inline-start" />
             创建知识库

@@ -3,8 +3,6 @@ import {
   ChevronRight,
   ChevronsDown,
   ChevronsUp,
-  Search,
-  X,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 
@@ -12,7 +10,7 @@ import { IssueTree } from "@/components/issue-tree"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
@@ -70,7 +68,6 @@ export function IssuesPage() {
   )
   const [expansionVersion, setExpansionVersion] = React.useState(0)
   const [viewMode, setViewMode] = React.useState<ViewMode>("tree")
-  const [searchOpen, setSearchOpen] = React.useState(false)
   const [openGroups, setOpenGroups] = React.useState<
     Record<IssueGroupKey, boolean>
   >(() =>
@@ -112,83 +109,42 @@ export function IssuesPage() {
   return (
     <div className="flex size-full min-h-0 flex-col gap-4">
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {searchOpen ? (
-          <>
-            <div className="relative min-w-0 flex-1 sm:max-w-xs">
-              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                autoFocus
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    setSearchOpen(false)
-                    setQuery("")
-                  }
-                }}
-                aria-label="搜索 Issue"
-                placeholder="搜索编号或标题…"
-                className="pl-8"
-              />
-            </div>
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label="关闭搜索"
-              onClick={() => {
-                setSearchOpen(false)
-                setQuery("")
-              }}
-            >
-              <X />
-            </Button>
-          </>
-        ) : (
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          ariaLabel="搜索 Issue"
+          placeholder="搜索编号或标题…"
+        />
+        <ToggleGroup
+          className="min-w-0 justify-start overflow-x-auto"
+          value={[filter]}
+          onValueChange={(value) => setFilter(String(value[0] ?? "all"))}
+          variant="outline"
+          size="sm"
+          aria-label="按状态筛选 Issue"
+        >
+          <ToggleGroupItem value="all">全部</ToggleGroupItem>
+          {statuses.map((status) => (
+            <ToggleGroupItem key={status} value={status}>
+              {statusLabels[status]}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        {viewMode === "tree" ? (
           <Button
-            type="button"
-            size="icon-sm"
+            size="sm"
             variant="outline"
-            aria-label="搜索 Issue"
-            onClick={() => setSearchOpen(true)}
+            className="shrink-0"
+            onClick={() => {
+              setExpansion(expansion === "all" ? "none" : "all")
+              setExpansionVersion((value) => value + 1)
+            }}
           >
-            <Search />
+            {expansion === "all" ? <ChevronsUp /> : <ChevronsDown />}
+            <span className="hidden sm:inline">
+              {expansion === "all" ? "收起全部" : "展开全部"}
+            </span>
           </Button>
-        )}
-        {!searchOpen ? (
-          <>
-            <ToggleGroup
-              className="min-w-0 justify-start overflow-x-auto"
-              value={[filter]}
-              onValueChange={(value) => setFilter(String(value[0] ?? "all"))}
-              variant="outline"
-              size="sm"
-              aria-label="按状态筛选 Issue"
-            >
-              <ToggleGroupItem value="all">全部</ToggleGroupItem>
-              {statuses.map((status) => (
-                <ToggleGroupItem key={status} value={status}>
-                  {statusLabels[status]}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-            {viewMode === "tree" ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="shrink-0"
-                onClick={() => {
-                  setExpansion(expansion === "all" ? "none" : "all")
-                  setExpansionVersion((value) => value + 1)
-                }}
-              >
-                {expansion === "all" ? <ChevronsUp /> : <ChevronsDown />}
-                <span className="hidden sm:inline">
-                  {expansion === "all" ? "收起全部" : "展开全部"}
-                </span>
-              </Button>
-            ) : null}
-          </>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">树状</span>
