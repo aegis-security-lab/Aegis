@@ -44,6 +44,13 @@ import {
 } from "@/components/ui/sidebar"
 import { useAppState } from "@/lib/state"
 import { lastCrumbLabel } from "@/lib/route-crumbs"
+import {
+  loadActiveTabId,
+  loadTabs,
+  newTabId,
+  saveTabs,
+  type TabState,
+} from "@/lib/tab-storage"
 import type { Issue, Task } from "@/types"
 
 type NavigationItem = {
@@ -74,17 +81,6 @@ function isRouteActive(pathname: string, item: NavigationItem) {
   return pathname === item.to || pathname.startsWith(`${item.to}/`)
 }
 
-let tabSeq = 0
-function newTabId() {
-  tabSeq += 1
-  return `tab-${tabSeq}`
-}
-
-type TabState = {
-  id: string
-  path: string
-}
-
 function routeTitle(pathname: string, issues: Issue[], tasks: Task[]) {
   return lastCrumbLabel(pathname, issues, tasks) ?? "页面"
 }
@@ -97,11 +93,29 @@ export function AppShell() {
   const [overlayGroup, setOverlayGroup] = React.useState<OverlayGroup | null>(
     null
   )
-  const [tabs, setTabs] = React.useState<TabState[]>(() => [
-    { id: newTabId(), path: location.pathname },
-  ])
-  const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0].id)
+  const [tabs, setTabs] = React.useState<TabState[]>(() => {
+    const restored = loadTabs()
+    if (restored) return restored
+    return [{ id: newTabId(), path: location.pathname }]
+  })
+  const [activeTabId, setActiveTabId] = React.useState<string>(() => {
+    const restored = loadActiveTabId()
+    if (restored && tabs.some((tab) => tab.id === restored)) return restored
+    return tabs[0].id
+  })
   const [syncedPath, setSyncedPath] = React.useState(location.pathname)
+
+  React.useEffect(() => {
+    saveTabs(tabs, activeTabId)
+  }, [tabs, activeTabId])
+
+  const bootedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (bootedRef.current) return
+    bootedRef.current = true
+    const active = tabs.find((tab) => tab.id === activeTabId)
+    if (active && active.path !== location.pathname) navigate(active.path)
+  }, [activeTabId, location.pathname, navigate, tabs])
 
   if (syncedPath !== location.pathname) {
     setSyncedPath(location.pathname)
