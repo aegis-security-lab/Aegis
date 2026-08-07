@@ -189,7 +189,7 @@ export function AppShell() {
         跳到主要内容
       </a>
       <Sidebar collapsible="icon" variant="sidebar">
-        <SidebarHeader className="h-14 border-b border-sidebar-border p-1.5">
+        <SidebarHeader className="h-14 p-1.5">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton

@@ -347,34 +347,27 @@ export function BoardIssueDetailPage() {
               <Badge variant="outline">{issue.priority}</Badge>
               <Badge variant="secondary">{assignee?.name || "未委派"}</Badge>
             </div>
-            <section className="flex min-w-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setChildTreeOpen((open) => !open)}
-                aria-expanded={childTreeOpen}
-                className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <ChevronRight
-                  className={cn(
-                    "size-3.5 transition-transform",
-                    childTreeOpen && "rotate-90"
-                  )}
-                />
-                子 Issues
-                <span className="tabular-nums">{detail.children.length}</span>
-              </button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setChildForm(emptyChildIssue)
-                  setCreateOpen(true)
-                }}
-              >
-                <Plus />
-                新建
-              </Button>
-            </section>
+            {detail.children.length > 0 ? (
+              <section className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setChildTreeOpen((open) => !open)}
+                  aria-expanded={childTreeOpen}
+                  className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronRight
+                    className={cn(
+                      "size-3.5 transition-transform",
+                      childTreeOpen && "rotate-90"
+                    )}
+                  />
+                  子 Issues
+                  <span className="tabular-nums">
+                    {detail.children.length}
+                  </span>
+                </button>
+              </section>
+            ) : null}
             {childTreeOpen ? (
               <div className="min-w-0 pl-4">
                 <IssueChildTree

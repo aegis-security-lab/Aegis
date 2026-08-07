@@ -3,9 +3,11 @@ import {
   ChevronRight,
   ChevronsDown,
   ChevronsUp,
+  Plus,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 
+import { CreateIssueDialog } from "@/components/create-issue-dialog"
 import { IssueTree } from "@/components/issue-tree"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Button } from "@/components/ui/button"
@@ -59,6 +61,14 @@ const groupLabels: Record<IssueGroupKey, string> = {
   todo: "待执行",
 }
 
+const groupToStatus: Record<IssueGroupKey, IssueStatus> = {
+  running: "in_progress",
+  waiting: "todo",
+  failed: "failed",
+  finished: "done",
+  todo: "todo",
+}
+
 export function IssuesPage() {
   const { state } = useAppState()
   const { issueId: taskRootId } = useParams()
@@ -69,6 +79,8 @@ export function IssuesPage() {
   )
   const [expansionVersion, setExpansionVersion] = React.useState(0)
   const [viewMode, setViewMode] = React.useState<ViewMode>("tree")
+  const [createOpen, setCreateOpen] = React.useState(false)
+  const [createStatus, setCreateStatus] = React.useState<IssueStatus>("todo")
   const [openGroups, setOpenGroups] = React.useState<
     Record<IssueGroupKey, boolean>
   >(() =>
@@ -132,20 +144,31 @@ export function IssuesPage() {
           ))}
         </ToggleGroup>
         {viewMode === "tree" ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="shrink-0"
-            onClick={() => {
-              setExpansion(expansion === "all" ? "none" : "all")
-              setExpansionVersion((value) => value + 1)
-            }}
-          >
-            {expansion === "all" ? <ChevronsUp /> : <ChevronsDown />}
-            <span className="hidden sm:inline">
-              {expansion === "all" ? "收起全部" : "展开全部"}
-            </span>
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => {
+                setExpansion(expansion === "all" ? "none" : "all")
+                setExpansionVersion((value) => value + 1)
+              }}
+            >
+              {expansion === "all" ? <ChevronsUp /> : <ChevronsDown />}
+              <span className="hidden sm:inline">
+                {expansion === "all" ? "收起全部" : "展开全部"}
+              </span>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus />
+              新增
+            </Button>
+          </>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">树状</span>
@@ -171,26 +194,40 @@ export function IssuesPage() {
                 key={key}
                 className="border-b border-border/60 last:border-0"
               >
-                <button
-                  type="button"
-                  aria-expanded={open}
-                  onClick={() =>
-                    setOpenGroups((current) => ({
-                      ...current,
-                      [key]: !current[key],
-                    }))
-                  }
-                  className="flex h-8 w-full items-center gap-2 rounded-md px-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                >
-                  <ChevronRight
-                    className={cn(
-                      "size-3.5 transition-transform",
-                      open && "rotate-90"
-                    )}
-                  />
-                  {groupLabels[key]}
-                  <span className="tabular-nums">{items.length}</span>
-                </button>
+                <div className="group flex h-8 items-center gap-2 rounded-md px-1 hover:bg-muted/40">
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    onClick={() =>
+                      setOpenGroups((current) => ({
+                        ...current,
+                        [key]: !current[key],
+                      }))
+                    }
+                    className="flex h-full min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    <ChevronRight
+                      className={cn(
+                        "size-3.5 transition-transform",
+                        open && "rotate-90"
+                      )}
+                    />
+                    {groupLabels[key]}
+                    <span className="tabular-nums">{items.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`在「${groupLabels[key]}」中新建 Issue`}
+                    title={`在「${groupLabels[key]}」中新建 Issue`}
+                    onClick={() => {
+                      setCreateStatus(groupToStatus[key])
+                      setCreateOpen(true)
+                    }}
+                    className="shrink-0 rounded-md p-1 text-muted-foreground transition-opacity hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                </div>
                 {open ? (
                   <div className="flex flex-col">
                     {items.length === 0 ? (
@@ -242,6 +279,11 @@ export function IssuesPage() {
           </Card>
         </div>
       )}
+      <CreateIssueDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        defaultStatus={createStatus}
+      />
     </div>
   )
 }
