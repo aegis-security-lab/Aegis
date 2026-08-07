@@ -1,6 +1,6 @@
 import * as React from "react"
 import { LayoutGrid, Plus } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { CreateIssueDialog } from "@/components/create-issue-dialog"
@@ -311,42 +311,51 @@ function BoardCard({
   onDragStart: (event: React.DragEvent) => void
   onDragEnd: () => void
 }) {
+  const navigate = useNavigate()
+  const suppressClick = React.useRef(false)
   const labels = issueLabelsOf(issue)
+  const openIssue = () => {
+    if (suppressClick.current) return
+    navigate(`/issues/${issue.id}?view=board`)
+  }
   return (
     <div
+      role="link"
+      tabIndex={0}
       draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      onClick={openIssue}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          openIssue()
+        }
+      }}
+      onDragStart={(event) => {
+        suppressClick.current = true
+        onDragStart(event)
+      }}
+      onDragEnd={() => {
+        onDragEnd()
+        window.setTimeout(() => {
+          suppressClick.current = false
+        }, 0)
+      }}
       className={cn(
-        "group flex cursor-grab flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity] hover:shadow-md hover:ring-foreground/15 active:cursor-grabbing",
+        "group flex cursor-grab flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity] hover:shadow-md hover:ring-foreground/15 active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
         dragging && "opacity-50"
       )}
     >
       <div className="flex items-center gap-1.5">
-        <Link
-          to={`/issues/${issue.id}?view=board`}
-          draggable={false}
-          className="font-mono text-[11px] text-muted-foreground hover:underline"
-          title={issue.identifier}
-        >
+        <span className="font-mono text-[11px] text-muted-foreground">
           {issue.identifier}
-        </Link>
+        </span>
         <span
-          className={cn(
-            "size-1.5 rounded-full",
-            priorityDot[issue.priority]
-          )}
+          className={cn("size-1.5 rounded-full", priorityDot[issue.priority])}
           title={priorityLabel[issue.priority]}
         />
         <IssueStatusSelect issue={issue} className="ml-auto" />
       </div>
-      <Link
-        to={`/issues/${issue.id}?view=board`}
-        draggable={false}
-        className="line-clamp-2 text-sm leading-snug hover:underline"
-      >
-        {issue.title}
-      </Link>
+      <p className="line-clamp-2 text-sm leading-snug">{issue.title}</p>
       {labels.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1">
           {labels.map((label) => (

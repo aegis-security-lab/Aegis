@@ -91,6 +91,8 @@ export function IssueStatusSelect({
     >
       <SelectTrigger
         aria-label={ariaLabel}
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
         className={cn(
           "gap-1 rounded-full border-0 bg-transparent px-2 py-0 text-[11px] font-medium shadow-none hover:bg-muted data-open:bg-muted data-open:ring-2 data-open:ring-ring/40",
           statusText[value],
