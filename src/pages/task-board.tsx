@@ -1,8 +1,9 @@
 import * as React from "react"
-import { LayoutGrid } from "lucide-react"
+import { LayoutGrid, Plus } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
+import { CreateIssueDialog } from "@/components/create-issue-dialog"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { IssueStatusSelect } from "@/components/issue-status-select"
 import { SearchInput } from "@/components/ui/search-input"
@@ -78,6 +79,9 @@ export function TaskBoardPage() {
   const [query, setQuery] = React.useState("")
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dropTarget, setDropTarget] = React.useState<IssueStatus | null>(null)
+  const [createStatus, setCreateStatus] = React.useState<IssueStatus | null>(
+    null
+  )
 
   const allIssues = state?.issues ?? []
   const scopedIssues = taskRootId
@@ -229,6 +233,15 @@ export function TaskBoardPage() {
                 <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">
                   {total}
                 </span>
+                <button
+                  type="button"
+                  aria-label={`在「${workflowStatusLabels[column.status]}」中新建 Issue`}
+                  title={`在「${workflowStatusLabels[column.status]}」中新建 Issue`}
+                  onClick={() => setCreateStatus(column.status)}
+                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+                >
+                  <Plus className="size-4" />
+                </button>
               </header>
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
                 {items.length === 0 ? (
@@ -267,6 +280,16 @@ export function TaskBoardPage() {
           )
         })}
       </div>
+
+      <CreateIssueDialog
+        open={createStatus !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreateStatus(null)
+        }}
+        defaultStatus={createStatus ?? "todo"}
+        workspace={rootIssue?.workspace}
+        parentId={taskRootId}
+      />
     </div>
   )
 }

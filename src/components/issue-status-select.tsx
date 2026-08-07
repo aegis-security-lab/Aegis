@@ -26,16 +26,22 @@ const statusDot: Record<IssueStatus, string> = {
   cancelled: "bg-muted-foreground/40",
 }
 
+const statusText: Record<IssueStatus, string> = {
+  todo: "text-info",
+  in_progress: "text-success",
+  in_review: "text-warning",
+  done: "text-muted-foreground",
+  cancelled: "text-muted-foreground/70",
+}
+
 export function IssueStatusSelect({
   issue,
   className,
-  size = "sm",
-  align = "center",
+  align = "start",
   ariaLabel = "修改 Issue 状态",
 }: {
   issue: Issue
   className?: string
-  size?: "sm" | "default"
   align?: "start" | "center" | "end"
   ariaLabel?: string
 }) {
@@ -84,27 +90,35 @@ export function IssueStatusSelect({
       }}
     >
       <SelectTrigger
-        size={size}
         aria-label={ariaLabel}
         className={cn(
-          "h-5 gap-1 rounded-md px-1.5 py-0 text-[10px] font-medium",
+          "gap-1 rounded-full border-0 bg-transparent px-2 py-0 text-[11px] font-medium shadow-none hover:bg-muted data-open:bg-muted data-open:ring-2 data-open:ring-ring/40",
+          statusText[value],
           className
         )}
       >
         <span className={cn("size-1.5 shrink-0 rounded-full", statusDot[value])} />
         <SelectValue />
       </SelectTrigger>
-      <SelectContent align={align} className="min-w-36">
+      <SelectContent
+        align={align}
+        side="bottom"
+        sideOffset={4}
+        alignItemWithTrigger={false}
+        className="min-w-36 p-1"
+      >
         <SelectGroup>
           {workflowStatuses.map((status) => (
-            <SelectItem key={status} value={status}>
+            <SelectItem key={status} value={status} className="gap-2 pr-7">
               <span
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",
                   statusDot[status]
                 )}
               />
-              {workflowStatusLabels[status]}
+              <span className={cn("text-xs", statusText[status])}>
+                {workflowStatusLabels[status]}
+              </span>
             </SelectItem>
           ))}
         </SelectGroup>
