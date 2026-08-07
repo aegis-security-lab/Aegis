@@ -153,7 +153,12 @@ function TaskSidebarItem({
           </SidebarMenuSubItem>
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
-              isActive={latest ? location.pathname === `/issues/${latest.id}` : false}
+              isActive={
+                latest
+                  ? location.pathname === `/issues/${latest.id}` &&
+                    new URLSearchParams(location.search).get("view") !== "board"
+                  : false
+              }
               render={<NavLink to={issuesTo ?? "/tasks"} />}
             >
               <GitBranch />
