@@ -40,7 +40,7 @@ export function SearchInput({
       <div
         className={cn(
           "relative transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]",
-          open ? "mr-2" : "mr-0"
+          open ? "mr-2 w-36 sm:w-56" : "mr-0 w-0"
         )}
       >
         <Search
