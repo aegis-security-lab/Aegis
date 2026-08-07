@@ -1,6 +1,9 @@
 package control
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBoardCommentRequiresExplicitAgentCommand(t *testing.T) {
 	store := configuredStore(t)
@@ -139,5 +142,57 @@ func TestBoardCanRemoveRelationAndArchiveRunningIssueTree(t *testing.T) {
 	}
 	if archivedExecution.Status != "cancelled" || !targetSession.closed.Load() {
 		t.Fatalf("runtime was not terminated: status=%s closed=%v", archivedExecution.Status, targetSession.closed.Load())
+	}
+}
+
+func TestBoardStatusInReviewCancelsRunningExecutionAndTriggersValidation(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Review me", Objective: "Deliver the review", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := store.db.Model(&Execution{}).Where("id = ?", execution.ID).Updates(map[string]any{"status": "running", "started_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "in_progress", "current_execution_id": execution.ID, "result": "已产出交付物"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	session := &PiSession{executionID: execution.ID, issueID: issue.ID, agentID: execution.AgentID}
+	manager.sessions[execution.ID] = session
+
+	status := "in_review"
+	updated, err := manager.UpdateBoardIssue(issue.ID, UpdateIssueInput{Status: &status})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "in_review" {
+		t.Fatalf("status=%q want in_review", updated.Status)
+	}
+	var terminated Execution
+	if err := store.db.First(&terminated, "id = ?", execution.ID).Error; err != nil || terminated.Status != "cancelled" {
+		t.Fatalf("running execution was not terminated: status=%s err=%v", terminated.Status, err)
+	}
+	if !session.closed.Load() {
+		t.Fatal("live session was not closed")
+	}
+	var comment IssueComment
+	if err := store.db.Where("issue_id = ? AND type = ?", issue.ID, "delivery").First(&comment).Error; err != nil {
+		t.Fatalf("no delivery comment published: %v", err)
+	}
+	if comment.ExecutionID != execution.ID {
+		t.Fatalf("delivery comment execution=%q want %q", comment.ExecutionID, execution.ID)
+	}
+	var wakeup AgentWakeup
+	if err := store.db.Where("issue_id = ? AND agent_id = ? AND reason = ?", issue.ID, "acceptance-validator", "delivery_validation").First(&wakeup).Error; err != nil {
+		t.Fatalf("no acceptance-validator wakeup: %v", err)
+	}
+	if wakeup.CommentID != comment.ID {
+		t.Fatalf("wakeup comment=%q want %q", wakeup.CommentID, comment.ID)
 	}
 }

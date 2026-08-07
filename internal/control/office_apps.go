@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -287,12 +288,22 @@ func (m *Manager) UpdateBoardIssue(issueID string, input UpdateIssueInput) (Issu
 		input.Status = &status
 	}
 	if input.Status != nil && strings.TrimSpace(*input.Status) != before.Status {
-		var active int64
-		if err = m.store.db.Model(&Execution{}).Where("issue_id = ? AND status IN ?", before.ID, activeExecutionStatuses).Count(&active).Error; err != nil {
-			return Issue{}, err
-		}
-		if active > 0 {
-			return Issue{}, errors.New("Issue 正在执行；只能取消活动工作，不能直接改写为其他状态")
+		target := strings.TrimSpace(*input.Status)
+		if target == "done" || target == "in_review" {
+			// The operator is settling the Issue now: end any live execution
+			// so the Agent stops immediately instead of continuing to burn
+			// turns before the terminal status is noticed.
+			if err := m.terminateIssueExecution(before, "Board 将状态改为 "+target+"，结束当前执行"); err != nil {
+				return Issue{}, err
+			}
+		} else {
+			var active int64
+			if err = m.store.db.Model(&Execution{}).Where("issue_id = ? AND status IN ?", before.ID, activeExecutionStatuses).Count(&active).Error; err != nil {
+				return Issue{}, err
+			}
+			if active > 0 {
+				return Issue{}, errors.New("Issue 正在执行；只能取消活动工作，不能直接改写为其他状态")
+			}
 		}
 	}
 	updated, err := m.store.UpdateIssue(issueID, input)
@@ -300,6 +311,13 @@ func (m *Manager) UpdateBoardIssue(issueID string, input UpdateIssueInput) (Issu
 		return Issue{}, err
 	}
 	m.ReconcileIssue(updated)
+	if input.Status != nil && strings.TrimSpace(*input.Status) == "in_review" && before.Status != "in_review" {
+		// Switching to review hands the current delivery to the acceptance
+		// Agent instead of just relabelling the Issue.
+		if err := m.triggerManualReview(updated); err != nil {
+			m.store.addEvent(updated.ID, updated.ID, "validation", "手动复核触发失败", err.Error())
+		}
+	}
 	reopenedTerminalOutcome := hasIssueLabel(before, issueLabelFailed, issueLabelBudgetExceeded) && updated.Status == "todo"
 	becameSchedulable := before.Status != "todo" && updated.Status == "todo"
 	if updated.AssigneeAgentID != "" && (updated.AssigneeAgentID != before.AssigneeAgentID || reopenedTerminalOutcome || becameSchedulable || requestedStart) {
@@ -410,4 +428,97 @@ func (m *Manager) routeRelayMessage(message RelayMessage) {
 	if bridge := m.Coordination(); bridge != nil {
 		go func() { _ = bridge.SubmitRelay(context.Background(), message) }()
 	}
+}
+
+// terminateIssueExecution ends any live execution of the Issue so the Agent
+// stops immediately when the operator settles the Issue through the Board
+// (done / in_review), instead of continuing until its natural stop.
+func (m *Manager) terminateIssueExecution(issue Issue, reason string) error {
+	m.scheduleMu.Lock()
+	defer m.scheduleMu.Unlock()
+	var executions []Execution
+	if err := m.store.db.Where("issue_id = ? AND status IN ?", issue.ID, activeExecutionStatuses).Find(&executions).Error; err != nil {
+		return err
+	}
+	if len(executions) == 0 {
+		return nil
+	}
+	now := time.Now()
+	executionIDs := make([]string, len(executions))
+	for index := range executions {
+		executionIDs[index] = executions[index].ID
+	}
+	if err := m.store.db.Model(&Execution{}).Where("id IN ?", executionIDs).Updates(map[string]any{
+		"status": "cancelled", "error": reason, "current_tool": "", "finished_at": now, "pid": 0, "updated_at": now,
+	}).Error; err != nil {
+		return err
+	}
+	m.mu.RLock()
+	sessions := make([]*PiSession, 0, len(executionIDs))
+	for executionID, session := range m.sessions {
+		if slices.Contains(executionIDs, executionID) {
+			sessions = append(sessions, session)
+		}
+	}
+	m.mu.RUnlock()
+	for _, session := range sessions {
+		session.Close()
+	}
+	m.abortNativeIssue(issue.ID)
+	_ = m.store.db.Model(&Message{}).Where("issue_id = ? AND streaming = ?", issue.ID, true).Updates(map[string]any{"streaming": false, "updated_at": now}).Error
+	_ = m.store.db.Model(&AgentWakeup{}).Where("issue_id = ? AND status IN ?", issue.ID, []string{"queued", "delivered"}).Updates(map[string]any{"status": "cancelled", "error": reason, "completed_at": now}).Error
+	m.store.addEvent(issue.ID, issue.ID, "runtime", "Board 修改状态，执行已结束", reason)
+	m.store.notify()
+	return nil
+}
+
+// triggerManualReview hands the Issue's current delivery to the acceptance
+// Agent when the operator switches the Issue to in_review.
+func (m *Manager) triggerManualReview(issue Issue) error {
+	if strings.TrimSpace(issue.Objective) == "" {
+		m.store.addEvent(issue.ID, issue.ID, "validation", "手动复核未启动", "Issue 未设置目标，无法启动验收 Agent。")
+		m.store.notify()
+		return nil
+	}
+	var source Execution
+	if issue.CurrentExecutionID != "" {
+		if err := m.store.db.First(&source, "id = ? AND issue_id = ?", issue.CurrentExecutionID, issue.ID).Error; err == nil && source.ID != "" {
+			return m.publishManualReview(issue, source)
+		}
+	}
+	if err := m.store.db.Where("issue_id = ?", issue.ID).Order("created_at desc, id desc").First(&source).Error; err != nil || source.ID == "" {
+		m.store.addEvent(issue.ID, issue.ID, "validation", "手动复核未启动", "没有可用的执行记录，无法触发验收 Agent。")
+		m.store.notify()
+		return nil
+	}
+	return m.publishManualReview(issue, source)
+}
+
+func (m *Manager) publishManualReview(issue Issue, source Execution) error {
+	body := strings.TrimSpace(issue.Result)
+	if body == "" {
+		body = fallback(strings.TrimSpace(source.FinalResult), "操作员将 Issue 置为待复核，请求验收 Agent 复核当前交付物。")
+	}
+	now := time.Now()
+	comment := IssueComment{ID: nextID("comment"), IssueID: issue.ID, Type: "delivery", AuthorType: "operator", AuthorID: "operator", ExecutionID: source.ID, Body: body, Mentions: []string{}, CreatedAt: now}
+	var wakeups []AgentWakeup
+	if err := m.store.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&comment).Error; err != nil {
+			return err
+		}
+		if err := m.store.bindExecutionAttachments(tx, &comment, source.ID); err != nil {
+			return err
+		}
+		var err error
+		wakeups, err = createCommentWakeups(tx, comment, []commentWakeupTarget{{AgentID: "acceptance-validator", Reason: "delivery_validation"}})
+		return err
+	}); err != nil {
+		return err
+	}
+	m.store.addEvent(source.ID, issue.ID, "validation", "操作员请求复核", "Board 将 Issue 置为待复核，系统已请求验收 Agent。")
+	for _, wakeup := range wakeups {
+		go m.dispatchWakeup(wakeup.ID)
+	}
+	m.store.notify()
+	return nil
 }

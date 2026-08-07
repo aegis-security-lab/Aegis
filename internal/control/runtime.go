@@ -1220,7 +1220,7 @@ func (m *Manager) beginIssueValidationWithContext(issue Issue, source Execution,
 			if err := tx.Create(&validation).Error; err != nil {
 				return err
 			}
-			updated := tx.Model(&Issue{}).Where("id = ? AND status = ?", issue.ID, "in_progress").Updates(map[string]any{
+			updated := tx.Model(&Issue{}).Where("id = ? AND status IN ?", issue.ID, []string{"in_progress", "in_review"}).Updates(map[string]any{
 				"execution_phase": "validating", "result": strings.TrimSpace(candidateResult),
 				"checkout_execution_id": "", "current_execution_id": validationExecution.ID,
 				"validation_execution_id": validationExecution.ID,
