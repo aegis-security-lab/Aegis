@@ -115,7 +115,7 @@ export function IssueAgentActivity({
   return (
     <>
       <MessageScrollerProvider defaultScrollPosition="end" autoScroll={active}>
-        <MessageScroller className={cn("h-[34rem] min-h-0", className)}>
+        <MessageScroller className={cn("min-h-0 flex-1", className)}>
           <MessageScrollerViewport className="h-full px-3 py-3">
             <MessageScrollerContent className="gap-2.5">
               {items.length === 0 ? (
@@ -173,9 +173,16 @@ function ActivityRow({
             <MessageHeader>
               {execution?.kind ?? "Agent"} · {formatTime(item.createdAt)}
             </MessageHeader>
-            <Bubble variant="muted">
+            <Bubble variant="muted" className="w-full max-w-full">
               <BubbleContent
-                render={<button type="button" onClick={onSelect} />}
+                className="w-full"
+                render={
+                  <button
+                    type="button"
+                    onClick={onSelect}
+                    className="w-full text-left"
+                  />
+                }
               >
                 <MarkdownContent className="line-clamp-5 text-xs !leading-5 [&>*+*]:!mt-1.5">
                   {item.message.content}

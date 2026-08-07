@@ -792,9 +792,9 @@ func TestSecurityOutcomeGradeContractOnlyAppliesToSecurityAgents(t *testing.T) {
 	for _, required := range []string{
 		"<security_outcome_grade_contract>",
 		"成果等级必须遵循任务 Goal",
-		"S：已取得 root / SYSTEM / Administrator",
-		"A：已证明稳定任意系统命令执行",
-		"B：已证明目标主机、容器、应用进程或 worker 中存在系统级执行 foothold",
+		"S：攻击者从网络侧独立完成整条利用链，取得 root / SYSTEM / Administrator / 等价最高权限的稳定控制",
+		"A：满足 S 级全部条件但没有达到最高权限",
+		"B：存在前置条件（需要受害者动作、已认证会话、特定配置、已有凭据等）才能取得系统级执行 foothold",
 		"C：高价值非系统执行型成果",
 		"D：高可信漏洞链路",
 		"WebShell 只有在已证明稳定任意系统命令执行时才算 A",

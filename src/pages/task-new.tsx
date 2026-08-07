@@ -3,9 +3,7 @@ import {
   Bot,
   Copy,
   Plus,
-  Route,
   Send,
-  ShieldCheck,
 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
@@ -81,7 +79,6 @@ export function TaskNewPage() {
     containerProfileId: clone?.containerProfileId,
     workMode: "autonomous",
     workspace: state?.config.workspace ?? "",
-    context: clone?.context ?? "",
     constraints:
       clone?.constraints ??
       "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。",
@@ -199,16 +196,6 @@ export function TaskNewPage() {
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="context">背景与上下文</FieldLabel>
-                <Textarea
-                  id="context"
-                  rows={5}
-                  value={form.context}
-                  onChange={(event) => update("context", event.target.value)}
-                  placeholder="产品背景、参考路径、技术约束…"
-                />
-              </Field>
-              <Field>
                 <FieldLabel htmlFor="description">任务说明（可选）</FieldLabel>
                 <Textarea
                   id="description"
@@ -272,25 +259,6 @@ export function TaskNewPage() {
                     请移除上传失败的附件后再发布任务。
                   </FieldDescription>
                 ) : null}
-              </Field>
-              <Field>
-                <FieldLabel>执行环境</FieldLabel>
-                <div className="flex items-center gap-3 rounded-xl border bg-muted/25 px-4 py-3">
-                  <Bot className="size-5 shrink-0 text-primary" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">Docker 隔离执行</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {defaultContainerProfile
-                        ? `${defaultContainerProfile.name} · ${defaultContainerProfile.image}`
-                        : "尚未配置可用容器环境"}
-                    </p>
-                  </div>
-                </div>
-                <FieldDescription>
-                  发布任务不再允许使用
-                  Host。发布时会立即为任务创建并绑定唯一容器，首次执行时自动启动；每个
-                  Issue 在该容器中使用独立工作目录。
-                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="constraints">权限与执行边界</FieldLabel>
@@ -413,20 +381,6 @@ export function TaskNewPage() {
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel>Board Autonomy</FieldLabel>
-                  <div className="rounded-md border bg-muted/25 px-3 py-3 text-sm">
-                    <div className="flex items-center gap-2 font-medium">
-                      <Route className="size-4 text-primary" />
-                      唯一协作模式
-                    </div>
-                  </div>
-                  <FieldDescription>
-                    根 Agent 可创建并分派子
-                    Issue，同时继续工作；一分钟心跳会汇总进度，评论与手机消息可直接引导或唤醒运行中的
-                    Agent。
-                  </FieldDescription>
-                </Field>
-                <Field>
                   <FieldLabel htmlFor="task-priority">优先级</FieldLabel>
                   <Select
                     items={priorityItems}
@@ -479,23 +433,6 @@ export function TaskNewPage() {
             </CardContent>
           </Card>
 
-          <Alert>
-            <Route />
-            <AlertTitle>动态 Issue 树</AlertTitle>
-            <AlertDescription>
-              根 Agent 发现任务过大时，可通过 Board 创建并指派子
-              Issues。每个受派实例会领取新的临时名、会话和 Phone，父 Agent
-              同时继续推进集成工作。
-            </AlertDescription>
-          </Alert>
-          <Alert>
-            <ShieldCheck />
-            <AlertTitle>真实执行</AlertTitle>
-            <AlertDescription>
-              发布后会启动 AgentCore
-              execution，并通过任务容器修改文件、调用工具和产生模型费用。
-            </AlertDescription>
-          </Alert>
         </div>
       </form>
     </div>

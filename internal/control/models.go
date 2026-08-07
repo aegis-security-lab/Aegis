@@ -210,7 +210,6 @@ type Task struct {
 	Workspace               string    `json:"workspace"`
 	ContainerProfileID      string    `json:"containerProfileId,omitempty" gorm:"index"`
 	ContainerID             string    `json:"containerId,omitempty" gorm:"index"`
-	Context                 string    `json:"context,omitempty" gorm:"type:text"`
 	Constraints             string    `json:"constraints,omitempty" gorm:"type:text"`
 	TimeBudgetMinutes       *int      `json:"timeBudgetMinutes,omitempty"`
 	HumanValidationFallback bool      `json:"humanValidationFallback"`
@@ -297,7 +296,6 @@ type Issue struct {
 	Workspace               string           `json:"workspace"`
 	ContainerProfileID      string           `json:"containerProfileId,omitempty" gorm:"index"`
 	ContainerID             string           `json:"containerId,omitempty" gorm:"index"`
-	Context                 string           `json:"context,omitempty"`
 	Constraints             string           `json:"constraints,omitempty"`
 	TimeBudgetMinutes       *int             `json:"timeBudgetMinutes,omitempty"`
 	HumanValidationFallback bool             `json:"humanValidationFallback"`
@@ -1092,7 +1090,6 @@ type CreateIssueInput struct {
 	Workspace               string           `json:"workspace"`
 	ContainerProfileID      string           `json:"containerProfileId"`
 	ContainerID             string           `json:"containerId"`
-	Context                 string           `json:"context"`
 	Constraints             string           `json:"constraints"`
 	TimeBudgetMinutes       *int             `json:"timeBudgetMinutes"`
 	HumanValidationFallback bool             `json:"humanValidationFallback"`

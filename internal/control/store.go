@@ -110,7 +110,7 @@ func migrateTasks(db *gorm.DB) error {
 			if now.IsZero() {
 				now = time.Now()
 			}
-			task := Task{ID: nextID("task"), ProjectID: root.ProjectID, Title: root.Title, Description: root.Description, Objective: root.Objective, Priority: root.Priority, WorkMode: root.WorkMode, AssigneeAgentID: root.AssigneeAgentID, Workspace: root.Workspace, ContainerProfileID: root.ContainerProfileID, ContainerID: root.ContainerID, Context: root.Context, Constraints: root.Constraints, CreatedAt: now, UpdatedAt: root.UpdatedAt}
+			task := Task{ID: nextID("task"), ProjectID: root.ProjectID, Title: root.Title, Description: root.Description, Objective: root.Objective, Priority: root.Priority, WorkMode: root.WorkMode, AssigneeAgentID: root.AssigneeAgentID, Workspace: root.Workspace, ContainerProfileID: root.ContainerProfileID, ContainerID: root.ContainerID, Constraints: root.Constraints, CreatedAt: now, UpdatedAt: root.UpdatedAt}
 			if err := tx.Create(&task).Error; err != nil {
 				return err
 			}
@@ -506,7 +506,6 @@ func migrateTaskWorkspaceIsolation(db *gorm.DB) error {
 				"workspace":   TaskWorkspacePath,
 				"description": rewriteWorkspacePaths(task.Description, TaskWorkspacePath, task.Workspace),
 				"objective":   rewriteWorkspacePaths(task.Objective, TaskWorkspacePath, task.Workspace),
-				"context":     rewriteWorkspacePaths(task.Context, TaskWorkspacePath, task.Workspace),
 				"constraints": rewriteWorkspacePaths(task.Constraints, TaskWorkspacePath, task.Workspace),
 			}
 			if err := tx.Model(&Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
@@ -525,7 +524,6 @@ func migrateTaskWorkspaceIsolation(db *gorm.DB) error {
 				"workspace":   TaskWorkspacePath,
 				"description": rewriteWorkspacePaths(issue.Description, TaskWorkspacePath, issue.Workspace),
 				"objective":   rewriteWorkspacePaths(issue.Objective, TaskWorkspacePath, issue.Workspace),
-				"context":     rewriteWorkspacePaths(issue.Context, TaskWorkspacePath, issue.Workspace),
 				"constraints": rewriteWorkspacePaths(issue.Constraints, TaskWorkspacePath, issue.Workspace),
 			}
 			if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
@@ -1006,7 +1004,6 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		// paths before persistence instead of relying on a later runtime rewrite.
 		input.Description = rewriteWorkspacePaths(input.Description, workspace, requestedWorkspace, parentWorkspace, s.config.Workspace)
 		input.Objective = rewriteWorkspacePaths(input.Objective, workspace, requestedWorkspace, parentWorkspace, s.config.Workspace)
-		input.Context = rewriteWorkspacePaths(input.Context, workspace, requestedWorkspace, parentWorkspace, s.config.Workspace)
 		input.Constraints = rewriteWorkspacePaths(input.Constraints, workspace, requestedWorkspace, parentWorkspace, s.config.Workspace)
 	}
 	if input.TimeBudgetMinutes != nil && *input.TimeBudgetMinutes <= 0 {
@@ -1034,7 +1031,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Context: strings.TrimSpace(input.Context), Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -1112,10 +1109,9 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	input.Workspace = profile.WorkspacePath
 	input.Description = rewriteWorkspacePaths(input.Description, input.Workspace, requestedWorkspace, s.Config().Workspace)
 	input.Objective = rewriteWorkspacePaths(input.Objective, input.Workspace, requestedWorkspace, s.Config().Workspace)
-	input.Context = rewriteWorkspacePaths(input.Context, input.Workspace, requestedWorkspace, s.Config().Workspace)
 	input.Constraints = rewriteWorkspacePaths(input.Constraints, input.Workspace, requestedWorkspace, s.Config().Workspace)
 	now := time.Now()
-	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Context: strings.TrimSpace(input.Context), Constraints: strings.TrimSpace(input.Constraints), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedAt: now, UpdatedAt: now}
+	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: strings.TrimSpace(input.Constraints), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedAt: now, UpdatedAt: now}
 	if err := s.db.Create(&task).Error; err != nil {
 		return Task{}, Issue{}, err
 	}
@@ -1128,7 +1124,7 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	// Persist normalized/defaulted values from the actual run.
 	task.ProjectID, task.Title, task.Description, task.Objective = issue.ProjectID, issue.Title, issue.Description, issue.Objective
 	task.Priority, task.WorkMode, task.AssigneeAgentID = issue.Priority, issue.WorkMode, issue.AssigneeAgentID
-	task.Workspace, task.ContainerProfileID, task.ContainerID, task.Context, task.Constraints = issue.Workspace, issue.ContainerProfileID, issue.ContainerID, issue.Context, issue.Constraints
+	task.Workspace, task.ContainerProfileID, task.ContainerID, task.Constraints = issue.Workspace, issue.ContainerProfileID, issue.ContainerID, issue.Constraints
 	task.TimeBudgetMinutes = issue.TimeBudgetMinutes
 	task.HumanValidationFallback = issue.HumanValidationFallback
 	if err = s.db.Save(&task).Error; err != nil {

@@ -12,7 +12,6 @@ func TestStateAndSessionListsOmitHeavyExecutionContent(t *testing.T) {
 	issue, err := s.CreateIssue(CreateIssueInput{
 		Title:           "Inspect compact state",
 		Objective:       "Keep list payloads small while preserving detail data.",
-		Context:         strings.Repeat("context", 2_000),
 		Priority:        "medium",
 		WorkMode:        "guided",
 		AssigneeAgentID: "backend-engineer",
@@ -34,8 +33,7 @@ func TestStateAndSessionListsOmitHeavyExecutionContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-		"context": large,
-		"result":  large,
+		"result": large,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +43,7 @@ func TestStateAndSessionListsOmitHeavyExecutionContent(t *testing.T) {
 		t.Fatalf("executions=%d, want 1", len(state.Executions))
 	}
 	assertCompactExecution(t, state.Executions[0])
-	if len(state.Issues) != 1 || state.Issues[0].Context != "" || state.Issues[0].Result != "" {
+	if len(state.Issues) != 1 || state.Issues[0].Result != "" {
 		t.Fatalf("state issue still contains heavy detail: %+v", state.Issues)
 	}
 	if len(state.Sessions) != 1 {

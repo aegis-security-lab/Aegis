@@ -86,7 +86,8 @@ export function AppShell() {
     /^\/issues\/[^/]+$/.test(location.pathname)
   const fullHeightRoute =
     workspaceRoute ||
-    /^\/tasks\/[^/]+$/.test(location.pathname) ||
+    (location.pathname !== "/tasks/new" &&
+      /^\/tasks\/[^/]+$/.test(location.pathname)) ||
     /^\/tasks\/[^/]+\/(issues|board)$/.test(location.pathname)
 
   return (

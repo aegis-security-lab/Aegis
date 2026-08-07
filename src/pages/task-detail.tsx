@@ -199,10 +199,6 @@ export function TaskDetailPage() {
             value={parameters.description || "未填写"}
           />
           <TaskParameter
-            label="背景与上下文"
-            value={parameters.context || "未填写"}
-          />
-          <TaskParameter
             label="目标"
             value={parameters.objective || "未填写"}
           />

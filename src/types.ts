@@ -85,7 +85,6 @@ export interface Task {
   workspace: string
   containerProfileId?: string
   containerId?: string
-  context?: string
   constraints?: string
   timeBudgetMinutes?: number
   humanValidationFallback?: boolean
@@ -278,7 +277,6 @@ export interface Issue {
   workspace: string
   containerProfileId?: string
   containerId?: string
-  context?: string
   constraints?: string
   timeBudgetMinutes?: number
   humanValidationFallback?: boolean
@@ -850,7 +848,6 @@ export interface CreateIssueInput {
   assigneeAgentId?: string
   workspace: string
   containerProfileId?: string
-  context: string
   constraints: string
   timeBudgetMinutes?: number
   humanValidationFallback?: boolean

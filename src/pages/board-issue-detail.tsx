@@ -247,7 +247,6 @@ export function BoardIssueDetailPage() {
         workMode: "autonomous",
         assigneeAgentId: childForm.assigneeAgentId || undefined,
         workspace: issue.workspace,
-        context: "",
         constraints: issue.constraints ?? "",
       })
       const next = await load()
@@ -390,7 +389,7 @@ export function BoardIssueDetailPage() {
           <div className="mt-4 flex flex-col gap-5">
             <Section
               label="描述"
-              value={issue.description || issue.context || "未填写"}
+              value={issue.description || "未填写"}
             />
             <Section label="目标" value={issue.objective || "未填写"} />
             <Section
@@ -430,9 +429,8 @@ export function BoardIssueDetailPage() {
           </InputGroup>
         </div>
       </div>
-      <aside className="absolute inset-y-0 right-2 hidden w-[360px] lg:block">
+      <aside className="absolute inset-y-0 right-2 hidden w-[360px] flex-col overflow-hidden rounded-xl bg-card lg:flex">
           <IssueAgentActivity
-            className="h-full"
             executions={detail.executions}
             messages={detail.messages}
             events={detail.events}

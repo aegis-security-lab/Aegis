@@ -243,7 +243,7 @@ func (m *Manager) RestartTask(id string) (Issue, error) {
 		ProjectID: task.ProjectID, Title: task.Title, Description: task.Description,
 		Objective: task.Objective, Priority: task.Priority, WorkMode: task.WorkMode,
 		AssigneeAgentID: task.AssigneeAgentID, Workspace: task.Workspace, TaskSourceID: task.ID,
-		ContainerProfileID: task.ContainerProfileID, ContainerID: task.ContainerID, Context: task.Context, Constraints: task.Constraints, TimeBudgetMinutes: task.TimeBudgetMinutes, HumanValidationFallback: task.HumanValidationFallback,
+		ContainerProfileID: task.ContainerProfileID, ContainerID: task.ContainerID, Constraints: task.Constraints, TimeBudgetMinutes: task.TimeBudgetMinutes, HumanValidationFallback: task.HumanValidationFallback,
 	})
 	if err != nil {
 		return Issue{}, err
@@ -2726,7 +2726,6 @@ func (m *Manager) createTaskFromConcierge(executionID string, input CreateConcie
 		Objective: strings.TrimSpace(input.Objective), Priority: priority, Status: "todo",
 		WorkMode: workMode, AssigneeAgentID: strings.TrimSpace(input.AssigneeAgentID),
 		Workspace: strings.TrimSpace(input.Workspace), Constraints: strings.TrimSpace(input.Constraints),
-		Context:       "由管家 Agent 根据用户对话创建。",
 		AttachmentIDs: attachmentIDs, AttachmentSourceExecutionID: executionID,
 	})
 	if err != nil {
@@ -3835,11 +3834,10 @@ func (s *Store) GetSession(id string) (SessionDetail, error) {
 func planningPrompt(i Issue, maxDepth, maxPerRequest, maxDirect int, budget IssueBudgetConfig) string {
 	return fmt.Sprintf(`Decompose this real software task into executable child Issues.
 Objective: %s
-Context: %s
 Constraints: %s
 Workspace: %s
 Use the system-provided Agent type roster to select the best role for each child Issue. Reusing one Agent type is allowed: every child receives a distinct task-local identity, Session and Phone.
-Create only the next small, useful wave by calling the Phone Board shortcut phone_board_delegate exactly once with 2-%d independently verifiable Issues. Do not dispatch the entire project up front. The configured hierarchy permits depth %d and at most %d direct children per Issue. Every child scope must be realistically completable and verifiable within one Execution budget of %d model turns and %d active minutes. Split large repositories, modules, or audit surfaces into smaller outcome-based slices instead of assigning one Agent an exhaustive review of tens of thousands of lines. Every objective must state the concrete outcome and acceptance evidence. Continue useful parent work after dispatch; use phone_board_sleep only when no valuable action remains. Board heartbeats wake released waiting loops and do not interrupt active work; Phone messages may still steer when useful.`, i.Objective, fallback(i.Context, i.Description), i.Constraints, i.Workspace, maxPerRequest, maxDepth, maxDirect, budget.MaxTurns, budget.ActiveTimeMinutes)
+Create only the next small, useful wave by calling the Phone Board shortcut phone_board_delegate exactly once with 2-%d independently verifiable Issues. Do not dispatch the entire project up front. The configured hierarchy permits depth %d and at most %d direct children per Issue. Every child scope must be realistically completable and verifiable within one Execution budget of %d model turns and %d active minutes. Split large repositories, modules, or audit surfaces into smaller outcome-based slices instead of assigning one Agent an exhaustive review of tens of thousands of lines. Every objective must state the concrete outcome and acceptance evidence. Continue useful parent work after dispatch; use phone_board_sleep only when no valuable action remains. Board heartbeats wake released waiting loops and do not interrupt active work; Phone messages may still steer when useful.`, i.Objective, i.Constraints, i.Workspace, maxPerRequest, maxDepth, maxDirect, budget.MaxTurns, budget.ActiveTimeMinutes)
 }
 func workerPrompt(i Issue, maxDepth, maxPerRequest, maxDirect int, budget IssueBudgetConfig) string {
 	completionInstruction := "Before ending the turn, you MUST call aegis_submit_final_result with a standalone result directly addressing the Issue objective. That explicit Agent action immediately publishes a delivery comment to Board and starts acceptance; the runtime will never copy your final prose into Board for you."
