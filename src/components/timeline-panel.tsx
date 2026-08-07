@@ -17,14 +17,6 @@ import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -32,11 +24,19 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { fetchTaskTimeline } from "@/lib/api"
 import { formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
+import { cn } from "@/lib/utils"
 import type {
   TaskTimeline,
   TaskTimelineEvent,
@@ -101,54 +101,58 @@ export function TimelinePanel({
   )
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="min-w-0 flex-1 overflow-x-auto py-1">
-          <ToggleGroup
-            value={[filter]}
-            onValueChange={(value) => {
-              if (value[0]) setFilter(value[0] as TimelineFilter)
-            }}
-            variant="outline"
+    <div className={cn("flex min-h-0 flex-col gap-3", className)}>
+      <div className="flex min-w-0 shrink-0 items-center gap-3">
+        <Select
+          value={filter}
+          onValueChange={(value) => {
+            if (value) setFilter(value as TimelineFilter)
+          }}
+          aria-label="筛选时间线事件"
+        >
+          <SelectTrigger
+            id="timeline-filter"
             size="sm"
+            className="w-40"
             aria-label="筛选时间线事件"
           >
-            {filters.map((item) => (
-              <ToggleGroupItem key={item.value} value={item.value}>
-                {item.label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </div>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {filters.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
 
       {!visibleTimeline ? (
-        <div className="flex flex-col gap-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
           {Array.from({ length: 3 }).map((_, index) => (
             <Skeleton key={index} className="h-32 w-full" />
           ))}
         </div>
       ) : events.length === 0 ? (
-        <Card>
-          <CardContent className="py-12">
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Activity />
-                </EmptyMedia>
-                <EmptyTitle>没有匹配的关键事件</EmptyTitle>
-                <EmptyDescription>
-                  切换筛选条件，或等待任务产生新的活动。
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </CardContent>
-        </Card>
+        <Empty className="border-0 min-h-0 flex-1">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Activity />
+            </EmptyMedia>
+            <EmptyTitle>没有匹配的关键事件</EmptyTitle>
+            <EmptyDescription>
+              切换筛选条件，或等待任务产生新的活动。
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
         <VirtualTimeline
           key={`${taskId}:${filter}`}
           events={events}
-          className={className}
+          className="min-h-0 flex-1"
         />
       )}
     </div>
@@ -178,10 +182,7 @@ function VirtualTimeline({
   return (
     <ScrollArea
       viewportRef={viewportRef}
-      className={
-        className ??
-        "h-[min(720px,calc(100dvh-260px))] min-h-[420px] rounded-xl border bg-muted/10"
-      }
+      className={className ?? "min-h-0 flex-1"}
     >
       <section
         aria-label="任务关键事件"
@@ -236,27 +237,29 @@ function TimelineItem({
           {formatTime(event.createdAt)}
         </time>
       </div>
-      <Card className="py-4">
-        <CardHeader className="px-4">
-          <div className="flex min-w-0 flex-col gap-1">
-            <CardTitle className="text-sm leading-5">{event.title}</CardTitle>
-            <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="inline-flex items-center gap-1">
-                {event.actorType === "operator" ? (
-                  <UserRound className="size-3" />
-                ) : (
-                  <Bot className="size-3" />
-                )}
-                {event.actorName}
-              </span>
-              <span>{event.issueIdentifier}</span>
-            </CardDescription>
+      <div className="min-w-0 rounded-lg py-4 transition-colors hover:bg-muted/40">
+        <div className="flex min-w-0 flex-col gap-1 px-4">
+          <div className="flex min-w-0 items-start gap-2">
+            <p className="min-w-0 flex-1 text-sm leading-5 font-medium">
+              {event.title}
+            </p>
+            <span className="flex shrink-0 items-center gap-2">
+              {event.status ? <StatusBadge status={event.status} /> : null}
+            </span>
           </div>
-          <CardAction className="flex items-center gap-2">
-            {event.status ? <StatusBadge status={event.status} /> : null}
-          </CardAction>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 px-4">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              {event.actorType === "operator" ? (
+                <UserRound className="size-3" />
+              ) : (
+                <Bot className="size-3" />
+              )}
+              {event.actorName}
+            </span>
+            <span>{event.issueIdentifier}</span>
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 px-4 pt-2">
           {summary ? (
             <p className="text-sm font-medium break-words">{summary}</p>
           ) : null}
@@ -293,8 +296,8 @@ function TimelineItem({
               </Button>
             ) : null}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </article>
   )
 }

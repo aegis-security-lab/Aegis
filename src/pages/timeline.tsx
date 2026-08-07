@@ -96,7 +96,10 @@ export function TimelinePage() {
           </CardContent>
         </Card>
       ) : (
-        <TimelinePanel taskId={resolvedTaskID} />
+        <TimelinePanel
+          taskId={resolvedTaskID}
+          className="h-[min(720px,calc(100dvh-260px))] min-h-[420px] rounded-xl bg-card"
+        />
       )}
     </div>
   )
