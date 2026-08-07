@@ -1,22 +1,18 @@
 import * as React from "react"
 import {
-  Bot,
   Copy,
-  Plus,
   Send,
 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
-import { InputAttachmentList } from "@/components/input-attachments"
+import { ChatComposer } from "@/components/chat-composer"
 import { useInputAttachments } from "@/hooks/use-input-attachments"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -24,7 +20,6 @@ import {
 import {
   Field,
   FieldContent,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
@@ -67,7 +62,6 @@ export function TaskNewPage() {
   const clone = (location.state as { clone?: Partial<CreateIssueInput> } | null)
     ?.clone
   const [busy, setBusy] = React.useState(false)
-  const fileInputRef = React.useRef<HTMLInputElement>(null)
   const attachments = useInputAttachments()
   const [form, setForm] = React.useState<CreateIssueInput>({
     projectId: clone?.projectId ?? state?.projects[0]?.id,
@@ -79,9 +73,7 @@ export function TaskNewPage() {
     containerProfileId: clone?.containerProfileId,
     workMode: "autonomous",
     workspace: state?.config.workspace ?? "",
-    constraints:
-      clone?.constraints ??
-      "仅在指定工作目录中操作；避免破坏性命令；完成后运行相关验证。",
+    constraints: clone?.constraints ?? "",
     timeBudgetMinutes: clone?.timeBudgetMinutes,
     humanValidationFallback: clone?.humanValidationFallback,
   })
@@ -120,6 +112,11 @@ export function TaskNewPage() {
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
+    const description = form.description.trim()
+    if (!description) {
+      toast.error("请填写任务说明")
+      return
+    }
     if (!selectedAgentId) {
       toast.error("请选择一个 Agent 类型")
       return
@@ -130,8 +127,11 @@ export function TaskNewPage() {
     }
     setBusy(true)
     try {
+      const title = form.title.trim() || limitIssueTitle(description)
       const { issue } = await createTask({
         ...form,
+        title,
+        description,
         assigneeAgentId: selectedAgentId,
         containerProfileId: defaultContainerProfile.id,
         attachmentIds: attachments.attachmentIds,
@@ -168,100 +168,54 @@ export function TaskNewPage() {
         <Card>
           <CardHeader>
             <CardTitle>任务定义</CardTitle>
-            <CardDescription>
-              Agent 将直接收到这些信息，并在真实工作目录中执行。
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="title">任务标题</FieldLabel>
-                <Textarea
+                <FieldLabel htmlFor="description">任务说明</FieldLabel>
+                <ChatComposer
+                  value={form.description}
+                  onValueChange={(value) => update("description", value)}
+                  onSend={() => {}}
+                  sending={false}
+                  showSend={false}
+                  hint=""
+                  placeholder="描述交付范围、业务规则和其他执行说明…"
+                  ariaLabel="任务说明"
+                  attachments={attachments}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="title">
+                  任务标题（可选，留空则取任务说明开头）
+                </FieldLabel>
+                <Input
                   id="title"
-                  required
-                  rows={4}
                   value={form.title}
                   onChange={(event) =>
                     update("title", limitIssueTitle(event.target.value))
                   }
-                  placeholder="描述要交付的最终结果…"
+                  placeholder="默认使用任务说明的前几个字符…"
                 />
-                <FieldDescription className="flex justify-between gap-4">
-                  <span>
-                    用一句话概括任务；需要自动验收时，再填写下方目标。
-                  </span>
-                  <span className="shrink-0 tabular-nums">
-                    {issueTitleLength(form.title)} / {ISSUE_TITLE_MAX_LENGTH}
-                  </span>
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="description">任务说明（可选）</FieldLabel>
-                <Textarea
-                  id="description"
-                  rows={4}
-                  value={form.description}
-                  onChange={(event) =>
-                    update("description", event.target.value)
-                  }
-                  placeholder="补充交付范围、业务规则或其他执行说明…"
-                />
+                <span className="text-right text-[11px] tabular-nums text-muted-foreground">
+                  {issueTitleLength(form.title) || "—"} /{" "}
+                  {ISSUE_TITLE_MAX_LENGTH}
+                </span>
               </Field>
               <Field>
                 <FieldLabel htmlFor="objective">目标（可选）</FieldLabel>
                 <Textarea
                   id="objective"
-                  rows={5}
+                  rows={3}
                   value={form.objective}
                   onChange={(event) => update("objective", event.target.value)}
                   placeholder="描述最终需要达成的结果，以及可用于判断完成的证据…"
                 />
-                <FieldDescription>
-                  填写后，Worker 结束时会由验收 Agent
-                  对比实际产出；留空则不启动验收流程，产出会直接完成。
-                </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>审计附件</FieldLabel>
-                <FieldDescription>
-                  文件会直接流式上传到 Aegis
-                  服务端。任务启动前，系统会把它放入任务的独立容器工作区，并通过系统提示告知准确路径；单个文件最大
-                  20 GiB。
-                </FieldDescription>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(event) => {
-                    if (event.target.files) {
-                      attachments.addFiles(event.target.files)
-                    }
-                    event.target.value = ""
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-fit"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Plus data-icon="inline-start" />
-                  添加附件
-                </Button>
-                <InputAttachmentList
-                  items={attachments.items}
-                  onRemove={(clientId) => void attachments.remove(clientId)}
-                  className="flex-wrap overflow-visible"
-                />
-                {attachments.hasErrors ? (
-                  <FieldDescription className="text-destructive">
-                    请移除上传失败的附件后再发布任务。
-                  </FieldDescription>
-                ) : null}
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="constraints">权限与执行边界</FieldLabel>
+                <FieldLabel htmlFor="constraints">
+                  权限与执行边界（可选）
+                </FieldLabel>
                 <Textarea
                   id="constraints"
                   rows={3}
@@ -269,6 +223,7 @@ export function TaskNewPage() {
                   onChange={(event) =>
                     update("constraints", event.target.value)
                   }
+                  placeholder="留空使用默认边界…"
                 />
               </Field>
             </FieldGroup>
@@ -281,9 +236,9 @@ export function TaskNewPage() {
                 busy ||
                 attachments.uploading ||
                 attachments.hasErrors ||
+                !form.description.trim() ||
                 !selectedAgentId ||
-                !defaultContainerProfile ||
-                !form.title.trim()
+                !defaultContainerProfile
               }
             >
               {busy ? (
@@ -300,9 +255,6 @@ export function TaskNewPage() {
           <Card>
             <CardHeader>
               <CardTitle>根 Agent</CardTitle>
-              <CardDescription>
-                这里选择可复用的 Agent 类型，不是在全局员工名册中挑选某个人。
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
@@ -333,12 +285,6 @@ export function TaskNewPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <FieldDescription>
-                    {enabledAgentTypes.length === 0
-                      ? "当前没有已启用的 Agent 类型。"
-                      : selectedAgent?.description ||
-                        "发布后系统会为根 Issue 创建任务内临时身份、独立会话和独立手机。"}
-                  </FieldDescription>
                 </Field>
                 <Field orientation="horizontal">
                   <Checkbox
@@ -352,24 +298,8 @@ export function TaskNewPage() {
                     <FieldLabel htmlFor="task-human-validation">
                       启用人工兜底验收
                     </FieldLabel>
-                    <FieldDescription>
-                      关闭时，固定验收次数耗尽会直接失败并释放依赖；默认关闭。
-                    </FieldDescription>
                   </FieldContent>
                 </Field>
-                {selectedAgent ? (
-                  <Field orientation="horizontal" className="flex-wrap gap-2">
-                    <Badge variant="secondary">
-                      <Bot />
-                      {categoryLabels[selectedAgent.category] ??
-                        selectedAgent.category}
-                    </Badge>
-                    <Badge variant="outline">
-                      {selectedAgent.skillIds.length} 个 Skills
-                    </Badge>
-                    <Badge variant="outline">独立 Phone</Badge>
-                  </Field>
-                ) : null}
               </FieldGroup>
             </CardContent>
           </Card>
@@ -424,15 +354,10 @@ export function TaskNewPage() {
                     }}
                     placeholder="留空表示不限制"
                   />
-                  <FieldDescription>
-                    整个 Task 从创建时开始计算；等待、休眠及重新执行子 Issue
-                    均不会重置。子 Issue 的单次 Execution 预算在设置中单独配置。
-                  </FieldDescription>
                 </Field>
               </FieldGroup>
             </CardContent>
           </Card>
-
         </div>
       </form>
     </div>

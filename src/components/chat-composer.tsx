@@ -24,6 +24,7 @@ export function ChatComposer({
   ariaLabel = "发送消息",
   sendLabel,
   hint = "Enter 发送 · Shift+Enter 换行",
+  showSend = true,
   attachments,
   className,
 }: {
@@ -35,6 +36,7 @@ export function ChatComposer({
   ariaLabel?: string
   sendLabel?: string
   hint?: string
+  showSend?: boolean
   attachments?: Attachments
   className?: string
 }) {
@@ -83,7 +85,7 @@ export function ChatComposer({
           placeholder={placeholder}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={(event) => {
-            if (isSendMessageKey(event)) {
+            if (showSend && isSendMessageKey(event)) {
               event.preventDefault()
               if (canSend && !sending) onSend()
             }
@@ -104,7 +106,7 @@ export function ChatComposer({
               <Paperclip />
             </InputGroupButton>
           ) : null}
-          {hint ? (
+          {hint && showSend ? (
             <span
               className={cn(
                 "px-1 text-xs font-normal text-muted-foreground",
@@ -114,17 +116,19 @@ export function ChatComposer({
               {hint}
             </span>
           ) : null}
-          <InputGroupButton
-            type="submit"
-            variant="default"
-            size="icon-sm"
-            aria-label={ariaLabel}
-            disabled={disabled}
-            className={cn(sendLabel && "px-2 text-xs")}
-          >
-            {sending ? <Spinner /> : <Send />}
-            {sendLabel}
-          </InputGroupButton>
+          {showSend ? (
+            <InputGroupButton
+              type="submit"
+              variant="default"
+              size="icon-sm"
+              aria-label={ariaLabel}
+              disabled={disabled}
+              className={cn(sendLabel && "px-2 text-xs")}
+            >
+              {sending ? <Spinner /> : <Send />}
+              {sendLabel}
+            </InputGroupButton>
+          ) : null}
         </InputGroupAddon>
       </InputGroup>
     </form>
