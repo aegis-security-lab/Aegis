@@ -183,38 +183,38 @@ export function TaskNewPage() {
                   placeholder="描述交付范围、业务规则和其他执行说明…"
                   ariaLabel="任务说明"
                   attachments={attachments}
-                />
-                <div className="flex items-center justify-end gap-2 pt-1.5">
-                  <span className="text-xs text-muted-foreground">
-                    负责 Agent
-                  </span>
-                  <Select
-                    items={agentItems}
-                    value={selectedAgentId}
-                    onValueChange={(value) =>
-                      update("assigneeAgentId", value || undefined)
-                    }
-                  >
-                    <SelectTrigger
-                      id="task-agent"
-                      size="sm"
-                      className="w-44"
-                      aria-invalid={enabledAgentTypes.length === 0 || undefined}
+                  extra={
+                    <Select
+                      items={agentItems}
+                      value={selectedAgentId}
+                      onValueChange={(value) =>
+                        update("assigneeAgentId", value || undefined)
+                      }
                     >
-                      <SelectValue placeholder="选择 Agent 类型" />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {enabledAgentTypes.map((agent) => (
-                          <SelectItem key={agent.id} value={agent.id}>
-                            {agent.name} ·{" "}
-                            {categoryLabels[agent.category] ?? agent.category}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
+                      <SelectTrigger
+                        id="task-agent"
+                        size="sm"
+                        className="w-44"
+                        aria-invalid={
+                          enabledAgentTypes.length === 0 || undefined
+                        }
+                      >
+                        <SelectValue placeholder="选择 Agent 类型" />
+                      </SelectTrigger>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {enabledAgentTypes.map((agent) => (
+                            <SelectItem key={agent.id} value={agent.id}>
+                              {agent.name} ·{" "}
+                              {categoryLabels[agent.category] ??
+                                agent.category}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  }
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="title">

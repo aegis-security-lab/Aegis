@@ -26,6 +26,7 @@ export function ChatComposer({
   hint = "Enter 发送 · Shift+Enter 换行",
   showSend = true,
   attachments,
+  extra,
   className,
 }: {
   value: string
@@ -38,6 +39,7 @@ export function ChatComposer({
   hint?: string
   showSend?: boolean
   attachments?: Attachments
+  extra?: React.ReactNode
   className?: string
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -93,19 +95,22 @@ export function ChatComposer({
           className="min-h-14 resize-none text-[13px]"
         />
         <InputGroupAddon align="block-end" className="justify-between">
-          {attachments ? (
-            <InputGroupButton
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="上传附件"
-              title="上传附件"
-              disabled={sending || attachments.uploading}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Paperclip />
-            </InputGroupButton>
-          ) : null}
+          <div className="flex min-w-0 items-center gap-1.5">
+            {attachments ? (
+              <InputGroupButton
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="上传附件"
+                title="上传附件"
+                disabled={sending || attachments.uploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Paperclip />
+              </InputGroupButton>
+            ) : null}
+            {extra ? extra : null}
+          </div>
           {hint && showSend ? (
             <span
               className={cn(
