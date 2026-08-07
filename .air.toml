@@ -1,0 +1,16 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o tmp/aegis-dev ./cmd/server"
+  bin = "tmp/aegis-dev"
+  full_bin = ""
+  include_ext = ["go"]
+  exclude_dir = ["dist", "node_modules", "data", "bin", "tmp", "assets", "docs", "bmad-output"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 1000
+  stop_on_error = false
+  log = "air.log"
+
+[run]
+  env = ["AEGIS_DATA_DIR=data", "AEGIS_DIST=dist", "PORT=8080"]
