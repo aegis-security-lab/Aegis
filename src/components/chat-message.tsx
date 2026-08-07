@@ -3,6 +3,7 @@ import { Paperclip } from "lucide-react"
 import { MarkdownContent } from "@/components/markdown-content"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Message, MessageContent, MessageHeader } from "@/components/ui/message"
+import { Spinner } from "@/components/ui/spinner"
 import { formatBytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { Message as ChatMessage } from "@/types"
@@ -56,16 +57,24 @@ export function ChatMessage({
     )
   }
 
-  const content = (
+  const streaming = message.streaming
+  const content = message.content.trim()
+  const body = content ? (
     <MarkdownContent
       className={cn(
         "text-[13px] !leading-5 [&>*+*]:!mt-2",
         compact && "line-clamp-5 text-xs !leading-5 [&>*+*]:!mt-1.5"
       )}
     >
-      {message.content || "正在思考…"}
+      {content}
     </MarkdownContent>
+  ) : (
+    <span className="flex items-center gap-2 text-muted-foreground">
+      <Spinner className="size-3.5" />
+      正在思考…
+    </span>
   )
+
   return (
     <Message className={className}>
       <MessageContent>
@@ -80,23 +89,29 @@ export function ChatMessage({
             ) : null}
           </MessageHeader>
         ) : null}
-        {onSelect ? (
-          <button
-            type="button"
-            onClick={onSelect}
-            className="w-full min-w-0 rounded-lg text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50"
+        <Bubble variant="ghost">
+          <BubbleContent
+            className={cn(
+              "text-[13px] !leading-5 [&>*+*]:!mt-2",
+              compact && "text-xs !leading-5 [&>*+*]:!mt-1.5"
+            )}
           >
-            {content}
-          </button>
-        ) : (
-          content
-        )}
-        {message.streaming ? (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="inline-block size-1.5 animate-pulse rounded-full bg-current" />
-            正在生成…
-          </span>
-        ) : null}
+            {onSelect ? (
+              <button
+                type="button"
+                onClick={onSelect}
+                className="w-full min-w-0 rounded-lg text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
+                {body}
+              </button>
+            ) : (
+              body
+            )}
+            {streaming && content ? (
+              <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-current align-middle" />
+            ) : null}
+          </BubbleContent>
+        </Bubble>
       </MessageContent>
     </Message>
   )
