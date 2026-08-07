@@ -2,7 +2,6 @@ import * as React from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { Link } from "react-router-dom"
 import {
-  CircleCheck,
   ChevronDown,
   CircleDotDashed,
   GitBranch,
@@ -16,7 +15,6 @@ import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
   TooltipContent,
@@ -131,20 +129,6 @@ export function IssueTree({
     [agentMap, taskAgents]
   )
   const runtimeMap = React.useMemo(() => issueRuntimeMap(runtimes), [runtimes])
-  const visibleIssues = React.useMemo(() => {
-    const ids = new Set<string>()
-    const visit = (issue: Issue) => {
-      if (ids.has(issue.id)) return
-      ids.add(issue.id)
-      for (const child of branchMap.get(issue.id) ?? []) visit(child)
-    }
-    for (const root of roots) visit(root)
-    return issues.filter((issue) => ids.has(issue.id))
-  }, [branchMap, issues, roots])
-  const summary = React.useMemo(
-    () => summarizeTree(visibleIssues, runtimeMap),
-    [runtimeMap, visibleIssues]
-  )
   const [expanded, setExpanded] = React.useState<Set<string>>(
     () =>
       new Set(
@@ -213,32 +197,6 @@ export function IssueTree({
 
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
-      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
-        <Badge variant={summary.running > 0 ? "default" : "outline"}>
-          {summary.running > 0 ? (
-            <Spinner data-icon="inline-start" />
-          ) : (
-            <CircleDotDashed data-icon="inline-start" />
-          )}
-          执行中 {summary.running}
-        </Badge>
-        <Badge variant="outline">
-          <CircleDotDashed data-icon="inline-start" />
-          等待中 {summary.waiting}
-        </Badge>
-        <Badge variant={summary.failed > 0 ? "destructive" : "outline"}>
-          <TriangleAlert data-icon="inline-start" />
-          失败 {summary.failed}
-        </Badge>
-        <Badge variant="secondary">
-          <CircleCheck data-icon="inline-start" />
-          已结束 {summary.completed}
-        </Badge>
-        <Badge variant="outline">
-          <CircleDotDashed data-icon="inline-start" />
-          待执行 {summary.pending}
-        </Badge>
-      </div>
       <ScrollArea
         viewportRef={viewportRef}
         className="min-h-0 flex-1 min-h-[360px]"
@@ -463,25 +421,3 @@ function TreeNode({
   )
 }
 
-function summarizeTree(
-  issues: Issue[],
-  runtimeMap: Map<string, IssueRuntimeView>
-) {
-  const summary = {
-    running: 0,
-    waiting: 0,
-    failed: 0,
-    completed: 0,
-    pending: 0,
-  }
-  for (const issue of issues) {
-    const runtime = issueRuntimeOrUnavailable(runtimeMap, issue.id)
-    if (runtime.kind === "running") summary.running++
-    else if (runtime.kind === "waiting") summary.waiting++
-    else if (runtime.kind === "failed") summary.failed++
-    else if (runtime.kind === "completed" || runtime.kind === "cancelled")
-      summary.completed++
-    else summary.pending++
-  }
-  return summary
-}

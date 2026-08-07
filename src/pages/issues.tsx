@@ -217,6 +217,7 @@ export function IssuesPage() {
                       )}
                     />
                     {groupLabels[key]}
+                    <span className="tabular-nums">{items.length}</span>
                   </button>
                   <button
                     type="button"
