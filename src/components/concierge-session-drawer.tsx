@@ -95,19 +95,16 @@ export function ConciergeSessionDrawer({
                     variant={
                       conversation.id === selectedId ? "secondary" : "ghost"
                     }
-                    className="h-auto w-full justify-start py-2.5 pl-3 pr-10 text-left"
+                    className="h-auto w-full justify-start py-1.5 pl-3 pr-10 text-left"
                     onClick={() => select(conversation.id)}
                   >
-                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="truncate text-sm font-medium">
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
                         {conversation.title}
                       </span>
-                      <span className="truncate text-xs font-normal text-muted-foreground">
-                        {conversation.lastMessage || "开始一段新对话"}
+                      <span className="shrink-0 text-[11px] font-normal text-muted-foreground">
+                        {formatSessionTime(conversation.updatedAt)}
                       </span>
-                    </span>
-                    <span className="shrink-0 text-[11px] font-normal text-muted-foreground">
-                      {formatSessionTime(conversation.updatedAt)}
                     </span>
                   </Button>
                   <Button
