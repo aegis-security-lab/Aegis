@@ -325,6 +325,9 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := migrateTaskWorkspaceIsolation(db); err != nil {
 		return nil, fmt.Errorf("migrate private Task workspaces: %w", err)
 	}
+	if err := dropLegacyContextColumns(db); err != nil {
+		return nil, fmt.Errorf("drop legacy context columns: %w", err)
+	}
 	if err := db.Where("status = ? AND type = ?", "pending", "tool_call").Delete(&Approval{}).Error; err != nil {
 		return nil, fmt.Errorf("remove invalid approvals: %w", err)
 	}
@@ -520,6 +523,26 @@ func migrateLegacyIssueStatuses(tx *gorm.DB, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+func dropLegacyContextColumns(db *gorm.DB) error {
+	// The Context field was removed from Task and Issue in a model cleanup;
+	// SQLite does not drop columns automatically, so remove the leftover
+	// column if it still exists. Safe to run on every startup.
+	drop := func(table string) error {
+		has := false
+		if err := db.Raw("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'context'", table).Scan(&has).Error; err != nil {
+			return err
+		}
+		if !has {
+			return nil
+		}
+		return db.Exec("ALTER TABLE " + table + " DROP COLUMN context").Error
+	}
+	if err := drop("tasks"); err != nil {
+		return err
+	}
+	return drop("issues")
 }
 
 func migrateTaskWorkspaceIsolation(db *gorm.DB) error {
