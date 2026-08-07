@@ -32,10 +32,12 @@ const simpleCrumbs: Array<{ prefix: string; label: string }> = [
 export function RouteBreadcrumbs() {
   const { state } = useAppState()
   const location = useLocation()
+  const fromBoard = new URLSearchParams(location.search).get("view") === "board"
   const crumbs = buildCrumbs(
     location.pathname,
     state?.issues ?? [],
-    state?.tasks ?? []
+    state?.tasks ?? [],
+    fromBoard
   )
   if (crumbs.length === 0) return null
 
@@ -73,7 +75,8 @@ export function RouteBreadcrumbs() {
 function buildCrumbs(
   pathname: string,
   issues: Issue[],
-  tasks: Task[]
+  tasks: Task[],
+  fromBoard: boolean
 ): Crumb[] {
   if (pathname === "/") return [{ label: "概览", current: true }]
   if (pathname === "/tasks/new") {
@@ -112,10 +115,15 @@ function buildCrumbs(
         label: taskTitle(root, tasks) ?? "任务",
         to: root ? `/tasks/${root.id}` : "/tasks",
       },
-      {
-        label: "Issues",
-        to: root ? `/tasks/${root.id}/issues` : "/issues",
-      },
+      fromBoard
+        ? {
+            label: "Board",
+            to: root ? `/tasks/${root.id}/board` : "/tasks",
+          }
+        : {
+            label: "Issues",
+            to: root ? `/tasks/${root.id}/issues` : "/issues",
+          },
       { label: issue?.title ?? "Issue", current: true },
     ]
   }

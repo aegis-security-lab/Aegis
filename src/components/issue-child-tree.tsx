@@ -11,10 +11,12 @@ export function IssueChildTree({
   rootId,
   issues,
   runtimes = [],
+  view,
 }: {
   rootId: string
   issues: Issue[]
   runtimes?: IssueRuntimeView[]
+  view?: string
 }) {
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set())
   const issueMap = React.useMemo(
@@ -73,7 +75,7 @@ export function IssueChildTree({
             <span className="size-5 shrink-0" />
           )}
           <Link
-            to={`/issues/${issue.id}`}
+            to={`/issues/${issue.id}${view ? `?view=${view}` : ""}`}
             className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-sm"
           >
             <span className="shrink-0 font-mono text-[11px] text-muted-foreground">

@@ -162,7 +162,14 @@ function TaskSidebarItem({
           </SidebarMenuSubItem>
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
-              isActive={latest ? location.pathname === `/tasks/${latest.id}/board` : false}
+              isActive={
+                latest
+                  ? location.pathname === `/tasks/${latest.id}/board` ||
+                    (location.pathname === `/issues/${latest.id}` &&
+                      new URLSearchParams(location.search).get("view") ===
+                        "board")
+                  : false
+              }
               render={<NavLink to={boardTo ?? "/tasks"} />}
             >
               <LayoutGrid />
