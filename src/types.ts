@@ -226,15 +226,13 @@ export interface ContainerProfileDeleteResult {
   deletedExecutions: number
 }
 export type IssueStatus =
-  | "backlog"
   | "todo"
   | "in_progress"
   | "in_review"
   | "done"
-  | "blocked"
-  | "failed"
-  | "budget_exceeded"
   | "cancelled"
+// Operational outcomes ride as labels alongside the five workflow statuses.
+export type IssueLabel = "blocked" | "failed" | "budget_exceeded"
 export type IssueExecutionPhase =
   | "active"
   | "scheduled"
@@ -259,6 +257,7 @@ export interface Issue {
   description: string
   objective: string
   status: IssueStatus
+  labels?: IssueLabel[]
   priority: "high" | "middle" | "low"
   workMode: "guided" | "autonomous"
   executionPhase: IssueExecutionPhase

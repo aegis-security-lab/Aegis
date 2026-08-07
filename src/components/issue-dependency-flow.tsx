@@ -48,12 +48,7 @@ const nodeWidth = 288
 const nodeHeight = 116
 const horizontalGap = 96
 const verticalGap = 34
-const terminalStatuses = new Set([
-  "done",
-  "failed",
-  "budget_exceeded",
-  "cancelled",
-])
+const terminalStatuses = new Set(["done", "cancelled"])
 type DependencyNodeData = {
   issue: Issue
   agentName: string

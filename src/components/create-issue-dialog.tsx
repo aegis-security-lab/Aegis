@@ -23,34 +23,15 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { createIssue } from "@/lib/api"
+import { workflowStatuses, workflowStatusLabels } from "@/lib/issue-workflow"
 import { useAppState } from "@/lib/state"
 import type { CreateIssueInput, Issue, IssueStatus } from "@/types"
 
 const priorities: CreateIssueInput["priority"][] = ["high", "middle", "low"]
 
-const statuses: IssueStatus[] = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "blocked",
-  "failed",
-  "budget_exceeded",
-  "done",
-  "cancelled",
-]
+const statuses: IssueStatus[] = workflowStatuses
 
-const statusLabels: Record<IssueStatus, string> = {
-  backlog: "待处理",
-  todo: "待执行",
-  in_progress: "处理中",
-  in_review: "待复核",
-  blocked: "阻塞",
-  failed: "失败",
-  budget_exceeded: "超出预算",
-  done: "已完成",
-  cancelled: "已取消",
-}
+const statusLabels = workflowStatusLabels
 
 type CreateIssueForm = {
   title: string

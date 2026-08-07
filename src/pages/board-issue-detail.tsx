@@ -61,23 +61,25 @@ import {
 } from "@/lib/api"
 import { formatTime } from "@/lib/format"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
-import { issueWorkflowStatus } from "@/lib/issue-workflow"
+import {
+  issueLabelMeta,
+  issueLabelOptions,
+  issueLabelsOf,
+  issueWorkflowStatus,
+  workflowStatusLabels,
+  workflowStatuses,
+} from "@/lib/issue-workflow"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import type {
   CreateIssueInput,
   Issue,
   IssueDetail,
+  IssueLabel,
   IssueStatus,
 } from "@/types"
 
-const issueStatuses: IssueStatus[] = [
-  "todo",
-  "in_progress",
-  "in_review",
-  "done",
-  "cancelled",
-]
+const issueStatuses: IssueStatus[] = workflowStatuses
 const issuePriorities = ["high", "middle", "low"] as const
 
 type IssueEditForm = {
@@ -86,6 +88,7 @@ type IssueEditForm = {
   objective: string
   priority: (typeof issuePriorities)[number]
   status: IssueStatus
+  labels: IssueLabel[]
   assigneeAgentId: string
 }
 
@@ -126,6 +129,7 @@ export function BoardIssueDetailPage() {
     objective: "",
     priority: "middle",
     status: "todo",
+    labels: [],
     assigneeAgentId: "",
   })
   const load = React.useCallback(
@@ -185,6 +189,7 @@ export function BoardIssueDetailPage() {
       objective: issue.objective,
       priority: issue.priority,
       status: issueWorkflowStatus(issue.status),
+      labels: issueLabelsOf(issue),
       assigneeAgentId: issue.assigneeAgentId ?? "",
     })
     setEditOpen(true)
@@ -198,6 +203,7 @@ export function BoardIssueDetailPage() {
         description: editForm.description,
         objective: editForm.objective,
         priority: editForm.priority,
+        labels: editForm.labels,
         assigneeAgentId: editForm.assigneeAgentId,
       }
       if (editForm.status !== issueWorkflowStatus(issue.status)) {
@@ -320,7 +326,20 @@ export function BoardIssueDetailPage() {
                   <div className="flex flex-col gap-2.5">
                     <Meta label="负责人" value={assignee?.name || "未委派"} />
                     <Meta label="创建者" value={creatorName} />
-                    <Meta label="状态" value={issueWorkflowStatus(issue.status)} />
+                    <Meta
+                      label="状态"
+                      value={
+                        workflowStatusLabels[issueWorkflowStatus(issue.status)]
+                      }
+                    />
+                    <Meta
+                      label="标签"
+                      value={
+                        issueLabelsOf(issue)
+                          .map((label) => issueLabelMeta[label].label)
+                          .join("、") || "无"
+                      }
+                    />
                     <Meta label="优先级" value={issue.priority} />
                     <Meta label="协作模式" value="Board Autonomy" />
                     <Meta label="创建时间" value={formatTime(issue.createdAt)} />
@@ -344,6 +363,15 @@ export function BoardIssueDetailPage() {
                 </PopoverContent>
               </Popover>
               <IssueRuntimeBadge runtime={runtime} />
+              {issueLabelsOf(issue).map((label) => (
+                <Badge
+                  key={label}
+                  variant="outline"
+                  className={cn("font-medium", issueLabelMeta[label].className)}
+                >
+                  {issueLabelMeta[label].label}
+                </Badge>
+              ))}
               <Badge variant="outline">{issue.priority}</Badge>
               <Badge variant="secondary">{assignee?.name || "未委派"}</Badge>
             </div>
@@ -475,33 +503,33 @@ export function BoardIssueDetailPage() {
                 className="min-h-28"
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="grid gap-2">
-                <Label>状态</Label>
-                <Select
-                  value={editForm.status}
-                  onValueChange={(value) =>
-                    value &&
-                    setEditForm((current) => ({
-                      ...current,
-                      status: value as IssueStatus,
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {issueStatuses.map((status) => (
-                        <SelectItem key={status} value={status}>
-                          {status}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-2">
+                  <Label>状态</Label>
+                  <Select
+                    value={editForm.status}
+                    onValueChange={(value) =>
+                      value &&
+                      setEditForm((current) => ({
+                        ...current,
+                        status: value as IssueStatus,
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {issueStatuses.map((status) => (
+                          <SelectItem key={status} value={status}>
+                            {workflowStatusLabels[status]}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
               <div className="grid gap-2">
                 <Label>优先级</Label>
                 <Select
@@ -561,6 +589,35 @@ export function BoardIssueDetailPage() {
                     </SelectGroup>
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label>标签</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                {issueLabelOptions.map((label) => {
+                  const selected = editForm.labels.includes(label)
+                  return (
+                    <Button
+                      key={label}
+                      type="button"
+                      variant={selected ? "default" : "outline"}
+                      size="sm"
+                      className="h-7 px-2.5 text-xs"
+                      onClick={() =>
+                        setEditForm((current) => ({
+                          ...current,
+                          labels: selected
+                            ? current.labels.filter(
+                                (candidate) => candidate !== label
+                              )
+                            : [...current.labels, label],
+                        }))
+                      }
+                    >
+                      {issueLabelMeta[label].label}
+                    </Button>
+                  )
+                })}
               </div>
             </div>
           </div>

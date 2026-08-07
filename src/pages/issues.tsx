@@ -16,31 +16,21 @@ import { SearchInput } from "@/components/ui/search-input"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
+import {
+  issueWorkflowStatus,
+  workflowStatusLabels,
+  workflowStatuses,
+  hasIssueLabel,
+} from "@/lib/issue-workflow"
 import { issuesInSubtree } from "@/lib/collections"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
-import { issueWorkflowStatus } from "@/lib/issue-workflow"
+import { IssueStatusSelect } from "@/components/issue-status-select"
 import type { Issue, IssueRuntimeView, IssueStatus } from "@/types"
 
-const statuses: IssueStatus[] = [
-  "todo",
-  "in_progress",
-  "in_review",
-  "done",
-  "cancelled",
-]
+const statuses = workflowStatuses
 
-const statusLabels: Record<IssueStatus, string> = {
-  backlog: "待处理",
-  todo: "待执行",
-  in_progress: "处理中",
-  in_review: "待复核",
-  blocked: "阻塞",
-  failed: "失败",
-  budget_exceeded: "超出预算",
-  done: "已完成",
-  cancelled: "已取消",
-}
+const statusLabels = workflowStatusLabels
 
 type ViewMode = "tree" | "list"
 type IssueGroupKey = "running" | "waiting" | "failed" | "finished" | "todo"
@@ -64,7 +54,7 @@ const groupLabels: Record<IssueGroupKey, string> = {
 const groupToStatus: Record<IssueGroupKey, IssueStatus> = {
   running: "in_progress",
   waiting: "todo",
-  failed: "failed",
+  failed: "todo",
   finished: "done",
   todo: "todo",
 }
@@ -236,24 +226,29 @@ export function IssuesPage() {
                       </p>
                     ) : (
                       items.map((issue) => (
-                        <Link
+                        <div
                           key={issue.id}
-                          to={`/issues/${issue.id}`}
-                          className="flex min-h-9 items-center gap-3 rounded-md px-7 py-1 text-sm hover:bg-muted/40"
+                          className="flex min-h-9 items-center gap-3 rounded-md px-7 py-1 hover:bg-muted/40"
                         >
-                          <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">
-                            {issue.identifier}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">
-                            {issue.title}
-                          </span>
+                          <Link
+                            to={`/issues/${issue.id}`}
+                            className="flex min-w-0 flex-1 items-center gap-3"
+                          >
+                            <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">
+                              {issue.identifier}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">
+                              {issue.title}
+                            </span>
+                          </Link>
+                          <IssueStatusSelect issue={issue} align="end" />
                           <IssueRuntimeBadge
                             runtime={issueRuntimeOrUnavailable(
                               runtimeMap,
                               issue.id
                             )}
                           />
-                        </Link>
+                        </div>
                       ))
                     )}
                   </div>
@@ -274,6 +269,7 @@ export function IssuesPage() {
               agents={state?.agents ?? []}
               taskAgents={state?.taskAgents ?? []}
               runtimes={state?.issueRuntimes ?? []}
+              editableStatus
               className="h-full"
             />
           </Card>
@@ -313,7 +309,7 @@ function classifyIssue(
   if (runtime.kind === "running") return "running"
   if (runtime.kind === "waiting") return "waiting"
   if (["done", "cancelled"].includes(issue.status)) return "finished"
-  if (["failed", "budget_exceeded", "blocked"].includes(issue.status)) {
+  if (hasIssueLabel(issue, "failed", "budget_exceeded", "blocked")) {
     return "failed"
   }
   return "todo"

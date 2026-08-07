@@ -237,7 +237,7 @@ function taskRow(
     (issue) =>
       issue.id !== latest?.id &&
       issueIDs.has(issue.id) &&
-      ["done", "failed", "budget_exceeded", "cancelled"].includes(issue.status)
+      ["done", "cancelled"].includes(issue.status)
   ).length
   const progress = descendants
     ? Math.round((completed / descendants) * 100)

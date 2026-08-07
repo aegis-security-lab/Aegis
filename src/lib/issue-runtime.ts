@@ -98,24 +98,24 @@ function legacyIssueRuntime(
     detail?: string
   ): IssueRuntimeView => ({ ...base, state, kind, health, detail })
 
-  if (issue.status === "done") return view("completed", "completed", "healthy")
+  if (issue.status === "done" && issue.labels?.includes("budget_exceeded")) {
+    return view("budget_exceeded", "failed", "error", issue.error)
+  }
+  if (issue.status === "done" && issue.labels?.includes("failed")) {
+    return view("failed", "failed", "error", issue.error || execution?.error)
+  }
+  if (issue.status === "in_progress" && issue.labels?.includes("blocked")) {
+    return view("blocked", "failed", "error", issue.error || execution?.error)
+  }
+  if (issue.status === "done") {
+    return view("completed", "completed", "healthy")
+  }
   if (issue.status === "cancelled") {
     return view(
       issue.objectiveAbandoned ? "abandoned" : "cancelled",
       "cancelled",
       "healthy",
       issue.abandonmentReason
-    )
-  }
-  if (issue.status === "budget_exceeded") {
-    return view("budget_exceeded", "failed", "error", issue.error)
-  }
-  if (issue.status === "failed" || issue.status === "blocked") {
-    return view(
-      issue.status,
-      "failed",
-      "error",
-      issue.error || execution?.error
     )
   }
   if (issue.executionPhase === "recovering") {

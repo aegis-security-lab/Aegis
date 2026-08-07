@@ -1,84 +1,58 @@
 import * as React from "react"
-import { LayoutGrid, Plus } from "lucide-react"
+import { LayoutGrid } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import { CreateIssueDialog } from "@/components/create-issue-dialog"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
+import { IssueStatusSelect } from "@/components/issue-status-select"
 import { SearchInput } from "@/components/ui/search-input"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { issuesInSubtree } from "@/lib/collections"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
+import {
+  issueLabelsOf,
+  issueLabelMeta,
+  issueWorkflowStatus,
+  workflowStatusLabels,
+} from "@/lib/issue-workflow"
 import { updateIssue } from "@/lib/api"
 import { useAppState } from "@/lib/state"
 import type { Issue, IssueRuntimeView, IssueStatus } from "@/types"
 
 type BoardColumn = {
   status: IssueStatus
-  label: string
   dot: string
   hint: string
 }
 
 const columns: BoardColumn[] = [
   {
-    status: "backlog",
-    label: "待处理",
-    dot: "bg-muted-foreground",
-    hint: "还没有安排进迭代的诉求",
-  },
-  {
     status: "todo",
-    label: "待执行",
     dot: "bg-info",
     hint: "已就绪、等待开工",
   },
   {
     status: "in_progress",
-    label: "处理中",
     dot: "bg-success",
     hint: "Agent 正在执行",
   },
   {
     status: "in_review",
-    label: "待复核",
     dot: "bg-warning",
     hint: "等待人工复核结果",
   },
   {
-    status: "blocked",
-    label: "阻塞",
-    dot: "bg-destructive",
-    hint: "执行被依赖或错误阻塞",
-  },
-  {
-    status: "failed",
-    label: "失败",
-    dot: "bg-destructive",
-    hint: "执行失败，需要处理",
-  },
-  {
-    status: "budget_exceeded",
-    label: "超出预算",
-    dot: "bg-warning",
-    hint: "执行预算已耗尽",
-  },
-  {
     status: "done",
-    label: "已完成",
     dot: "bg-muted-foreground",
     hint: "目标已达成",
   },
   {
     status: "cancelled",
-    label: "已取消",
     dot: "bg-muted-foreground/40",
     hint: "已终止或放弃",
   },
 ]
-
-const columnByStatus = new Map(columns.map((column) => [column.status, column]))
 
 const priorityRank: Record<Issue["priority"], number> = {
   high: 0,
@@ -104,9 +78,6 @@ export function TaskBoardPage() {
   const [query, setQuery] = React.useState("")
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dropTarget, setDropTarget] = React.useState<IssueStatus | null>(null)
-  const [createStatus, setCreateStatus] = React.useState<IssueStatus | null>(
-    null
-  )
 
   const allIssues = state?.issues ?? []
   const scopedIssues = taskRootId
@@ -155,7 +126,7 @@ export function TaskBoardPage() {
     )
     try {
       await updateIssue(issueId, { status })
-      toast.success(`已移动到「${columnByStatus.get(status)?.label ?? status}」`)
+      toast.success(`已移动到「${workflowStatusLabels[status]}」`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "移动 Issue 失败")
       if (previous) {
@@ -164,7 +135,9 @@ export function TaskBoardPage() {
             ? {
                 ...current,
                 issues: current.issues.map((issue) =>
-                  issue.id === issueId ? { ...issue, status: previous.status } : issue
+                  issue.id === issueId
+                    ? { ...issue, status: previous.status }
+                    : issue
                 ),
               }
             : current
@@ -190,14 +163,16 @@ export function TaskBoardPage() {
         </div>
         <p className="ml-auto hidden shrink-0 items-center gap-1.5 text-xs text-muted-foreground md:flex">
           <LayoutGrid className="size-3.5" />
-          拖拽卡片即可在状态列之间移动
+          点击卡片上的状态可直接修改，或拖拽卡片换列
         </p>
       </div>
 
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
         {columns.map((column) => {
           const items = matched
-            .filter((issue) => issue.status === column.status)
+            .filter(
+              (issue) => issueWorkflowStatus(issue.status) === column.status
+            )
             .sort(
               (left, right) =>
                 priorityRank[left.priority] - priorityRank[right.priority] ||
@@ -205,12 +180,12 @@ export function TaskBoardPage() {
             )
           const isDropTarget = dropTarget === column.status
           const total = scopedIssues.filter(
-            (issue) => issue.status === column.status
+            (issue) => issueWorkflowStatus(issue.status) === column.status
           ).length
           return (
             <section
               key={column.status}
-              aria-label={column.label}
+              aria-label={workflowStatusLabels[column.status]}
               onDragOver={(event) => {
                 event.preventDefault()
                 event.dataTransfer.dropEffect = "move"
@@ -235,7 +210,9 @@ export function TaskBoardPage() {
                   draggingId ?? event.dataTransfer.getData("text/plain")
                 if (!issueId) return
                 const issue = issueById.get(issueId)
-                if (!issue || issue.status === column.status) return
+                if (!issue) return
+                const target = issueWorkflowStatus(issue.status)
+                if (target === column.status) return
                 void moveIssue(issueId, column.status)
               }}
               className={cn(
@@ -246,19 +223,12 @@ export function TaskBoardPage() {
             >
               <header className="flex h-10 shrink-0 items-center gap-2 px-3">
                 <span className={cn("size-2 rounded-full", column.dot)} />
-                <h2 className="text-sm font-medium">{column.label}</h2>
+                <h2 className="text-sm font-medium">
+                  {workflowStatusLabels[column.status]}
+                </h2>
                 <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">
                   {total}
                 </span>
-                <button
-                  type="button"
-                  aria-label={`在「${column.label}」中新建 Issue`}
-                  title={`在「${column.label}」中新建 Issue`}
-                  onClick={() => setCreateStatus(column.status)}
-                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-                >
-                  <Plus className="size-4" />
-                </button>
               </header>
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
                 {items.length === 0 ? (
@@ -295,15 +265,8 @@ export function TaskBoardPage() {
               </div>
             </section>
           )
-          })}
+        })}
       </div>
-      <CreateIssueDialog
-        open={createStatus !== null}
-        onOpenChange={(open) => !open && setCreateStatus(null)}
-        defaultStatus={createStatus ?? "todo"}
-        workspace={rootIssue?.workspace}
-        parentId={taskRootId}
-      />
     </div>
   )
 }
@@ -325,40 +288,65 @@ function BoardCard({
   onDragStart: (event: React.DragEvent) => void
   onDragEnd: () => void
 }) {
+  const labels = issueLabelsOf(issue)
   return (
-    <Link
-      to={`/issues/${issue.id}?view=board`}
+    <div
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       className={cn(
-        "group flex cursor-grab flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity,transform] hover:shadow-md hover:ring-foreground/15 active:cursor-grabbing",
+        "group flex cursor-grab flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity] hover:shadow-md hover:ring-foreground/15 active:cursor-grabbing",
         dragging && "opacity-50"
       )}
     >
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-1.5">
+        <Link
+          to={`/issues/${issue.id}?view=board`}
+          draggable={false}
+          className="font-mono text-[11px] text-muted-foreground hover:underline"
+          title={issue.identifier}
+        >
           {issue.identifier}
-        </span>
+        </Link>
         <span
           className={cn(
             "size-1.5 rounded-full",
-            priorityDot[issue.priority],
-            issue.parentId && "ml-1"
+            priorityDot[issue.priority]
           )}
           title={priorityLabel[issue.priority]}
         />
-        {issue.parentId ? (
-          <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal text-muted-foreground">
-            子任务
-          </Badge>
-        ) : null}
+        <IssueStatusSelect issue={issue} className="ml-auto" />
       </div>
-      <p className="line-clamp-2 text-sm leading-snug">{issue.title}</p>
+      <Link
+        to={`/issues/${issue.id}?view=board`}
+        draggable={false}
+        className="line-clamp-2 text-sm leading-snug hover:underline"
+      >
+        {issue.title}
+      </Link>
+      {labels.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1">
+          {labels.map((label) => (
+            <Badge
+              key={label}
+              variant="outline"
+              className={cn(
+                "h-5 px-1.5 text-[10px] font-medium",
+                issueLabelMeta[label].className
+              )}
+            >
+              {issueLabelMeta[label].label}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
       <div className="flex items-center gap-1.5">
         <IssueRuntimeBadge runtime={runtime} />
         {childCount > 0 ? (
-          <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
+          <Badge
+            variant="outline"
+            className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground"
+          >
             {childCount} 个子项
           </Badge>
         ) : null}
@@ -368,6 +356,6 @@ function BoardCard({
           </span>
         ) : null}
       </div>
-    </Link>
+    </div>
   )
 }

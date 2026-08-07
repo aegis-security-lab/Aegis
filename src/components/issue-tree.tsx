@@ -25,6 +25,7 @@ import {
 import { formatTime } from "@/lib/format"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { issueWorkflowStatus } from "@/lib/issue-workflow"
+import { IssueStatusSelect } from "@/components/issue-status-select"
 import { cn } from "@/lib/utils"
 import type {
   AgentDefinition,
@@ -34,12 +35,7 @@ import type {
   TaskAgent,
 } from "@/types"
 
-const terminalStatuses = new Set([
-  "done",
-  "failed",
-  "budget_exceeded",
-  "cancelled",
-])
+const terminalStatuses = new Set(["done", "cancelled"])
 interface IssueTreeProps {
   issues: Issue[]
   relations: IssueRelation[]
@@ -49,6 +45,7 @@ interface IssueTreeProps {
   rootIds?: string[]
   mode?: "hierarchy" | "dependency"
   defaultExpansion?: "none" | "roots" | "all"
+  editableStatus?: boolean
   className?: string
 }
 
@@ -61,6 +58,7 @@ export function IssueTree({
   rootIds,
   mode = "hierarchy",
   defaultExpansion = "roots",
+  editableStatus = false,
   className,
 }: IssueTreeProps) {
   const issueMap = React.useMemo(
@@ -272,6 +270,7 @@ export function IssueTree({
                   runtimeMap={runtimeMap}
                   mode={mode}
                   reference={row.reference}
+                  editableStatus={editableStatus}
                   open={expanded.has(row.issue.id)}
                   onToggle={() =>
                     setExpanded((current) => {
@@ -303,6 +302,7 @@ interface TreeNodeProps {
   runtimeMap: Map<string, IssueRuntimeView>
   mode: "hierarchy" | "dependency"
   reference: boolean
+  editableStatus: boolean
   open: boolean
   onToggle: () => void
 }
@@ -319,6 +319,7 @@ function TreeNode({
   runtimeMap,
   mode,
   reference,
+  editableStatus,
   open,
   onToggle,
 }: TreeNodeProps) {
@@ -383,9 +384,13 @@ function TreeNode({
             {issue.title}
           </Link>
           <IssueRuntimeBadge runtime={runtime} />
-          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-            {issueWorkflowStatus(issue.status)}
-          </Badge>
+          {editableStatus ? (
+            <IssueStatusSelect issue={issue} />
+          ) : (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+              {issueWorkflowStatus(issue.status)}
+            </Badge>
+          )}
           <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
             {issue.priority}
           </Badge>
