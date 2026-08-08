@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// Audit levels describe exploit impact and preconditions independently from the
-// legacy web-oriented severity field.
+// Audit levels describe exploit impact and preconditions independently from
+// conventional risk severity.
 const (
 	AuditLevelS = "S" // Unconditional RCE with highest privileges.
 	AuditLevelA = "A" // Unconditional RCE with limited privileges.
@@ -27,8 +27,8 @@ var validAuditLevels = map[string]struct{}{
 	AuditLevelI: {},
 }
 
-// NormalizeAuditLevel validates an explicit audit level. When the level is
-// omitted, it derives a backward-compatible default from the legacy severity.
+// NormalizeAuditLevel validates an explicit audit level. When omitted, the
+// conventional severity supplies the canonical default.
 func NormalizeAuditLevel(level, severity string) (string, error) {
 	level = strings.ToUpper(strings.TrimSpace(level))
 	if level == "" {
@@ -57,8 +57,8 @@ func AuditLevelFromSeverity(severity string) string {
 	}
 }
 
-// SeverityFromAuditLevel keeps the existing score, filters, and integrations
-// working when an AI or audit workflow uses the new level as its primary output.
+// SeverityFromAuditLevel projects the audit level onto conventional risk
+// severity for filters, scores, and integrations.
 func SeverityFromAuditLevel(level string) string {
 	switch strings.ToUpper(strings.TrimSpace(level)) {
 	case AuditLevelS, AuditLevelA:

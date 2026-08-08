@@ -10,7 +10,7 @@ func TestRestartTaskCreatesNewRootIssueWithOriginalSource(t *testing.T) {
 	store := configuredStore(t)
 	task, original, err := store.CreateTask(CreateIssueInput{
 		Title: "Repeatable security review", Description: "Inspect the target.", Objective: "Produce evidence.",
-		Priority: "critical", WorkMode: "guided",
+		Priority: "high", WorkMode: "guided",
 		Workspace: store.Config().Workspace, Constraints: "Original boundary",
 	})
 	if err != nil {
@@ -35,6 +35,73 @@ func TestRestartTaskCreatesNewRootIssueWithOriginalSource(t *testing.T) {
 	if again.TaskSourceID != task.ID {
 		t.Fatalf("repeated restart source=%q, want Task %q", again.TaskSourceID, task.ID)
 	}
+	if _, err = manager.RestartTask(original.ID); err == nil {
+		t.Fatal("RestartTask accepted an Issue ID instead of a Task ID")
+	}
+}
+
+func TestCreateRootIssueInExistingTaskKeepsTaskBinding(t *testing.T) {
+	store := configuredStore(t)
+	task, original, err := store.CreateTask(CreateIssueInput{
+		Title: "Multi-root review", Objective: "Coordinate independent roots.",
+		Priority: "middle", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := store.CreateIssue(CreateIssueInput{
+		TaskSourceID: task.ID, Title: "Manual root Issue", Objective: "Run independently.",
+		Priority: "high", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ParentID != "" || created.TaskSourceID != task.ID {
+		t.Fatalf("manual Issue was not a task-bound root: %+v", created)
+	}
+	if created.ContainerID != original.ContainerID || created.ContainerProfileID != original.ContainerProfileID || created.Workspace != original.Workspace {
+		t.Fatalf("manual root did not inherit task runtime: original=%+v created=%+v", original, created)
+	}
+
+	var taskCount int64
+	if err = store.db.Model(&Task{}).Count(&taskCount).Error; err != nil || taskCount != 1 {
+		t.Fatalf("manual root created another Task: count=%d err=%v", taskCount, err)
+	}
+	var rootCount int64
+	if err = store.db.Model(&Issue{}).Where("task_source_id = ? AND parent_id = ''", task.ID).Count(&rootCount).Error; err != nil || rootCount != 2 {
+		t.Fatalf("task root count=%d err=%v, want 2", rootCount, err)
+	}
+}
+
+func TestUpdateTaskBudgetUpdatesEveryRootIssue(t *testing.T) {
+	store := configuredStore(t)
+	task, firstRoot, err := store.CreateTask(CreateIssueInput{
+		Title: "Shared budget", Objective: "Apply one Task budget to every root.", Priority: "middle", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRoot, err := store.CreateIssue(CreateIssueInput{
+		TaskSourceID: task.ID, Title: "Additional root", Objective: "Share the Task budget.", Priority: "middle", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	minutes := 45
+	updated, err := store.UpdateTaskBudget(task.ID, &minutes)
+	if err != nil || updated.TimeBudgetMinutes == nil || *updated.TimeBudgetMinutes != minutes {
+		t.Fatalf("updated Task=%+v err=%v", updated, err)
+	}
+	for _, rootID := range []string{firstRoot.ID, secondRoot.ID} {
+		root, getErr := store.GetIssue(rootID)
+		if getErr != nil || root.TimeBudgetMinutes == nil || *root.TimeBudgetMinutes != minutes {
+			t.Fatalf("root %s budget=%v err=%v", rootID, root.TimeBudgetMinutes, getErr)
+		}
+	}
+	if _, err = store.UpdateTaskBudget(firstRoot.ID, &minutes); err == nil {
+		t.Fatal("UpdateTaskBudget accepted an Issue id instead of a Task id")
+	}
 }
 
 func TestFreshTaskWorkspaceDoesNotExposeHostFiles(t *testing.T) {
@@ -49,67 +116,15 @@ func TestFreshTaskWorkspaceDoesNotExposeHostFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "nested", "report.txt"), []byte("report"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "List workspace", Priority: "medium", WorkMode: "guided", Workspace: root})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "List workspace", Priority: "middle", WorkMode: "guided", Workspace: root})
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := store.TaskWorkspace(issue.ID)
+	workspace, err := store.TaskWorkspace(issue.TaskSourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if workspace.Root != "/workspace" || len(workspace.Entries) != 0 {
 		t.Fatalf("fresh task exposed host workspace files: %+v", workspace)
-	}
-}
-
-func TestStartupMigratesLegacyRootIssueToReusableTaskOnce(t *testing.T) {
-	store := configuredStore(t)
-	legacy, err := store.CreateIssue(CreateIssueInput{
-		Title: "Legacy root task", Priority: "high", WorkMode: "guided", Workspace: store.Config().Workspace,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Current writes enforce the invariant, so deliberately downgrade the row
-	// to the shape persisted by releases before Tasks and task containers.
-	if legacy.TaskSourceID == "" || legacy.ContainerID == "" {
-		t.Fatalf("current root invariant missing before downgrade: %+v", legacy)
-	}
-	if err = store.db.Delete(&ContainerInstance{}, "id = ?", legacy.ContainerID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Delete(&Task{}, "id = ?", legacy.TaskSourceID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Model(&Issue{}).Where("id = ?", legacy.ID).Updates(map[string]any{
-		"task_source_id": "", "container_id": "", "container_profile_id": "",
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	reopened, err := NewStore(store.DataDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = reopened.db.First(&legacy, "id = ?", legacy.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if legacy.TaskSourceID == "" {
-		t.Fatal("legacy root Issue was not assigned a reusable Task")
-	}
-	if legacy.ContainerID == "" {
-		t.Fatal("legacy root Issue was not assigned the Task container")
-	}
-	var count int64
-	if err = reopened.db.Model(&Task{}).Where("id = ?", legacy.TaskSourceID).Count(&count).Error; err != nil || count != 1 {
-		t.Fatalf("migrated Task count=%d err=%v", count, err)
-	}
-
-	reopenedAgain, err := NewStore(store.DataDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = reopenedAgain.db.Model(&Task{}).Count(&count).Error; err != nil || count != 1 {
-		t.Fatalf("Task migration duplicated records: count=%d err=%v", count, err)
 	}
 }

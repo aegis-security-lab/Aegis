@@ -1,18 +1,10 @@
 import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
-import {
-  Download,
-  Paperclip,
-} from "lucide-react"
+import { Download, Paperclip } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { toast } from "sonner"
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Empty,
   EmptyDescription,
@@ -22,32 +14,30 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Button } from "@/components/ui/button"
 import { TimelinePanel } from "@/components/timeline-panel"
-import { fetchIssue } from "@/lib/api"
+import { fetchTask } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
-import type { IssueDetail } from "@/types"
+import type { TaskDetail } from "@/types"
 
 export function TaskDetailPage() {
-  const { issueId } = useParams()
+  const { taskId } = useParams()
   const { state } = useAppState()
-  const [detail, setDetail] = React.useState<IssueDetail | null>(null)
+  const [detail, setDetail] = React.useState<TaskDetail | null>(null)
   const [loading, setLoading] = React.useState(true)
 
   React.useEffect(() => {
-    if (!issueId) return
+    if (!taskId) return
     let active = true
     setLoading(true)
-    void fetchIssue(issueId)
+    void fetchTask(taskId)
       .then((next) => {
         if (active) setDetail(next)
       })
       .catch((reason) => {
         if (!active) return
         setDetail(null)
-        toast.error(
-          reason instanceof Error ? reason.message : "读取任务失败"
-        )
+        toast.error(reason instanceof Error ? reason.message : "读取任务失败")
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -55,7 +45,7 @@ export function TaskDetailPage() {
     return () => {
       active = false
     }
-  }, [issueId])
+  }, [taskId])
 
   if (loading) {
     return (
@@ -64,26 +54,20 @@ export function TaskDetailPage() {
       </div>
     )
   }
-  if (!detail || detail.issue.parentId) {
+  if (!detail) {
     return (
       <Empty>
         <EmptyHeader>
           <EmptyTitle>任务不存在</EmptyTitle>
-          <EmptyDescription>
-            该地址没有对应的顶层任务执行记录。
-          </EmptyDescription>
+          <EmptyDescription>该地址没有对应的任务。</EmptyDescription>
         </EmptyHeader>
       </Empty>
     )
   }
 
-  const issue =
-    state?.issues.find((candidate) => candidate.id === detail.issue.id) ??
-    detail.issue
-  const source = state?.tasks.find(
-    (candidate) => candidate.id === issue.taskSourceId
-  )
-  const parameters = source ?? issue
+  const task =
+    state?.tasks.find((candidate) => candidate.id === detail.task.id) ??
+    detail.task
 
   return (
     <div className="relative size-full min-h-0 overflow-hidden">
@@ -91,43 +75,37 @@ export function TaskDetailPage() {
         <div className="flex min-h-full flex-col gap-5">
           <Card>
             <CardContent className="grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2">
-              <TaskParameter label="标题" value={parameters.title} />
+              <TaskParameter label="标题" value={task.title} />
               <TaskParameter
                 label="描述"
-                value={parameters.description || "未填写"}
+                value={task.description || "未填写"}
               />
-              <TaskParameter
-                label="目标"
-                value={parameters.objective || "未填写"}
-              />
+              <TaskParameter label="目标" value={task.objective || "未填写"} />
               <TaskParameter
                 label="执行边界"
-                value={parameters.constraints || "未填写"}
+                value={task.constraints || "未填写"}
               />
               <TaskParameter
                 label="负责 Agent"
                 value={referenceName(
-                  parameters.assigneeAgentId,
+                  task.assigneeAgentId,
                   state?.agents.find(
-                    (candidate) =>
-                      candidate.id === parameters.assigneeAgentId
+                    (candidate) => candidate.id === task.assigneeAgentId
                   )?.name
                 )}
               />
-              <TaskParameter label="优先级" value={parameters.priority} />
+              <TaskParameter label="优先级" value={task.priority} />
               <TaskParameter
                 label="时间预算（分钟）"
                 value={
-                  parameters.timeBudgetMinutes
-                    ? String(parameters.timeBudgetMinutes)
+                  task.timeBudgetMinutes
+                    ? String(task.timeBudgetMinutes)
                     : "不限制"
                 }
               />
               <TaskParameter
                 label="人工兜底验收"
-                value={
-                  parameters.humanValidationFallback ? "启用" : "关闭"
-                }
+                value={task.humanValidationFallback ? "启用" : "关闭"}
               />
             </CardContent>
           </Card>
@@ -177,7 +155,7 @@ export function TaskDetailPage() {
         </div>
       </div>
       <aside className="absolute inset-y-0 right-2 hidden w-[360px] flex-col overflow-hidden rounded-xl bg-card lg:flex">
-        <TimelinePanel taskId={issue.id} className="h-full" />
+        <TimelinePanel taskId={task.id} className="h-full" />
       </aside>
     </div>
   )
@@ -211,4 +189,3 @@ function TaskParameter({
     </div>
   )
 }
-

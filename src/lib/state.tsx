@@ -1,7 +1,6 @@
 import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect, react-refresh/only-export-components */
 import { fetchState, subscribeToState } from "@/lib/api"
-import { normalizeIssueRuntimeProjection } from "@/lib/issue-runtime"
 import type { AppState } from "@/types"
 interface Value {
   state: AppState | null
@@ -17,7 +16,7 @@ export function StateProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = React.useState<string | null>(null)
   const refresh = React.useCallback(async () => {
     try {
-      setState(normalizeIssueRuntimeProjection(await fetchState()))
+      setState(await fetchState())
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : "无法连接 Aegis")
@@ -29,19 +28,23 @@ export function StateProvider({ children }: { children: React.ReactNode }) {
     void refresh()
     const stop = subscribeToState(
       (v) => {
-        setState(normalizeIssueRuntimeProjection(v))
-        setError(null)
-        setLoading(false)
+        React.startTransition(() => {
+          setState(v)
+          setError(null)
+          setLoading(false)
+        })
       },
       () => setError("实时事件流正在重连")
     )
     return stop
   }, [refresh])
-  return (
-    <Context.Provider value={{ state, loading, error, setState, refresh }}>
-      {children}
-    </Context.Provider>
+
+  const value = React.useMemo(
+    () => ({ state, loading, error, setState, refresh }),
+    [state, loading, error, refresh]
   )
+
+  return <Context.Provider value={value}>{children}</Context.Provider>
 }
 export function useAppState() {
   const v = React.useContext(Context)

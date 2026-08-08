@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const maxIssueDepth = 4 // legacy default retained for existing tests and configurations
+const defaultMaxIssueDepth = 4
 
 // CreateSubIssues is the durable control-plane operation behind the Pi tool.
 // The request key makes retries from the same execution idempotent.

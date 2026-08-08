@@ -88,6 +88,17 @@ export function IssueTree({
     for (const list of map.values()) list.sort((a, b) => a.number - b.number)
     return map
   }, [issueMap, relations])
+  const dependenciesByIssue = React.useMemo(() => {
+    const map = new Map<string, Issue[]>()
+    for (const relation of relations) {
+      const blocker = issueMap.get(relation.issueId)
+      if (!blocker) continue
+      const dependencies = map.get(relation.relatedIssueId)
+      if (dependencies) dependencies.push(blocker)
+      else map.set(relation.relatedIssueId, [blocker])
+    }
+    return map
+  }, [issueMap, relations])
   const branchMap = mode === "dependency" ? dependencyMap : childrenMap
   const roots = React.useMemo(() => {
     if (rootIds) {
@@ -177,12 +188,20 @@ export function IssueTree({
     for (const root of roots) visit(root, 0, root.id)
     return items
   }, [branchMap, expanded, roots])
+  const toggleIssue = React.useCallback((issueId: string) => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(issueId)) next.delete(issueId)
+      else next.add(issueId)
+      return next
+    })
+  }, [])
   const viewportRef = React.useRef<HTMLDivElement>(null)
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewportRef.current,
-    estimateSize: () => 92,
+    estimateSize: () => 60,
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 8,
   })
@@ -197,10 +216,7 @@ export function IssueTree({
 
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
-      <ScrollArea
-        viewportRef={viewportRef}
-        className="min-h-0 flex-1 min-h-[360px]"
-      >
+      <ScrollArea viewportRef={viewportRef} className="min-h-[360px] flex-1">
         <div
           className="relative"
           style={{ height: virtualizer.getTotalSize() }}
@@ -221,8 +237,7 @@ export function IssueTree({
                   depth={row.depth}
                   branchMap={branchMap}
                   hierarchyChildrenMap={childrenMap}
-                  issueMap={issueMap}
-                  relations={relations}
+                  dependenciesByIssue={dependenciesByIssue}
                   agentMap={agentMap}
                   taskAgentMap={taskAgentMap}
                   runtimeMap={runtimeMap}
@@ -230,14 +245,7 @@ export function IssueTree({
                   reference={row.reference}
                   editableStatus={editableStatus}
                   open={expanded.has(row.issue.id)}
-                  onToggle={() =>
-                    setExpanded((current) => {
-                      const next = new Set(current)
-                      if (next.has(row.issue.id)) next.delete(row.issue.id)
-                      else next.add(row.issue.id)
-                      return next
-                    })
-                  }
+                  onToggle={toggleIssue}
                 />
               </div>
             )
@@ -253,8 +261,7 @@ interface TreeNodeProps {
   depth: number
   branchMap: Map<string, Issue[]>
   hierarchyChildrenMap: Map<string, Issue[]>
-  issueMap: Map<string, Issue>
-  relations: IssueRelation[]
+  dependenciesByIssue: Map<string, Issue[]>
   agentMap: Map<string, string>
   taskAgentMap: Map<string, string>
   runtimeMap: Map<string, IssueRuntimeView>
@@ -262,7 +269,7 @@ interface TreeNodeProps {
   reference: boolean
   editableStatus: boolean
   open: boolean
-  onToggle: () => void
+  onToggle: (issueId: string) => void
 }
 
 function TreeNode({
@@ -270,8 +277,7 @@ function TreeNode({
   depth,
   branchMap,
   hierarchyChildrenMap,
-  issueMap,
-  relations,
+  dependenciesByIssue,
   agentMap,
   taskAgentMap,
   runtimeMap,
@@ -286,12 +292,7 @@ function TreeNode({
   const completed = hierarchyChildren.filter((child) =>
     terminalStatuses.has(child.status)
   ).length
-  const dependencies = relations
-    .filter((relation) => relation.relatedIssueId === issue.id)
-    .flatMap((relation) => {
-      const blocker = issueMap.get(relation.issueId)
-      return blocker ? [blocker] : []
-    })
+  const dependencies = dependenciesByIssue.get(issue.id) ?? []
   const progress = hierarchyChildren.length
     ? Math.round((completed / hierarchyChildren.length) * 100)
     : 0
@@ -307,12 +308,12 @@ function TreeNode({
   return (
     <div
       className={cn(
-        "group flex min-w-0 items-start gap-2 px-4 py-3 transition-colors hover:bg-muted/35",
+        "group flex min-w-0 items-start gap-1.5 px-4 py-1 transition-colors hover:bg-muted/35",
         depth > 0 && "border-l border-border/70"
       )}
       style={{ paddingLeft: 16 + Math.min(depth, 4) * 20 }}
     >
-      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center">
+      <div className="flex size-7 shrink-0 items-center justify-center">
         {reference ? (
           <GitMerge className="size-3.5 text-muted-foreground" />
         ) : branches.length ? (
@@ -321,7 +322,7 @@ function TreeNode({
             variant="ghost"
             size="icon-sm"
             aria-label={open ? "折叠子 Issues" : "展开子 Issues"}
-            onClick={onToggle}
+            onClick={() => onToggle(issue.id)}
           >
             <ChevronDown
               className={cn("transition-transform", !open && "-rotate-90")}
@@ -364,7 +365,7 @@ function TreeNode({
           )}
         </div>
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-x-3 overflow-hidden text-xs text-muted-foreground [&>span]:shrink-0">
           <span className="font-mono text-[11px]">{issue.identifier}</span>
           <span>
             {taskAgentMap.get(issue.assigneeTaskAgentId ?? "") ??
@@ -403,7 +404,7 @@ function TreeNode({
         {mode === "hierarchy" && hierarchyChildren.length > 0 && (
           <Progress
             value={progress}
-            className="mt-2 max-w-xs"
+            className="mt-1.5 max-w-xs"
             aria-label="子 Issue 完成进度"
           />
         )}
@@ -420,4 +421,3 @@ function TreeNode({
     </div>
   )
 }
-

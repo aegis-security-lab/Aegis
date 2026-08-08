@@ -9,8 +9,8 @@ import (
 	"github.com/z3r2ne/agentcore"
 )
 
-// NativeConciergeSource lets the in-process concierge create a real Task.
-// It deliberately exposes no legacy RPC transport or execution control token.
+// NativeConciergeSource lets the in-process concierge create a real Task
+// without exposing execution control tokens.
 type NativeConciergeSource struct{ Manager *Manager }
 
 func (s NativeConciergeSource) Resolve(_ context.Context, execution capability.ResolveContext, ref capability.Ref) (capability.Resolved, error) {

@@ -1,10 +1,5 @@
 import * as React from "react"
-import {
-  ChevronRight,
-  ChevronsDown,
-  ChevronsUp,
-  Plus,
-} from "lucide-react"
+import { ChevronRight, ChevronsDown, ChevronsUp, Plus } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 
 import { CreateIssueDialog } from "@/components/create-issue-dialog"
@@ -23,7 +18,7 @@ import {
   workflowStatusLabels,
   workflowStatuses,
 } from "@/lib/issue-workflow"
-import { issuesInSubtree } from "@/lib/collections"
+import { issuesForTask } from "@/lib/collections"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import type { Issue, IssueRuntimeView, IssueStatus } from "@/types"
@@ -61,7 +56,7 @@ const groupToStatus: Record<IssueGroupKey, IssueStatus> = {
 
 export function IssuesPage() {
   const { state } = useAppState()
-  const { issueId: taskRootId } = useParams()
+  const { taskId } = useParams()
   const [filter, setFilter] = React.useState("all")
   const [query, setQuery] = React.useState("")
   const [expansion, setExpansion] = React.useState<"none" | "roots" | "all">(
@@ -73,23 +68,38 @@ export function IssuesPage() {
   const [createStatus, setCreateStatus] = React.useState<IssueStatus>("todo")
   const [openGroups, setOpenGroups] = React.useState<
     Record<IssueGroupKey, boolean>
-  >(() =>
-    Object.fromEntries(groupOrder.map((key) => [key, true])) as Record<
-      IssueGroupKey,
-      boolean
-    >
+  >(
+    () =>
+      Object.fromEntries(groupOrder.map((key) => [key, true])) as Record<
+        IssueGroupKey,
+        boolean
+      >
   )
-  const allIssues = state?.issues ?? []
-  const scopedIssues = taskRootId
-    ? issuesInSubtree(taskRootId, allIssues)
-    : allIssues
-  const matched = scopedIssues.filter(
-    (issue) =>
-      (filter === "all" || issueWorkflowStatus(issue.status) === filter) &&
-      (!query.trim() ||
-        `${issue.identifier} ${issue.title}`
-          .toLocaleLowerCase()
-          .includes(query.trim().toLocaleLowerCase()))
+  const allIssues = React.useMemo(() => state?.issues ?? [], [state?.issues])
+  const deferredQuery = React.useDeferredValue(query)
+  const task = React.useMemo(
+    () => state?.tasks.find((candidate) => candidate.id === taskId),
+    [state?.tasks, taskId]
+  )
+  const taskSourceId = task?.id
+  const scopedIssues = React.useMemo(
+    () => (taskSourceId ? issuesForTask(taskSourceId, allIssues) : []),
+    [allIssues, taskSourceId]
+  )
+  const matched = React.useMemo(() => {
+    const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
+    return scopedIssues.filter(
+      (issue) =>
+        (filter === "all" || issueWorkflowStatus(issue.status) === filter) &&
+        (!normalizedQuery ||
+          `${issue.identifier} ${issue.title}`
+            .toLocaleLowerCase()
+            .includes(normalizedQuery))
+    )
+  }, [deferredQuery, filter, scopedIssues])
+  const runtimeMap = React.useMemo(
+    () => issueRuntimeMap(state?.issueRuntimes ?? []),
+    [state?.issueRuntimes]
   )
   const statusCounts = React.useMemo(() => {
     const counts = new Map<string, number>()
@@ -99,9 +109,10 @@ export function IssuesPage() {
     }
     return counts
   }, [scopedIssues])
-  const hierarchyIssues = includeAncestors(matched, scopedIssues)
-  const displayedIssues = hierarchyIssues
-  const runtimeMap = issueRuntimeMap(state?.issueRuntimes ?? [])
+  const displayedIssues = React.useMemo(
+    () => includeAncestors(matched, scopedIssues),
+    [matched, scopedIssues]
+  )
   const listGroups = React.useMemo(() => {
     const groups: Record<IssueGroupKey, Issue[]> = {
       running: [],
@@ -136,14 +147,14 @@ export function IssuesPage() {
         >
           <ToggleGroupItem value="all">
             全部{" "}
-            <span className="tabular-nums text-muted-foreground">
+            <span className="text-muted-foreground tabular-nums">
               {scopedIssues.length}
             </span>
           </ToggleGroupItem>
           {statuses.map((status) => (
             <ToggleGroupItem key={status} value={status}>
               {statusLabels[status]}{" "}
-              <span className="tabular-nums text-muted-foreground">
+              <span className="text-muted-foreground tabular-nums">
                 {statusCounts.get(status) ?? 0}
               </span>
             </ToggleGroupItem>
@@ -165,15 +176,17 @@ export function IssuesPage() {
             </span>
           </Button>
         ) : null}
-        <Button
-          size="sm"
-          variant="outline"
-          className="shrink-0"
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus />
-          新增
-        </Button>
+        {taskSourceId ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus />
+            新增
+          </Button>
+        ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-xs text-muted-foreground">树状</span>
           <Switch
@@ -199,8 +212,9 @@ export function IssuesPage() {
                 className="border-b border-border/60 last:border-0"
               >
                 <div className="group flex h-8 items-center gap-2 rounded-md px-1 hover:bg-muted/40">
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     aria-expanded={open}
                     onClick={() =>
                       setOpenGroups((current) => ({
@@ -208,7 +222,7 @@ export function IssuesPage() {
                         [key]: !current[key],
                       }))
                     }
-                    className="flex h-full min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+                    className="h-full min-w-0 flex-1 justify-start rounded-md px-1 text-xs text-muted-foreground hover:text-foreground"
                   >
                     <ChevronRight
                       className={cn(
@@ -218,19 +232,21 @@ export function IssuesPage() {
                     />
                     {groupLabels[key]}
                     <span className="tabular-nums">{items.length}</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`在「${groupLabels[key]}」中新建 Issue`}
-                    title={`在「${groupLabels[key]}」中新建 Issue`}
-                    onClick={() => {
-                      setCreateStatus(groupToStatus[key])
-                      setCreateOpen(true)
-                    }}
-                    className="shrink-0 rounded-md p-1 text-muted-foreground transition-opacity hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-                  >
-                    <Plus className="size-3.5" />
-                  </button>
+                  </Button>
+                  {taskSourceId ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`在「${groupLabels[key]}」中新建 Issue`}
+                      onClick={() => {
+                        setCreateStatus(groupToStatus[key])
+                        setCreateOpen(true)
+                      }}
+                      className="shrink-0 rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                    >
+                      <Plus />
+                    </Button>
+                  ) : null}
                 </div>
                 {open ? (
                   <div className="flex flex-col">
@@ -242,16 +258,16 @@ export function IssuesPage() {
                       items.map((issue) => (
                         <div
                           key={issue.id}
-                          className="flex min-h-9 items-center gap-3 rounded-md px-7 py-1 hover:bg-muted/40"
+                          className="flex min-h-10 items-center gap-2 rounded-md px-7 py-1 hover:bg-muted/40"
                         >
                           <Link
                             to={`/issues/${issue.id}`}
-                            className="flex min-w-0 flex-1 items-center gap-3"
+                            className="flex min-w-0 flex-1 items-center gap-2 text-sm"
                           >
-                            <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">
+                            <span className="w-18 shrink-0 font-mono text-[11px] text-muted-foreground">
                               {issue.identifier}
                             </span>
-                            <span className="min-w-0 flex-1 truncate">
+                            <span className="min-w-0 flex-1 truncate font-medium">
                               {issue.title}
                             </span>
                           </Link>
@@ -289,11 +305,15 @@ export function IssuesPage() {
           </Card>
         </div>
       )}
-      <CreateIssueDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        defaultStatus={createStatus}
-      />
+      {taskSourceId ? (
+        <CreateIssueDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          defaultStatus={createStatus}
+          workspace={task?.workspace}
+          taskSourceId={taskSourceId}
+        />
+      ) : null}
     </div>
   )
 }
@@ -314,10 +334,7 @@ function includeAncestors(matched: Issue[], allIssues: Issue[]) {
   return [...visible.values()]
 }
 
-function classifyIssue(
-  issue: Issue,
-  runtime: IssueRuntimeView
-): IssueGroupKey {
+function classifyIssue(issue: Issue, runtime: IssueRuntimeView): IssueGroupKey {
   if (["completed", "cancelled"].includes(runtime.kind)) return "finished"
   if (runtime.kind === "failed") return "failed"
   if (runtime.kind === "running") return "running"
@@ -328,4 +345,3 @@ function classifyIssue(
   }
   return "todo"
 }
-

@@ -1,4 +1,4 @@
-import type { AppState, Execution, Issue, IssueRuntimeView } from "@/types"
+import type { Issue, IssueRuntimeKind, IssueRuntimeView } from "@/types"
 
 const labels: Record<string, string> = {
   completed: "任务结束",
@@ -59,160 +59,27 @@ export function issueRuntimeOrUnavailable(
   )
 }
 
-// normalizeIssueRuntimeProjection is a rolling-upgrade adapter. The currently
-// running pre-projection backend may omit issueRuntimes until it is restarted.
-// New backends are authoritative; only missing entries are synthesized here,
-// once, at the state ingestion boundary, using the exact currentExecutionId.
-export function normalizeIssueRuntimeProjection(state: AppState): AppState {
-  const provided = issueRuntimeMap(state.issueRuntimes ?? [])
-  if (state.issues.every((issue) => provided.has(issue.id))) return state
-
-  const executionByID = new Map(
-    state.executions.map((execution) => [execution.id, execution])
-  )
-  const issueRuntimes = state.issues.map(
-    (issue) =>
-      provided.get(issue.id) ??
-      legacyIssueRuntime(
-        issue,
-        executionByID.get(issue.currentExecutionId ?? "")
-      )
-  )
-  return { ...state, issueRuntimes }
+const taskRuntimePriority: Record<IssueRuntimeKind, number> = {
+  running: 0,
+  waiting: 1,
+  failed: 2,
+  pending: 3,
+  completed: 4,
+  cancelled: 5,
 }
 
-function legacyIssueRuntime(
-  issue: Issue,
-  execution: Execution | undefined
-): IssueRuntimeView {
-  const base = {
-    issueId: issue.id,
-    currentExecutionId: execution?.id,
-    currentExecutionStatus: execution?.status,
-    updatedAt: issue.updatedAt,
-  }
-  const view = (
-    state: string,
-    kind: IssueRuntimeView["kind"],
-    health: IssueRuntimeView["health"],
-    detail?: string
-  ): IssueRuntimeView => ({ ...base, state, kind, health, detail })
-
-  if (issue.status === "done" && issue.labels?.includes("budget_exceeded")) {
-    return view("budget_exceeded", "failed", "error", issue.error)
-  }
-  if (issue.status === "done" && issue.labels?.includes("failed")) {
-    return view("failed", "failed", "error", issue.error || execution?.error)
-  }
-  if (issue.status === "in_progress" && issue.labels?.includes("blocked")) {
-    return view("blocked", "failed", "error", issue.error || execution?.error)
-  }
-  if (issue.status === "done") {
-    return view("completed", "completed", "healthy")
-  }
-  if (issue.status === "cancelled") {
-    return view(
-      issue.objectiveAbandoned ? "abandoned" : "cancelled",
-      "cancelled",
-      "healthy",
-      issue.abandonmentReason
-    )
-  }
-  if (issue.executionPhase === "recovering") {
-    if (
-      !issue.recoveryExecutionId ||
-      issue.recoveryExecutionId !== issue.currentExecutionId
-    ) {
-      return view(
-        "data_inconsistent",
-        "failed",
-        "error",
-        "恢复 Execution 不存在，或不是 Issue 当前执行"
-      )
-    }
-    if (!execution) {
-      return view(
-        "recovery_pending",
-        "waiting",
-        "waiting",
-        "旧后端未返回恢复 Execution；等待恢复调度器接管"
-      )
-    }
-    if (
-      ["queued", "starting", "running", "waiting_approval"].includes(
-        execution.status
-      )
-    ) {
-      return view("recovering", "running", "healthy", execution.currentTool)
-    }
-    if (["failed", "cancelled"].includes(execution.status)) {
-      return view("recovery_stalled", "failed", "stalled", execution.error)
-    }
-    return view("recovery_pending", "waiting", "waiting", "等待恢复调度器接管")
-  }
-  if (issue.executionPhase === "waiting_children") {
-    return view(
-      "waiting_children",
-      "waiting",
-      "waiting",
-      "等待直属子 Issue 完成"
-    )
-  }
-  if (issue.executionPhase === "sleeping") {
-    return view("sleeping", "waiting", "waiting", "等待唤醒")
-  }
-  if (issue.executionPhase === "scheduled") {
-    return view("scheduled", "pending", "waiting", "等待调度器创建 Execution")
-  }
-  if (execution) {
-    if (execution.status === "queued")
-      return view("queued", "running", "healthy")
-    if (execution.status === "starting")
-      return view("starting", "running", "healthy")
-    if (execution.status === "waiting_approval") {
-      return view("waiting_approval", "waiting", "waiting")
-    }
-    if (execution.status === "running") {
-      const stateByPhase: Record<string, string> = {
-        validating: "validating",
-        resuming: "resuming",
-        summarizing: "summarizing",
-        budget_summarizing: "budget_summarizing",
-      }
-      return view(
-        stateByPhase[issue.executionPhase] ?? "running",
-        "running",
-        "healthy",
-        execution.currentTool ? `正在调用 ${execution.currentTool}` : undefined
-      )
-    }
-    if (["failed", "disconnected", "stopped"].includes(execution.status)) {
-      return view(
-        `execution_${execution.status}`,
-        "failed",
-        "stalled",
-        issue.error || execution.error
-      )
-    }
-  }
-  if (issue.status === "in_progress") {
-    if (issue.currentExecutionId) {
-      return view(
-        "runtime_unavailable",
-        "waiting",
-        "waiting",
-        "旧后端的精简状态未包含当前 Execution"
-      )
-    }
-    return view(
-      "execution_missing",
-      "failed",
-      "stalled",
-      "Issue 正在处理中，但没有活动的当前 Execution"
-    )
-  }
-  if (issue.status === "in_review") {
-    return view("in_review", "waiting", "waiting", "等待人工复核")
-  }
-  return view("pending", "pending", "healthy")
+export function taskRuntimeView(
+  taskId: string,
+  issues: Issue[],
+  runtimes: Map<string, IssueRuntimeView>
+): IssueRuntimeView | undefined {
+  if (issues.length === 0) return undefined
+  const selected = issues
+    .map((issue) => issueRuntimeOrUnavailable(runtimes, issue.id))
+    .sort(
+      (left, right) =>
+        taskRuntimePriority[left.kind] - taskRuntimePriority[right.kind] ||
+        right.updatedAt.localeCompare(left.updatedAt)
+    )[0]
+  return { ...selected, issueId: taskId }
 }

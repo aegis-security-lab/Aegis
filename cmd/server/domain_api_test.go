@@ -208,18 +208,34 @@ func TestIssueAPI(t *testing.T) {
 	if err = json.Unmarshal(res.Body.Bytes(), &detail); err != nil || detail.Issue.Identifier == "" {
 		t.Fatalf("bad detail: %v %+v", err, detail)
 	}
-	req = httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.ID+"/timeline", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.TaskSourceID, nil)
+	res = httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("task detail status=%d body=%s", res.Code, res.Body.String())
+	}
+	var taskDetail control.TaskDetail
+	if err = json.Unmarshal(res.Body.Bytes(), &taskDetail); err != nil || taskDetail.Task.ID != issue.TaskSourceID {
+		t.Fatalf("bad task detail: %v %+v", err, taskDetail)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.ID, nil)
+	res = httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("Task endpoint accepted Issue id: status=%d body=%s", res.Code, res.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.TaskSourceID+"/timeline", nil)
 	res = httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("timeline status=%d body=%s", res.Code, res.Body.String())
 	}
 	var timeline control.TaskTimeline
-	if err = json.Unmarshal(res.Body.Bytes(), &timeline); err != nil || timeline.Task.ID != issue.ID || len(timeline.Events) == 0 {
+	if err = json.Unmarshal(res.Body.Bytes(), &timeline); err != nil || timeline.Task.ID != issue.TaskSourceID || len(timeline.Events) == 0 {
 		t.Fatalf("bad timeline: %v %+v", err, timeline)
 	}
 	cancelBody, _ := json.Marshal(control.CancelTaskInput{Reason: "API cancellation test"})
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/"+issue.ID+"/cancel", bytes.NewReader(cancelBody))
+	req = httptest.NewRequest(http.MethodPost, "/api/tasks/"+issue.TaskSourceID+"/cancel", bytes.NewReader(cancelBody))
 	req.Header.Set("Content-Type", "application/json")
 	res = httptest.NewRecorder()
 	router.ServeHTTP(res, req)
@@ -230,7 +246,7 @@ func TestIssueAPI(t *testing.T) {
 	if err = json.Unmarshal(res.Body.Bytes(), &cancellation); err != nil {
 		t.Fatal(err)
 	}
-	if cancellation.Task.Status != "cancelled" || cancellation.TotalIssues != 1 {
+	if cancellation.Task.ID != issue.TaskSourceID || cancellation.TotalIssues != 1 {
 		t.Fatalf("bad cancellation: %+v", cancellation)
 	}
 }

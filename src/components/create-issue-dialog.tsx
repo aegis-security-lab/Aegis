@@ -47,16 +47,16 @@ export function CreateIssueDialog({
   onOpenChange,
   defaultStatus = "todo",
   workspace,
-  parentId,
+  taskSourceId,
   title = "新建 Issue",
-  description = "创建后立即加入看板，可继续指派负责人。",
+  description = "在当前任务下创建新的根 Issue，创建后立即加入看板。",
   onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultStatus?: IssueStatus
   workspace?: string
-  parentId?: string
+  taskSourceId: string
   title?: string
   description?: string
   onCreated?: (issue: Issue) => void
@@ -78,7 +78,7 @@ export function CreateIssueDialog({
     setBusy(true)
     try {
       const issue = await createIssue({
-        parentId,
+        taskSourceId,
         title: issueTitle,
         objective: form.objective,
         description: form.description,

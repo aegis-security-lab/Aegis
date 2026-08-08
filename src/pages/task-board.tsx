@@ -1,6 +1,6 @@
 import * as React from "react"
 import { LayoutGrid, Plus } from "lucide-react"
-import { useNavigate, useParams } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { CreateIssueDialog } from "@/components/create-issue-dialog"
@@ -8,8 +8,9 @@ import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { IssueStatusSelect } from "@/components/issue-status-select"
 import { SearchInput } from "@/components/ui/search-input"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { issuesInSubtree } from "@/lib/collections"
+import { issuesForTask } from "@/lib/collections"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import {
   issueLabelsOf,
@@ -75,7 +76,7 @@ const priorityLabel: Record<Issue["priority"], string> = {
 
 export function TaskBoardPage() {
   const { state, setState, refresh } = useAppState()
-  const { issueId: taskRootId } = useParams()
+  const { taskId } = useParams()
   const [query, setQuery] = React.useState("")
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [dropTarget, setDropTarget] = React.useState<IssueStatus | null>(null)
@@ -83,41 +84,71 @@ export function TaskBoardPage() {
     null
   )
 
-  const allIssues = state?.issues ?? []
-  const scopedIssues = taskRootId
-    ? issuesInSubtree(taskRootId, allIssues)
-    : allIssues
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  const matched = scopedIssues.filter(
-    (issue) =>
-      !normalizedQuery ||
-      `${issue.identifier} ${issue.title}`
-        .toLocaleLowerCase()
-        .includes(normalizedQuery)
-  )
-  const issueById = new Map(scopedIssues.map((issue) => [issue.id, issue]))
-  const childCountByParent = new Map<string, number>()
-  for (const issue of scopedIssues) {
-    if (issue.parentId) {
-      childCountByParent.set(
-        issue.parentId,
-        (childCountByParent.get(issue.parentId) ?? 0) + 1
+  const allIssues = React.useMemo(() => state?.issues ?? [], [state?.issues])
+  const deferredQuery = React.useDeferredValue(query)
+  const view = React.useMemo(() => {
+    const task = taskId
+      ? state?.tasks.find((item) => item.id === taskId)
+      : undefined
+    const scopedIssues = task ? issuesForTask(task.id, allIssues) : []
+    const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
+    const issueById = new Map(scopedIssues.map((issue) => [issue.id, issue]))
+    const childCountByParent = new Map<string, number>()
+    const itemsByStatus = new Map<IssueStatus, Issue[]>(
+      columns.map((column) => [column.status, []])
+    )
+    const totalByStatus = new Map<IssueStatus, number>()
+
+    for (const issue of scopedIssues) {
+      if (issue.parentId) {
+        childCountByParent.set(
+          issue.parentId,
+          (childCountByParent.get(issue.parentId) ?? 0) + 1
+        )
+      }
+      const status = issueWorkflowStatus(issue.status)
+      totalByStatus.set(status, (totalByStatus.get(status) ?? 0) + 1)
+      if (
+        !normalizedQuery ||
+        `${issue.identifier} ${issue.title}`
+          .toLocaleLowerCase()
+          .includes(normalizedQuery)
+      ) {
+        itemsByStatus.get(status)?.push(issue)
+      }
+    }
+    for (const items of itemsByStatus.values()) {
+      items.sort(
+        (left, right) =>
+          priorityRank[left.priority] - priorityRank[right.priority] ||
+          left.createdAt.localeCompare(right.createdAt)
       )
     }
-  }
-  const runtimeMap = issueRuntimeMap(state?.issueRuntimes ?? [])
-  const rootIssue = taskRootId
-    ? allIssues.find((issue) => issue.id === taskRootId)
-    : undefined
-  const task = rootIssue?.taskSourceId
-    ? state?.tasks.find((item) => item.id === rootIssue.taskSourceId)
-    : undefined
-  const agentById = new Map(
-    (state?.agents ?? []).map((agent) => [agent.id, agent])
-  )
+
+    return {
+      taskSourceId: task?.id,
+      issueById,
+      childCountByParent,
+      itemsByStatus,
+      totalByStatus,
+      runtimeMap: issueRuntimeMap(state?.issueRuntimes ?? []),
+      task,
+      agentById: new Map(
+        (state?.agents ?? []).map((agent) => [agent.id, agent])
+      ),
+    }
+  }, [
+    allIssues,
+    deferredQuery,
+    state?.agents,
+    state?.issueRuntimes,
+    state?.tasks,
+    taskId,
+  ])
+  const { taskSourceId } = view
 
   const moveIssue = async (issueId: string, status: IssueStatus) => {
-    const previous = allIssues.find((issue) => issue.id === issueId)
+    const previous = view.issueById.get(issueId)
     setState((current) =>
       current
         ? {
@@ -151,6 +182,19 @@ export function TaskBoardPage() {
     }
   }
 
+  const beginDrag = React.useCallback(
+    (issueId: string, event: React.DragEvent) => {
+      event.dataTransfer.setData("text/plain", issueId)
+      event.dataTransfer.effectAllowed = "move"
+      setDraggingId(issueId)
+    },
+    []
+  )
+  const endDrag = React.useCallback(() => {
+    setDraggingId(null)
+    setDropTarget(null)
+  }, [])
+
   return (
     <div className="flex size-full min-h-0 flex-col gap-3">
       <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -162,7 +206,7 @@ export function TaskBoardPage() {
         />
         <div className="min-w-0">
           <p className="text-xs font-medium text-muted-foreground">
-            {task ? task.title : (rootIssue?.identifier ?? "看板")}
+            {view.task?.title ?? "看板"}
           </p>
         </div>
         <p className="ml-auto hidden shrink-0 items-center gap-1.5 text-xs text-muted-foreground md:flex">
@@ -173,19 +217,9 @@ export function TaskBoardPage() {
 
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
         {columns.map((column) => {
-          const items = matched
-            .filter(
-              (issue) => issueWorkflowStatus(issue.status) === column.status
-            )
-            .sort(
-              (left, right) =>
-                priorityRank[left.priority] - priorityRank[right.priority] ||
-                left.createdAt.localeCompare(right.createdAt)
-            )
+          const items = view.itemsByStatus.get(column.status) ?? []
           const isDropTarget = dropTarget === column.status
-          const total = scopedIssues.filter(
-            (issue) => issueWorkflowStatus(issue.status) === column.status
-          ).length
+          const total = view.totalByStatus.get(column.status) ?? 0
           return (
             <section
               key={column.status}
@@ -213,14 +247,14 @@ export function TaskBoardPage() {
                 const issueId =
                   draggingId ?? event.dataTransfer.getData("text/plain")
                 if (!issueId) return
-                const issue = issueById.get(issueId)
+                const issue = view.issueById.get(issueId)
                 if (!issue) return
                 const target = issueWorkflowStatus(issue.status)
                 if (target === column.status) return
                 void moveIssue(issueId, column.status)
               }}
               className={cn(
-                "flex w-72 shrink-0 flex-col rounded-xl border bg-muted/20",
+                "flex w-72 shrink-0 flex-col rounded-xl border bg-muted/20 transition-[background-color,border-color,box-shadow] duration-150",
                 isDropTarget &&
                   "border-primary/50 bg-primary/5 ring-1 ring-primary/30"
               )}
@@ -230,18 +264,21 @@ export function TaskBoardPage() {
                 <h2 className="text-sm font-medium">
                   {workflowStatusLabels[column.status]}
                 </h2>
-                <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">
+                <span className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground tabular-nums">
                   {total}
                 </span>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
                   aria-label={`在「${workflowStatusLabels[column.status]}」中新建 Issue`}
-                  title={`在「${workflowStatusLabels[column.status]}」中新建 Issue`}
-                  onClick={() => setCreateStatus(column.status)}
-                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+                  disabled={!taskSourceId}
+                  onClick={() => {
+                    if (taskSourceId) setCreateStatus(column.status)
+                  }}
+                  className="rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
                 >
-                  <Plus className="size-4" />
-                </button>
+                  <Plus />
+                </Button>
               </header>
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
                 {items.length === 0 ? (
@@ -255,23 +292,20 @@ export function TaskBoardPage() {
                     <BoardCard
                       key={issue.id}
                       issue={issue}
-                      runtime={issueRuntimeOrUnavailable(runtimeMap, issue.id)}
-                      childCount={childCountByParent.get(issue.id) ?? 0}
+                      runtime={issueRuntimeOrUnavailable(
+                        view.runtimeMap,
+                        issue.id
+                      )}
+                      childCount={view.childCountByParent.get(issue.id) ?? 0}
                       assigneeName={
                         issue.assigneeAgentId
-                          ? (agentById.get(issue.assigneeAgentId)?.name ?? undefined)
+                          ? (view.agentById.get(issue.assigneeAgentId)?.name ??
+                            undefined)
                           : undefined
                       }
                       dragging={draggingId === issue.id}
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData("text/plain", issue.id)
-                        event.dataTransfer.effectAllowed = "move"
-                        setDraggingId(issue.id)
-                      }}
-                      onDragEnd={() => {
-                        setDraggingId(null)
-                        setDropTarget(null)
-                      }}
+                      onDragStart={beginDrag}
+                      onDragEnd={endDrag}
                     />
                   ))
                 )}
@@ -281,20 +315,22 @@ export function TaskBoardPage() {
         })}
       </div>
 
-      <CreateIssueDialog
-        open={createStatus !== null}
-        onOpenChange={(open) => {
-          if (!open) setCreateStatus(null)
-        }}
-        defaultStatus={createStatus ?? "todo"}
-        workspace={rootIssue?.workspace}
-        parentId={taskRootId}
-      />
+      {taskSourceId ? (
+        <CreateIssueDialog
+          open={createStatus !== null}
+          onOpenChange={(open) => {
+            if (!open) setCreateStatus(null)
+          }}
+          defaultStatus={createStatus ?? "todo"}
+          workspace={view.task?.workspace}
+          taskSourceId={taskSourceId}
+        />
+      ) : null}
     </div>
   )
 }
 
-function BoardCard({
+const BoardCard = React.memo(function BoardCard({
   issue,
   runtime,
   childCount,
@@ -308,41 +344,19 @@ function BoardCard({
   childCount: number
   assigneeName?: string
   dragging: boolean
-  onDragStart: (event: React.DragEvent) => void
+  onDragStart: (issueId: string, event: React.DragEvent) => void
   onDragEnd: () => void
 }) {
-  const navigate = useNavigate()
-  const suppressClick = React.useRef(false)
   const labels = issueLabelsOf(issue)
-  const openIssue = () => {
-    if (suppressClick.current) return
-    navigate(`/issues/${issue.id}?view=board`)
-  }
   return (
-    <div
-      role="link"
-      tabIndex={0}
+    <article
       draggable
-      onClick={openIssue}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault()
-          openIssue()
-        }
-      }}
-      onDragStart={(event) => {
-        suppressClick.current = true
-        onDragStart(event)
-      }}
-      onDragEnd={() => {
-        onDragEnd()
-        window.setTimeout(() => {
-          suppressClick.current = false
-        }, 0)
-      }}
+      aria-label={`${issue.identifier} ${issue.title}`}
+      onDragStart={(event) => onDragStart(issue.id, event)}
+      onDragEnd={onDragEnd}
       className={cn(
-        "group flex cursor-grab flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity] hover:shadow-md hover:ring-foreground/15 active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-        dragging && "opacity-50"
+        "group flex cursor-grab flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity,transform] duration-150 hover:-translate-y-px hover:shadow-md hover:ring-foreground/15 active:cursor-grabbing",
+        dragging && "translate-y-0 opacity-45"
       )}
     >
       <div className="flex items-center gap-1.5">
@@ -355,7 +369,13 @@ function BoardCard({
         />
         <IssueStatusSelect issue={issue} className="ml-auto" />
       </div>
-      <p className="line-clamp-2 text-sm leading-snug">{issue.title}</p>
+      <Link
+        to={`/issues/${issue.id}?view=board`}
+        draggable={false}
+        className="line-clamp-2 rounded-sm text-sm leading-snug font-medium outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        {issue.title}
+      </Link>
       {labels.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1">
           {labels.map((label) => (
@@ -388,6 +408,6 @@ function BoardCard({
           </span>
         ) : null}
       </div>
-    </div>
+    </article>
   )
-}
+})

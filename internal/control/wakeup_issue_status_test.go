@@ -8,7 +8,7 @@ import (
 
 func TestWakeupExecutionMakesIssueActiveThenRestoresPriorTerminalState(t *testing.T) {
 	store := configuredStore(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Completed discussion", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Completed discussion", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestWakeupExecutionMakesIssueActiveThenRestoresPriorTerminalState(t *testin
 
 func TestWakeupPromptRequiresVisibleReplyOnCurrentIssue(t *testing.T) {
 	store := configuredStore(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Follow-up", Objective: "Answer the operator.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Follow-up", Objective: "Answer the operator.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

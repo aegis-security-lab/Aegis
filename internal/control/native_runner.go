@@ -324,8 +324,8 @@ func (r NativeIssueRunner) finishValidation(prepared preparedIssueExecution, res
 	if err := r.Manager.store.updateExecution(prepared.execution.ID, updates); err != nil {
 		return err
 	}
-	// The structured decision is authoritative. The legacy text parser remains
-	// only for executions created before the native capability was installed.
+	// Validation is settled only from the decision submitted through the
+	// structured validation tool. The free-form model response is evidence only.
 	r.Manager.settleValidation(prepared.issue, prepared.execution.ID, resultText)
 	// A validation model/tool failure is converted into the existing durable
 	// validation retry state machine; returning it here would make Coordination

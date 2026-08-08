@@ -15,7 +15,7 @@ func TestWaitForChildIssuesPersistsSelectionAndReleasesParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Second", Priority: "medium", WorkMode: "autonomous"})
+	second, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Second", Priority: "middle", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestWaitForChildIssuesPersistsSelectionAndReleasesParent(t *testing.T) {
 func TestWaitForChildIssuesRejectsInvalidSelection(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	_, _ = store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous"})
+	_, _ = store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "middle", WorkMode: "autonomous"})
 	execution, _ := store.createExecution(parent, "backend-engineer", "work")
 	_, _ = store.CheckoutIssue(parent.ID, CheckoutIssueInput{AgentID: "backend-engineer", ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"}})
 	manager := &Manager{store: store, sessions: map[string]*PiSession{execution.ID: {key: execution.ID, executionID: execution.ID, issueID: parent.ID, agentID: "backend-engineer", controlToken: "secret"}}}
@@ -86,7 +86,7 @@ func TestWaitForChildIssuesRejectsInvalidSelection(t *testing.T) {
 func TestWaitForChildIssuesCanWaitForExactCommentWakeup(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	execution, _ := store.createExecution(parent, "backend-engineer", "continuation")
 	parent, _ = store.CheckoutIssue(parent.ID, CheckoutIssueInput{AgentID: "backend-engineer", ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"}})
 	comment := IssueComment{ID: nextID("comment"), IssueID: child.ID, ExecutionID: execution.ID, AuthorType: "agent", AuthorID: "backend-engineer", Body: "Please reply.", CreatedAt: parent.CreatedAt}

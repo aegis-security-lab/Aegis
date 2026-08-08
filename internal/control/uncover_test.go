@@ -105,7 +105,7 @@ func TestUncoverExportFileRejectsTraversalAndServesSavedFile(t *testing.T) {
 func TestGeneratedAttachmentIsDurableAndIdempotent(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Export assets", Priority: "medium", WorkMode: "autonomous",
+		Title: "Export assets", Priority: "middle", WorkMode: "autonomous",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -261,67 +261,6 @@ func TestUncoverProviderConfigurationIgnoresExternalFilesAndEnvironment(t *testi
 	shodan := status.Engines[slices.IndexFunc(status.Engines, func(engine UncoverEngine) bool { return engine.ID == "shodan" })]
 	if shodan.Configured {
 		t.Fatal("external file or environment credentials were used instead of the UI-managed database")
-	}
-}
-
-func TestUncoverCapabilitySeedMigrationIsAppliedOnce(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.db.Delete(&registrySeedMigrationRecord{}, "id = ?", uncoverRedTeamSeedMigrationID).Error; err != nil {
-		t.Fatal(err)
-	}
-	for _, agentID := range []string{"red-team-lead", "red-team-engineer", "recon-engineer"} {
-		var record agentRecord
-		if err := store.db.First(&record, "id = ?", agentID).Error; err != nil {
-			t.Fatal(err)
-		}
-		record.Definition.Tools = stringsWithout(record.Definition.Tools, uncoverToolID)
-		record.Definition.SkillIDs = stringsWithout(record.Definition.SkillIDs, uncoverSkillID)
-		if err := store.db.Save(&record).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	database, _ := store.db.DB()
-	_ = database.Close()
-
-	reopened, err := NewStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, agentID := range []string{"red-team-lead", "recon-engineer", "red-team-engineer"} {
-		agent, getErr := reopened.GetAgent(agentID)
-		if getErr != nil {
-			t.Fatal(getErr)
-		}
-		if !slices.Contains(agent.Tools, uncoverToolID) || !slices.Contains(agent.SkillIDs, uncoverSkillID) {
-			t.Fatalf("migration did not add uncover capability to %s: %+v", agentID, agent)
-		}
-	}
-	var leadRecord agentRecord
-	if err := reopened.db.First(&leadRecord, "id = ?", "red-team-lead").Error; err != nil {
-		t.Fatal(err)
-	}
-	leadRecord.Definition.Tools = stringsWithout(leadRecord.Definition.Tools, uncoverToolID)
-	leadRecord.Definition.SkillIDs = stringsWithout(leadRecord.Definition.SkillIDs, uncoverSkillID)
-	if err := reopened.db.Save(&leadRecord).Error; err != nil {
-		t.Fatal(err)
-	}
-	database, _ = reopened.db.DB()
-	_ = database.Close()
-
-	reopenedAgain, err := NewStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lead, err := reopenedAgain.GetAgent("red-team-lead")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if slices.Contains(lead.Tools, uncoverToolID) || slices.Contains(lead.SkillIDs, uncoverSkillID) {
-		t.Fatalf("completed seed migration overwrote a later Agent customization: %+v", lead)
 	}
 }
 

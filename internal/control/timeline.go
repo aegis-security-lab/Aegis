@@ -1,7 +1,6 @@
 package control
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,44 +17,15 @@ var keyTimelineEventTypes = map[string]string{
 }
 
 func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
-	selected, err := s.GetIssue(id)
+	task, roots, issues, err := taskIssueScopeWithDB(s.db, id)
 	if err != nil {
 		return TaskTimeline{}, err
 	}
-	task := selected
-	for task.ParentID != "" {
-		var parent Issue
-		if err := s.db.First(&parent, "id = ?", task.ParentID).Error; err != nil {
-			return TaskTimeline{}, errors.New("task root not found")
-		}
-		task = parent
-	}
-
-	var projectIssues []Issue
-	if err := s.db.Where("project_id = ?", task.ProjectID).Find(&projectIssues).Error; err != nil {
-		return TaskTimeline{}, err
-	}
-	children := make(map[string][]Issue)
-	for _, issue := range projectIssues {
-		children[issue.ParentID] = append(children[issue.ParentID], issue)
-	}
-	queue := []Issue{task}
-	issues := make([]Issue, 0)
 	issueByID := make(map[string]Issue)
-	for len(queue) > 0 {
-		issue := queue[0]
-		queue = queue[1:]
-		if _, seen := issueByID[issue.ID]; seen {
-			continue
-		}
+	for _, issue := range issues {
 		issueByID[issue.ID] = issue
-		issues = append(issues, issue)
-		queue = append(queue, children[issue.ID]...)
 	}
-	issueIDs := make([]string, len(issues))
-	for index, issue := range issues {
-		issueIDs[index] = issue.ID
-	}
+	issueIDs := issueIDsOf(issues)
 
 	agentNames := make(map[string]string)
 	for _, agent := range s.Agents() {
@@ -63,8 +33,11 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 	}
 	taskAgentNames := make(map[string]string)
 	var taskAgents []TaskAgent
-	if err := s.db.Where("task_id = ?", task.ID).Find(&taskAgents).Error; err != nil {
-		return TaskTimeline{}, err
+	rootIDs := issueIDsOf(roots)
+	if len(rootIDs) > 0 {
+		if err := s.db.Where("task_id IN ?", rootIDs).Find(&taskAgents).Error; err != nil {
+			return TaskTimeline{}, err
+		}
 	}
 	for _, identity := range taskAgents {
 		label := identity.Name
@@ -108,6 +81,10 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 			Title: "创建 Issue " + issue.Identifier, Summary: issue.Title,
 			Detail: detail, Status: issue.Status, CreatedAt: issue.CreatedAt,
 		})
+	}
+
+	if len(issueIDs) == 0 {
+		return output, nil
 	}
 
 	var executions []Execution

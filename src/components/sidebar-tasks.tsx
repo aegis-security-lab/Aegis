@@ -21,6 +21,7 @@ import {
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
+import { issuesByTask, latestUpdatedAt } from "@/lib/collections"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import type { Issue, Task } from "@/types"
@@ -28,21 +29,21 @@ import type { Issue, Task } from "@/types"
 export function SidebarTaskGroup() {
   const { state } = useAppState()
   const location = useLocation()
-  const tasks = [...(state?.tasks ?? [])].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt)
-  )
   const issues = React.useMemo(() => state?.issues ?? [], [state?.issues])
-  const latestRunByTask = React.useMemo(() => {
-    const map = new Map<string, Issue>()
-    for (const issue of issues) {
-      if (issue.parentId || !issue.taskSourceId) continue
-      const current = map.get(issue.taskSourceId)
-      if (!current || issue.createdAt > current.createdAt) {
-        map.set(issue.taskSourceId, issue)
-      }
-    }
-    return map
-  }, [issues])
+  const taskIssuesByID = React.useMemo(() => issuesByTask(issues), [issues])
+  const tasks = React.useMemo(
+    () =>
+      [...(state?.tasks ?? [])].sort((left, right) =>
+        latestUpdatedAt(
+          right.updatedAt,
+          taskIssuesByID.get(right.id) ?? []
+        ).localeCompare(
+          latestUpdatedAt(left.updatedAt, taskIssuesByID.get(left.id) ?? [])
+        )
+      ),
+    [state?.tasks, taskIssuesByID]
+  )
+  const routeTaskId = matchTaskId(location.pathname)
   const routeIssueId = matchIssueId(location.pathname)
   const runtimeMap = React.useMemo(
     () => issueRuntimeMap(state?.issueRuntimes ?? []),
@@ -50,18 +51,40 @@ export function SidebarTaskGroup() {
   )
   const runningTaskIds = React.useMemo(() => {
     const ids = new Set<string>()
-    for (const task of tasks) {
-      const latest = latestRunByTask.get(task.id)
-      if (
-        latest &&
-        issueRuntimeOrUnavailable(runtimeMap, latest.id).kind === "running"
-      ) {
-        ids.add(task.id)
+    const issueById = new Map(issues.map((issue) => [issue.id, issue]))
+    const rootByIssueId = new Map<string, Issue>()
+
+    const findRoot = (issue: Issue) => {
+      const cached = rootByIssueId.get(issue.id)
+      if (cached) return cached
+
+      const path: Issue[] = []
+      const seen = new Set<string>()
+      let current = issue
+      while (current.parentId && !seen.has(current.id)) {
+        seen.add(current.id)
+        path.push(current)
+        const parent = issueById.get(current.parentId)
+        if (!parent) break
+        current = parent
       }
+      rootByIssueId.set(current.id, current)
+      for (const candidate of path) rootByIssueId.set(candidate.id, current)
+      return current
+    }
+
+    for (const issue of issues) {
+      if (issueRuntimeOrUnavailable(runtimeMap, issue.id).kind !== "running") {
+        continue
+      }
+      const root = findRoot(issue)
+      const taskId = root.taskSourceId
+      if (taskId) ids.add(taskId)
     }
     return ids
-  }, [latestRunByTask, runtimeMap, tasks])
+  }, [issues, runtimeMap])
   const activeTaskId = React.useMemo(() => {
+    if (routeTaskId) return routeTaskId
     if (!routeIssueId) return null
     const issueById = new Map(issues.map((issue) => [issue.id, issue]))
     let current = issueById.get(routeIssueId)
@@ -71,7 +94,7 @@ export function SidebarTaskGroup() {
       current = issueById.get(current.parentId)
     }
     return current?.taskSourceId ?? null
-  }, [issues, routeIssueId])
+  }, [issues, routeIssueId, routeTaskId])
 
   return (
     <div className="mt-2 pt-2 group-data-[collapsible=icon]:hidden">
@@ -83,7 +106,7 @@ export function SidebarTaskGroup() {
           to="/tasks/new"
           aria-label="新建任务"
           title="新建任务"
-          className="flex size-6 items-center justify-center rounded-full text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring outline-none"
+          className="flex size-6 items-center justify-center rounded-full text-sidebar-foreground/70 outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Plus className="size-4" />
         </Link>
@@ -100,16 +123,15 @@ export function SidebarTaskGroup() {
           </SidebarMenuButton>
         </SidebarMenuItem>
         <TaskList
-          key={
-            activeTaskId
-              ? `${activeTaskId}:${location.pathname}`
-              : "no-task"
-          }
           tasks={tasks}
-          latestRunByTask={latestRunByTask}
+          taskIssuesByID={taskIssuesByID}
           runningTaskIds={runningTaskIds}
           activeTaskId={activeTaskId}
           locationPathname={location.pathname}
+          navigationKey={location.key}
+          boardView={
+            new URLSearchParams(location.search).get("view") === "board"
+          }
         />
       </SidebarMenu>
     </div>
@@ -118,42 +140,61 @@ export function SidebarTaskGroup() {
 
 function TaskList({
   tasks,
-  latestRunByTask,
+  taskIssuesByID,
   runningTaskIds,
   activeTaskId,
   locationPathname,
+  navigationKey,
+  boardView,
 }: {
   tasks: Task[]
-  latestRunByTask: Map<string, Issue>
+  taskIssuesByID: Map<string, Issue[]>
   runningTaskIds: Set<string>
   activeTaskId: string | null
   locationPathname: string
+  navigationKey: string
+  boardView: boolean
 }) {
   const [expandedTaskId, setExpandedTaskId] = React.useState<string | null>(
     () => activeTaskId
   )
-  const taskRowRefs = React.useRef(new Map<string, HTMLDivElement>())
+  const taskItemRefs = React.useRef(new Map<string, HTMLLIElement>())
 
-  // Keep the active task visible: scroll it to the middle of the sidebar.
-  // Only fires on navigation (task/path change), never on manual expand.
   React.useEffect(() => {
     if (!activeTaskId) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExpandedTaskId(activeTaskId)
+  }, [activeTaskId, navigationKey])
+
+  // Route changes may come from the top navigation, a table, or an Issue link.
+  // Wait until the matching task is expanded, then center the task navigation
+  // group so its active Home / Issues / Board entry is immediately visible.
+  React.useEffect(() => {
+    if (!activeTaskId || expandedTaskId !== activeTaskId) return
     const frame = window.requestAnimationFrame(() => {
-      const container = document.querySelector(
+      const item = taskItemRefs.current.get(activeTaskId)
+      const container = item?.closest<HTMLElement>(
         '[data-slot="sidebar-content"]'
       )
-      const row = taskRowRefs.current.get(activeTaskId)
-      if (!container || !row) return
+      if (!container || !item) return
+
       const containerRect = container.getBoundingClientRect()
-      const rowRect = row.getBoundingClientRect()
-      const target =
+      const itemRect = item.getBoundingClientRect()
+      const top =
         container.scrollTop +
-        (rowRect.top - containerRect.top) -
-        (containerRect.height - rowRect.height) / 2
-      container.scrollTo({ top: target, behavior: "smooth" })
+        itemRect.top -
+        containerRect.top -
+        (containerRect.height - itemRect.height) / 2
+      const reducedMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches
+      container.scrollTo({
+        top,
+        behavior: reducedMotion ? "auto" : "smooth",
+      })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [activeTaskId, locationPathname])
+  }, [activeTaskId, expandedTaskId, navigationKey, tasks])
 
   return (
     <>
@@ -161,18 +202,20 @@ function TaskList({
         <TaskSidebarItem
           key={task.id}
           task={task}
-          latest={latestRunByTask.get(task.id)}
+          taskIssues={taskIssuesByID.get(task.id) ?? []}
           running={runningTaskIds.has(task.id)}
           routeTaskId={activeTaskId}
+          locationPathname={locationPathname}
+          boardView={boardView}
           expanded={expandedTaskId === task.id}
           onToggle={() =>
             setExpandedTaskId((current) =>
               current === task.id ? null : task.id
             )
           }
-          rowRef={(element) => {
-            if (element) taskRowRefs.current.set(task.id, element)
-            else taskRowRefs.current.delete(task.id)
+          itemRef={(element) => {
+            if (element) taskItemRefs.current.set(task.id, element)
+            else taskItemRefs.current.delete(task.id)
           }}
         />
       ))}
@@ -182,44 +225,43 @@ function TaskList({
 
 function TaskSidebarItem({
   task,
-  latest,
+  taskIssues,
   running,
   routeTaskId,
+  locationPathname,
+  boardView,
   expanded,
   onToggle,
-  rowRef,
+  itemRef,
 }: {
   task: Task
-  latest?: Issue
+  taskIssues: Issue[]
   running: boolean
   routeTaskId: string | null
+  locationPathname: string
+  boardView: boolean
   expanded: boolean
   onToggle: () => void
-  rowRef: (element: HTMLDivElement | null) => void
+  itemRef: (element: HTMLLIElement | null) => void
 }) {
-  const location = useLocation()
-  const homeTo = latest ? `/tasks/${latest.id}` : "/tasks"
-  const issuesTo = latest ? `/tasks/${latest.id}/issues` : "/issues"
-  const boardTo = latest ? `/tasks/${latest.id}/board` : undefined
+  const homeTo = `/tasks/${task.id}`
+  const issuesTo = `/tasks/${task.id}/issues`
+  const boardTo = `/tasks/${task.id}/board`
   const label = task.title
-  const boardView = new URLSearchParams(location.search).get("view") === "board"
   // Any issue detail page of this task (root or child) counts as its
   // Issues entry; board view counts as its Board entry.
   const routeIssueInTask =
-    routeTaskId === task.id && /^\/issues\/[^/]+$/.test(location.pathname)
+    routeTaskId === task.id && /^\/issues\/[^/]+$/.test(locationPathname)
 
   return (
-    <SidebarMenuItem>
-      <div
-        ref={rowRef}
-        className="flex h-7 min-w-0 items-center gap-0.5 rounded-md pr-8 text-[0.8rem] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      >
+    <SidebarMenuItem ref={itemRef}>
+      <div className="flex h-7 min-w-0 items-center gap-0.5 rounded-md pr-8 text-[0.8rem] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
           title={task.title}
-          className="flex h-6 min-w-0 flex-1 items-center gap-0.5 rounded-md px-1 py-0.5 text-left focus-visible:ring-2 focus-visible:ring-ring outline-none"
+          className="flex h-6 min-w-0 flex-1 items-center gap-0.5 rounded-md px-1 py-0.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ChevronRight
             className={cn(
@@ -230,15 +272,21 @@ function TaskSidebarItem({
           <span className="flex min-w-0 flex-1 items-center gap-1">
             <span className="min-w-0 flex-1 truncate">{label}</span>
             {running ? (
-              <Spinner
-                className="size-3 shrink-0 text-primary"
-                aria-label="执行中"
-              />
+              <span
+                className="flex size-5 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sidebar-primary-foreground"
+                title="执行中"
+              >
+                <Spinner
+                  className="size-3.5 stroke-[2.5]"
+                  aria-label="执行中"
+                />
+              </span>
             ) : null}
           </span>
         </button>
         <TaskRowMenu
           task={task}
+          taskIssues={taskIssues}
           triggerRender={
             <SidebarMenuAction
               showOnHover
@@ -252,7 +300,7 @@ function TaskSidebarItem({
         <SidebarMenuSub>
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
-              isActive={latest ? location.pathname === `/tasks/${latest.id}` : false}
+              isActive={locationPathname === `/tasks/${task.id}`}
               render={<NavLink to={homeTo} end />}
             >
               <House />
@@ -262,12 +310,10 @@ function TaskSidebarItem({
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
               isActive={
-                latest
-                  ? location.pathname === `/tasks/${latest.id}/issues` ||
-                    (routeIssueInTask && !boardView)
-                  : false
+                locationPathname === `/tasks/${task.id}/issues` ||
+                (routeIssueInTask && !boardView)
               }
-              render={<NavLink to={issuesTo ?? "/tasks"} end />}
+              render={<NavLink to={issuesTo} end />}
             >
               <GitBranch />
               <span>Issues</span>
@@ -276,12 +322,10 @@ function TaskSidebarItem({
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
               isActive={
-                latest
-                  ? location.pathname === `/tasks/${latest.id}/board` ||
-                    (routeIssueInTask && boardView)
-                  : false
+                locationPathname === `/tasks/${task.id}/board` ||
+                (routeIssueInTask && boardView)
               }
-              render={<NavLink to={boardTo ?? "/tasks"} end />}
+              render={<NavLink to={boardTo} end />}
             >
               <LayoutGrid />
               <span>Board</span>
@@ -293,14 +337,12 @@ function TaskSidebarItem({
   )
 }
 
+function matchTaskId(pathname: string) {
+  const match = pathname.match(/^\/tasks\/([^/]+)(?:\/(?:issues|board))?$/)
+  return match?.[1] ?? null
+}
+
 function matchIssueId(pathname: string) {
-  const boardMatch = pathname.match(/^\/tasks\/([^/]+)\/board$/)
-  if (boardMatch) return boardMatch[1]
-  const issuesMatch = pathname.match(/^\/tasks\/([^/]+)\/issues$/)
-  if (issuesMatch) return issuesMatch[1]
-  const taskMatch = pathname.match(/^\/tasks\/([^/]+)$/)
-  if (taskMatch) return taskMatch[1]
   const issueMatch = pathname.match(/^\/issues\/([^/]+)$/)
-  if (issueMatch) return issueMatch[1]
-  return null
+  return issueMatch?.[1] ?? null
 }

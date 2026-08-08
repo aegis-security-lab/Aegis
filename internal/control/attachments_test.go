@@ -14,7 +14,7 @@ import (
 func TestUploadedAttachmentIsStoredAndBoundToCompletionComment(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Generate report", Objective: "A verified report is generated.", Priority: "medium", WorkMode: "autonomous",
+		Title: "Generate report", Objective: "A verified report is generated.", Priority: "middle", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
@@ -70,7 +70,7 @@ func TestUploadedAttachmentIsStoredAndBoundToCompletionComment(t *testing.T) {
 func TestFinalResultUsesAnAlreadyUploadedAttachment(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Submit delivery", Objective: "Submit a result with evidence.", Priority: "medium", WorkMode: "autonomous",
+		Title: "Submit delivery", Objective: "Submit a result with evidence.", Priority: "middle", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
@@ -261,7 +261,7 @@ func TestValidationAttachmentMaterializationResolvesServerDataPath(t *testing.T)
 func TestWriteOutputIsNotReadByServerWithoutExplicitUpload(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Write artifact", Objective: "The output artifact exists.", Priority: "medium", WorkMode: "autonomous",
+		Title: "Write artifact", Objective: "The output artifact exists.", Priority: "middle", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer", Workspace: store.Config().Workspace,
 	})
 	if err != nil {
@@ -302,7 +302,7 @@ exit 99
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Container evidence", Objective: "Read evidence directly from the container.",
-		Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 		Workspace: t.TempDir(),
 	})
 	if err != nil {

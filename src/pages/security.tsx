@@ -1,6 +1,14 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import * as React from "react"
-import { AlertTriangle, FileText, RefreshCw, Shield, ShieldAlert, Target, TriangleAlert } from "lucide-react"
+import {
+  AlertTriangle,
+  FileText,
+  RefreshCw,
+  Shield,
+  ShieldAlert,
+  Target,
+  TriangleAlert,
+} from "lucide-react"
 import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
@@ -8,9 +16,22 @@ import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { fetchFindings } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -30,26 +51,26 @@ const severityLabel: Record<Severity, string> = {
 }
 
 const severityColor: Record<Severity, string> = {
-  critical: "bg-red-500 text-red-50",
-  high: "bg-orange-500 text-orange-50",
-  medium: "bg-amber-500 text-amber-50",
-  low: "bg-sky-500 text-sky-50",
+  critical: "bg-destructive/15 text-destructive",
+  high: "bg-destructive/10 text-destructive",
+  medium: "bg-warning/10 text-warning",
+  low: "bg-info/10 text-info",
   info: "bg-muted text-muted-foreground",
 }
 
 const severityChartColor: Record<Severity, string> = {
-  critical: "#ef4444",
-  high: "#f97316",
-  medium: "#f59e0b",
-  low: "#0ea5e9",
-  info: "#94a3b8",
+  critical: "var(--color-chart-5)",
+  high: "var(--color-destructive)",
+  medium: "var(--color-warning)",
+  low: "var(--color-info)",
+  info: "var(--color-muted-foreground)",
 }
 
 const severityDot: Record<Severity, string> = {
-  critical: "bg-red-500",
-  high: "bg-orange-500",
-  medium: "bg-amber-500",
-  low: "bg-sky-500",
+  critical: "bg-destructive",
+  high: "bg-destructive/70",
+  medium: "bg-warning",
+  low: "bg-info",
   info: "bg-muted-foreground/40",
 }
 
@@ -73,7 +94,9 @@ function countBySeverity(findings: Finding[]): Record<Severity, number> {
     counts[sev] = (counts[sev] ?? 0) + 1
   }
   // Ensure all keys exist
-  return Object.fromEntries(severityOrder.map((s) => [s, counts[s] ?? 0])) as Record<Severity, number>
+  return Object.fromEntries(
+    severityOrder.map((s) => [s, counts[s] ?? 0])
+  ) as Record<Severity, number>
 }
 
 function calcScore(findings: Finding[]): number {
@@ -86,9 +109,9 @@ function calcScore(findings: Finding[]): number {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 80) return "text-emerald-600 dark:text-emerald-400"
-  if (score >= 50) return "text-amber-600 dark:text-amber-400"
-  return "text-red-600 dark:text-red-400"
+  if (score >= 80) return "text-success"
+  if (score >= 50) return "text-warning"
+  return "text-destructive"
 }
 
 /* ── category helpers ── */
@@ -102,13 +125,20 @@ function groupByCategory(findings: Finding[]): CategoryGroup[] {
     existing.count++
     // Keep the highest severity for display
     const sev = isSeverity(f.severity) ? f.severity : "info"
-    if (severityOrder.indexOf(sev) < severityOrder.indexOf(existing.severity as Severity)) {
+    if (
+      severityOrder.indexOf(sev) <
+      severityOrder.indexOf(existing.severity as Severity)
+    ) {
       existing.severity = sev
     }
     map.set(f.category, existing)
   }
   return Array.from(map.entries())
-    .map(([category, v]) => ({ category, count: v.count, severity: v.severity }))
+    .map(([category, v]) => ({
+      category,
+      count: v.count,
+      severity: v.severity,
+    }))
     .sort((a, b) => b.count - a.count)
 }
 
@@ -155,12 +185,30 @@ function ThreatModelLink({ label, href }: { label: string; href: string }) {
 
 /* ── Donut chart component ── */
 
-function DonutChart({ segments, size = 120 }: { segments: { value: number; color: string }[]; size?: number }) {
+function DonutChart({
+  segments,
+  size = 120,
+}: {
+  segments: { value: number; color: string }[]
+  size?: number
+}) {
   const total = segments.reduce((s, seg) => s + seg.value, 0)
   if (total === 0) {
     return (
-      <svg width={size} height={size} viewBox="0 0 36 36" className="-rotate-90">
-        <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--color-muted)" strokeWidth="3" />
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 36 36"
+        className="-rotate-90"
+      >
+        <circle
+          cx="18"
+          cy="18"
+          r="15.9"
+          fill="none"
+          stroke="var(--color-muted)"
+          strokeWidth="3"
+        />
       </svg>
     )
   }
@@ -179,12 +227,27 @@ function DonutChart({ segments, size = 120 }: { segments: { value: number; color
       acc.cursor += length
       return acc
     },
-    { arcs: [] as { value: number; color: string; dasharray: string; dashoffset: number }[], cursor: 0 }
+    {
+      arcs: [] as {
+        value: number
+        color: string
+        dasharray: string
+        dashoffset: number
+      }[],
+      cursor: 0,
+    }
   )
 
   return (
     <svg width={size} height={size} viewBox="0 0 36 36" className="-rotate-90">
-      <circle cx="18" cy="18" r={radius} fill="none" stroke="var(--color-muted)" strokeWidth={strokeWidth} />
+      <circle
+        cx="18"
+        cy="18"
+        r={radius}
+        fill="none"
+        stroke="var(--color-muted)"
+        strokeWidth={strokeWidth}
+      />
       {arcs.map((arc, i) => (
         <circle
           key={i}
@@ -197,7 +260,7 @@ function DonutChart({ segments, size = 120 }: { segments: { value: number; color
           strokeDasharray={arc.dasharray}
           strokeDashoffset={arc.dashoffset}
           strokeLinecap="round"
-          className="transition-all duration-500"
+          className="transition-[stroke-dasharray,stroke-dashoffset] duration-500"
         />
       ))}
     </svg>
@@ -236,7 +299,9 @@ export function SecurityPage() {
   const categories = groupByCategory(findings)
 
   // Latest 6 findings sorted by createdAt desc
-  const latest = [...findings].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6)
+  const latest = [...findings]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 6)
 
   /* ── loading state ── */
   if (loading) {
@@ -258,7 +323,9 @@ export function SecurityPage() {
         </div>
         <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
           <Card>
-            <CardHeader><Skeleton className="h-5 w-32" /></CardHeader>
+            <CardHeader>
+              <Skeleton className="h-5 w-32" />
+            </CardHeader>
             <CardContent className="flex items-center justify-center gap-6 py-8">
               <Skeleton className="size-28 rounded-full" />
               <div className="flex flex-col gap-2">
@@ -269,7 +336,9 @@ export function SecurityPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><Skeleton className="h-5 w-32" /></CardHeader>
+            <CardHeader>
+              <Skeleton className="h-5 w-32" />
+            </CardHeader>
             <CardContent>
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={i} className="mb-2 h-6 w-full" />
@@ -320,7 +389,9 @@ export function SecurityPage() {
                   <Shield />
                 </EmptyMedia>
                 <EmptyTitle>暂无安全发现</EmptyTitle>
-                <EmptyDescription>未扫描出任何安全项，当前攻击面干净。</EmptyDescription>
+                <EmptyDescription>
+                  未扫描出任何安全项，当前攻击面干净。
+                </EmptyDescription>
               </EmptyHeader>
             </Empty>
           </CardContent>
@@ -350,7 +421,12 @@ export function SecurityPage() {
           label="安全评分"
           value={score}
           render={
-            <span className={cn("text-lg font-semibold tabular-nums", scoreColor(score))}>
+            <span
+              className={cn(
+                "text-lg font-semibold tabular-nums",
+                scoreColor(score)
+              )}
+            >
               {score}/100
             </span>
           }
@@ -376,7 +452,10 @@ export function SecurityPage() {
               size={140}
               segments={severityOrder
                 .filter((s) => sevCounts[s] > 0)
-                .map((s) => ({ value: sevCounts[s], color: severityChartColor[s] }))}
+                .map((s) => ({
+                  value: sevCounts[s],
+                  color: severityChartColor[s],
+                }))}
             />
             <div className="flex flex-col gap-1.5">
               {severityOrder.map((s) => {
@@ -384,8 +463,12 @@ export function SecurityPage() {
                 if (count === 0 && s !== "critical") return null
                 return (
                   <div key={s} className="flex items-center gap-2 text-sm">
-                    <span className={cn("size-2.5 rounded-full", severityDot[s])} />
-                    <span className="w-10 text-muted-foreground">{severityLabel[s]}</span>
+                    <span
+                      className={cn("size-2.5 rounded-full", severityDot[s])}
+                    />
+                    <span className="w-10 text-muted-foreground">
+                      {severityLabel[s]}
+                    </span>
                     <span className="font-medium tabular-nums">{count}</span>
                     <span className="text-xs text-muted-foreground">
                       ({total > 0 ? Math.round((count / total) * 100) : 0}%)
@@ -417,7 +500,9 @@ export function SecurityPage() {
                     <TableCell className="font-medium">
                       {categoryLabels[cat.category] ?? cat.category}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{cat.count}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {cat.count}
+                    </TableCell>
                     <TableCell className="text-right">
                       <SeverityBadge severity={cat.severity} />
                     </TableCell>
@@ -442,10 +527,17 @@ export function SecurityPage() {
                 key={f.id}
                 className="flex items-start gap-3 border-b px-(--card-spacing) py-3 last:border-b-0"
               >
-                <span className={cn("mt-0.5 size-2 shrink-0 rounded-full", severityDotCls(f.severity))} />
+                <span
+                  className={cn(
+                    "mt-0.5 size-2 shrink-0 rounded-full",
+                    severityDotCls(f.severity)
+                  )}
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium">{f.title}</span>
+                    <span className="truncate text-sm font-medium">
+                      {f.title}
+                    </span>
                     <SeverityBadge severity={f.severity} />
                   </div>
                   <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
@@ -466,21 +558,39 @@ export function SecurityPage() {
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
               <div className="flex items-center gap-3">
-                <span className={cn("text-3xl font-bold tabular-nums", scoreColor(score))}>
+                <span
+                  className={cn(
+                    "text-3xl font-bold tabular-nums",
+                    scoreColor(score)
+                  )}
+                >
                   {score}
                 </span>
                 <span className="text-sm text-muted-foreground">/ 100</span>
               </div>
               <p className="text-xs leading-5 text-muted-foreground">
-                评分依据严重级别加权计算。每项严重发现扣 25 分，高危 10 分，中危 5 分，低危 2 分。
+                评分依据严重级别加权计算。每项严重发现扣 25 分，高危 10 分，中危
+                5 分，低危 2 分。
               </p>
               <div className="mt-1 rounded-lg bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
-                <p>严重: {sevCounts.critical} × 25 = {sevCounts.critical * 25}</p>
-                <p>高危: {sevCounts.high} × 10 = {sevCounts.high * 10}</p>
-                <p>中危: {sevCounts.medium} × 5 = {sevCounts.medium * 5}</p>
-                <p>低危: {sevCounts.low} × 2 = {sevCounts.low * 2}</p>
+                <p>
+                  严重: {sevCounts.critical} × 25 = {sevCounts.critical * 25}
+                </p>
+                <p>
+                  高危: {sevCounts.high} × 10 = {sevCounts.high * 10}
+                </p>
+                <p>
+                  中危: {sevCounts.medium} × 5 = {sevCounts.medium * 5}
+                </p>
+                <p>
+                  低危: {sevCounts.low} × 2 = {sevCounts.low * 2}
+                </p>
                 <p className="mt-1 font-medium">
-                  总扣分: {sevCounts.critical * 25 + sevCounts.high * 10 + sevCounts.medium * 5 + sevCounts.low * 2}
+                  总扣分:{" "}
+                  {sevCounts.critical * 25 +
+                    sevCounts.high * 10 +
+                    sevCounts.medium * 5 +
+                    sevCounts.low * 2}
                 </p>
               </div>
             </CardContent>
@@ -492,7 +602,11 @@ export function SecurityPage() {
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
               {threatModelLinks.map((link) => (
-                <ThreatModelLink key={link.label} label={link.label} href={link.href} />
+                <ThreatModelLink
+                  key={link.label}
+                  label={link.label}
+                  href={link.href}
+                />
               ))}
             </CardContent>
           </Card>
@@ -523,7 +637,9 @@ function MetricCard({
         </span>
         <div>
           <p className="text-xs text-muted-foreground">{label}</p>
-          {render ?? <p className="text-xl font-semibold tabular-nums">{value}</p>}
+          {render ?? (
+            <p className="text-xl font-semibold tabular-nums">{value}</p>
+          )}
         </div>
       </CardContent>
     </Card>

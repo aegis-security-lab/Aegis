@@ -25,7 +25,7 @@ import { PageHeader } from "@/components/page-header"
 import { SessionConversation } from "@/components/session-conversation"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -261,15 +261,13 @@ export function SessionDetailPage() {
         title={detail.session.agentName}
         actions={
           <>
-            <Button
-              variant="outline"
-              size="sm"
-              render={<Link to={`/issues/${execution.issueId}`} />}
-              nativeButton={false}
+            <Link
+              to={`/issues/${execution.issueId}`}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
             >
               <ExternalLink data-icon="inline-start" />
               查看 Issue
-            </Button>
+            </Link>
             <InterruptToolButton execution={execution} onInterrupted={load} />
           </>
         }

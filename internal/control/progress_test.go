@@ -13,7 +13,7 @@ func TestExecutionProgressIsAuthenticatedPersistedAndVisibleInSession(t *testing
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Implement progress reporting", Objective: "Progress is visible in the Session.",
-		Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestIssueProgressToolSupportsMessagesModesAndOverflowNotice(t *testing.T) {
 func TestAgentCanReadSessionProgressInsideCurrentTaskTree(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	sourceExecution, _ := store.createExecution(parent, "backend-engineer", "work")
 	targetExecution, _ := store.createExecution(child, "frontend-engineer", "work")
 	now := time.Now()
@@ -132,7 +132,7 @@ func TestIssueProgressModesReturnNewestFirstAndExportOverflow(t *testing.T) {
 	store := configuredStore(t)
 	workspace := t.TempDir()
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer", Workspace: workspace})
-	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
 	sourceExecution, _ := store.createExecution(parent, "backend-engineer", "work")
 	targetExecution, _ := store.createExecution(child, "frontend-engineer", "work")
 	base := time.Now().Add(-time.Minute)
@@ -206,7 +206,7 @@ func TestIssueProgressExportsSingleOversizedMessage(t *testing.T) {
 	store := configuredStore(t)
 	workspace := t.TempDir()
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer", Workspace: workspace})
-	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
 	sourceExecution, _ := store.createExecution(parent, "backend-engineer", "work")
 	targetExecution, _ := store.createExecution(child, "frontend-engineer", "work")
 	content := strings.Repeat("x", messageInlineByteBudget+1)

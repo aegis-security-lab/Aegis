@@ -12,7 +12,7 @@ func TestExecutionChildIssuesReturnsOnlyCurrentIssueDirectChildren(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Second", Objective: "Second result", Priority: "medium", WorkMode: "autonomous"})
+	second, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Second", Objective: "Second result", Priority: "middle", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}

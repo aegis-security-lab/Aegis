@@ -71,16 +71,16 @@ func claimTaskAgentTx(tx *gorm.DB, taskID, agentID, requestedID string) (TaskAge
 }
 
 func (s *Store) TaskAgents(taskID string) ([]TaskAgent, error) {
-	issue, err := s.GetIssue(strings.TrimSpace(taskID))
+	_, roots, _, err := taskIssueScopeWithDB(s.db, taskID)
 	if err != nil {
 		return nil, err
 	}
-	root, err := s.taskRoot(issue)
-	if err != nil {
-		return nil, err
+	rootIDs := issueIDsOf(roots)
+	if len(rootIDs) == 0 {
+		return []TaskAgent{}, nil
 	}
 	var identities []TaskAgent
-	if err := s.db.Where("task_id = ?", root.ID).Order("created_at asc, id asc").Find(&identities).Error; err != nil {
+	if err := s.db.Where("task_id IN ?", rootIDs).Order("created_at asc, id asc").Find(&identities).Error; err != nil {
 		return nil, err
 	}
 	return identities, nil

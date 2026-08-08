@@ -43,6 +43,7 @@ import type {
   TaskTimeline,
   TaskWorkspace,
   TaskPhone,
+  TaskDetail,
   UncoverEngine,
   UncoverSearchInput,
   UncoverSearchResult,
@@ -297,6 +298,8 @@ export const createTask = (input: CreateIssueInput) =>
     method: "POST",
     body: JSON.stringify(input),
   })
+export const fetchTask = (id: string) =>
+  request<TaskDetail>(`/api/tasks/${encodeURIComponent(id)}`)
 export const updateIssue = (id: string, input: Partial<Issue>) =>
   request<Issue>(`/api/issues/${encodeURIComponent(id)}`, {
     method: "PATCH",

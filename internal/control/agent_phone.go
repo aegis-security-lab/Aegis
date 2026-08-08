@@ -47,15 +47,15 @@ func (m *Manager) TaskPhones(ctx context.Context, taskID string) ([]TaskPhoneVie
 	if m == nil || m.store == nil {
 		return nil, errors.New("control: manager is required")
 	}
-	root, err := m.store.GetIssue(strings.TrimSpace(taskID))
-	if err != nil {
-		return nil, err
-	}
-	root, err = m.store.taskRoot(root)
+	task, roots, _, err := taskIssueScopeWithDB(m.store.db.WithContext(ctx), taskID)
 	if err != nil {
 		return nil, err
 	}
 	if !m.store.db.Migrator().HasTable("agent_app_phone_sessions") {
+		return []TaskPhoneView{}, nil
+	}
+	rootIDs := issueIDsOf(roots)
+	if len(rootIDs) == 0 {
 		return []TaskPhoneView{}, nil
 	}
 	type row struct {
@@ -63,7 +63,7 @@ func (m *Manager) TaskPhones(ctx context.Context, taskID string) ([]TaskPhoneVie
 		CreatedAt, UpdatedAt                                                                 time.Time
 	}
 	var rows []row
-	if err := m.store.db.WithContext(ctx).Table("agent_app_phone_sessions").Where("task_id = ?", root.ID).Order("created_at asc").Find(&rows).Error; err != nil {
+	if err := m.store.db.WithContext(ctx).Table("agent_app_phone_sessions").Where("task_id IN ?", rootIDs).Order("created_at asc").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	result := make([]TaskPhoneView, len(rows))
@@ -76,10 +76,10 @@ func (m *Manager) TaskPhones(ctx context.Context, taskID string) ([]TaskPhoneVie
 		_ = json.Unmarshal([]byte(item.ActorJSON), &actor)
 		_ = json.Unmarshal([]byte(item.InstalledJSON), &installed)
 		_ = json.Unmarshal([]byte(item.CurrentJSON), &current)
-		view := TaskPhoneView{ID: item.ID, TaskID: root.ID, TaskAgentID: item.TaskAgentID, AgentID: item.AgentID, ExecutionID: actor.ExecutionID, WorkspaceID: actor.WorkspaceID, InstalledApps: installed, ActiveAppID: item.ActiveAppID, CurrentAppID: current.Page.AppID, CurrentPageID: current.Page.PageID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+		view := TaskPhoneView{ID: item.ID, TaskID: task.ID, TaskAgentID: item.TaskAgentID, AgentID: item.AgentID, ExecutionID: actor.ExecutionID, WorkspaceID: actor.WorkspaceID, InstalledApps: installed, ActiveAppID: item.ActiveAppID, CurrentAppID: current.Page.AppID, CurrentPageID: current.Page.PageID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 		if item.TaskAgentID != "" {
 			var identity TaskAgent
-			if identityErr := m.store.db.First(&identity, "id = ? AND task_id = ?", item.TaskAgentID, root.ID).Error; identityErr == nil {
+			if identityErr := m.store.db.First(&identity, "id = ? AND task_id IN ?", item.TaskAgentID, rootIDs).Error; identityErr == nil {
 				view.Name = identity.Name
 			}
 		}
@@ -161,23 +161,37 @@ func (c AgentPhoneClient) RunShortcut(ctx context.Context, request agentapp.Shor
 
 type controlBoardRepository struct{ manager *Manager }
 
-func (r controlBoardRepository) ListIssues(_ context.Context, actor agentapp.Actor, query string) ([]agentapp.BoardIssue, error) {
+func (r controlBoardRepository) ListIssues(ctx context.Context, actor agentapp.Actor, query string) ([]agentapp.BoardIssue, error) {
 	if r.manager == nil || r.manager.store == nil {
 		return nil, errors.New("control: Board store is unavailable")
 	}
-	if strings.TrimSpace(actor.TaskID) == "" {
+	coordinationRootID := strings.TrimSpace(actor.TaskID)
+	if coordinationRootID == "" {
 		return nil, agentapp.ErrPermissionDenied
 	}
 	var issues []Issue
-	db := r.manager.store.db.Where("hidden = ?", false).Order("updated_at desc")
+	db := r.manager.store.db.WithContext(ctx).Where("hidden = ?", false).Order("updated_at desc")
 	if err := db.Find(&issues).Error; err != nil {
 		return nil, err
 	}
+	issueByID := make(map[string]Issue, len(issues))
+	for _, issue := range issues {
+		issueByID[issue.ID] = issue
+	}
+	coordinationRoot, ok := issueByID[coordinationRootID]
+	if !ok || coordinationRoot.ParentID != "" {
+		return nil, agentapp.ErrPermissionDenied
+	}
+	taskSourceID := strings.TrimSpace(coordinationRoot.TaskSourceID)
+	if taskSourceID == "" {
+		return nil, agentapp.ErrPermissionDenied
+	}
 	query = strings.ToLower(strings.TrimSpace(query))
 	result := make([]agentapp.BoardIssue, 0, len(issues))
+	taskSourceByIssueID := map[string]string{coordinationRoot.ID: taskSourceID}
 	for _, issue := range issues {
-		root, rootErr := r.manager.store.taskRoot(issue)
-		if rootErr != nil || root.ID != actor.TaskID {
+		issueTaskSourceID, found := taskSourceIDFromIssueSet(issue, issueByID, taskSourceByIssueID)
+		if !found || issueTaskSourceID != taskSourceID {
 			continue
 		}
 		if query != "" && !strings.Contains(strings.ToLower(issue.Identifier+" "+issue.Title+" "+issue.Objective), query) {
@@ -189,12 +203,19 @@ func (r controlBoardRepository) ListIssues(_ context.Context, actor agentapp.Act
 }
 
 func (r controlBoardRepository) GetIssue(_ context.Context, actor agentapp.Actor, id string) (agentapp.BoardIssue, []agentapp.BoardComment, error) {
+	if r.manager == nil || r.manager.store == nil {
+		return agentapp.BoardIssue{}, nil, errors.New("control: Board store is unavailable")
+	}
+	taskSourceID, err := r.actorTaskSourceID(actor)
+	if err != nil {
+		return agentapp.BoardIssue{}, nil, err
+	}
 	detail, err := r.manager.store.GetIssueDetail(id)
 	if err != nil {
 		return agentapp.BoardIssue{}, nil, err
 	}
 	root, rootErr := r.manager.store.taskRoot(detail.Issue)
-	if rootErr != nil || strings.TrimSpace(actor.TaskID) == "" || root.ID != actor.TaskID {
+	if rootErr != nil || strings.TrimSpace(root.TaskSourceID) == "" || root.TaskSourceID != taskSourceID {
 		return agentapp.BoardIssue{}, nil, agentapp.ErrPermissionDenied
 	}
 	comments := make([]agentapp.BoardComment, len(detail.Comments))
@@ -202,6 +223,58 @@ func (r controlBoardRepository) GetIssue(_ context.Context, actor agentapp.Actor
 		comments[index] = agentapp.BoardComment{ID: comment.ID, IssueID: comment.IssueID, AuthorID: comment.AuthorID, Body: comment.Body, CreatedAt: comment.CreatedAt}
 	}
 	return r.boardIssue(detail.Issue), comments, nil
+}
+
+// Actor.TaskID is the coordination-root Issue ID used by Phone sessions,
+// Relay, and task-local Agent identities. Board authorization deliberately
+// resolves that root to TaskSourceID so every root Issue in the same durable
+// Task shares one Board, without changing the narrower coordination identity.
+func (r controlBoardRepository) actorTaskSourceID(actor agentapp.Actor) (string, error) {
+	coordinationRootID := strings.TrimSpace(actor.TaskID)
+	if coordinationRootID == "" {
+		return "", agentapp.ErrPermissionDenied
+	}
+	root, err := r.manager.store.GetIssue(coordinationRootID)
+	if err != nil || root.ParentID != "" || strings.TrimSpace(root.TaskSourceID) == "" {
+		return "", agentapp.ErrPermissionDenied
+	}
+	return root.TaskSourceID, nil
+}
+
+// taskSourceIDFromIssueSet resolves an Issue to its root Task without an SQL
+// query per row. Broken or cyclic hierarchies are excluded from the Board.
+func taskSourceIDFromIssueSet(issue Issue, issueByID map[string]Issue, cache map[string]string) (string, bool) {
+	current := issue
+	path := make([]string, 0, issue.RequestDepth+1)
+	seen := make(map[string]bool, issue.RequestDepth+1)
+	for {
+		if taskSourceID, ok := cache[current.ID]; ok {
+			for _, issueID := range path {
+				cache[issueID] = taskSourceID
+			}
+			return taskSourceID, true
+		}
+		if seen[current.ID] {
+			return "", false
+		}
+		seen[current.ID] = true
+		path = append(path, current.ID)
+		if current.ParentID == "" {
+			taskSourceID := strings.TrimSpace(current.TaskSourceID)
+			if taskSourceID == "" {
+				return "", false
+			}
+			for _, issueID := range path {
+				cache[issueID] = taskSourceID
+			}
+			return taskSourceID, true
+		}
+		parent, ok := issueByID[current.ParentID]
+		if !ok {
+			return "", false
+		}
+		current = parent
+	}
 }
 
 func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.Actor, input agentapp.BoardCreateIssueRequest, _ string) (agentapp.BoardIssue, error) {
@@ -388,7 +461,7 @@ func (r controlBoardRepository) AddComment(ctx context.Context, actor agentapp.A
 func (r controlBoardRepository) boardIssue(issue Issue) agentapp.BoardIssue {
 	result := agentapp.BoardIssue{
 		ID: issue.ID, Identifier: issue.Identifier, Title: issue.Title, Objective: issue.Objective,
-		Status: issue.Status, WorkflowStatus: issueWorkflowStatus(issue.Status), Priority: issue.Priority, AssigneeID: issue.AssigneeAgentID, AssigneeTaskAgentID: issue.AssigneeTaskAgentID,
+		Status: issue.Status, WorkflowStatus: issue.Status, Priority: issue.Priority, AssigneeID: issue.AssigneeAgentID, AssigneeTaskAgentID: issue.AssigneeTaskAgentID,
 		ExecutionPhase: issue.ExecutionPhase, Blocked: hasIssueLabel(issue, issueLabelBlocked) || issue.ExecutionPhase == "blocked", UpdatedAt: issue.UpdatedAt,
 	}
 	if views := r.manager.store.issueRuntimeViews([]Issue{issue}); len(views) == 1 {
@@ -406,15 +479,6 @@ func (r controlBoardRepository) boardIssue(issue Issue) agentapp.BoardIssue {
 		}
 	}
 	return result
-}
-
-func issueWorkflowStatus(status string) string {
-	switch status {
-	case "backlog", "blocked", "failed", "budget_exceeded":
-		return "todo"
-	default:
-		return status
-	}
 }
 
 type controlRelayRepository struct {

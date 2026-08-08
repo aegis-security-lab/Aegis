@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 func configuredStore(t *testing.T) *Store {
@@ -25,12 +24,12 @@ func configuredStore(t *testing.T) *Store {
 func TestIssueTitleLengthLimit(t *testing.T) {
 	s := configuredStore(t)
 	validTitle := strings.Repeat("任", IssueTitleMaxLength)
-	issue, err := s.CreateIssue(CreateIssueInput{Title: validTitle, Objective: "Complete the task.", Priority: "medium", WorkMode: "guided"})
+	issue, err := s.CreateIssue(CreateIssueInput{Title: validTitle, Objective: "Complete the task.", Priority: "middle", WorkMode: "guided"})
 	if err != nil {
 		t.Fatalf("create title at limit: %v", err)
 	}
 	tooLong := validTitle + "务"
-	if _, err = s.CreateIssue(CreateIssueInput{Title: tooLong, Objective: "Complete the task.", Priority: "medium", WorkMode: "guided"}); err == nil {
+	if _, err = s.CreateIssue(CreateIssueInput{Title: tooLong, Objective: "Complete the task.", Priority: "middle", WorkMode: "guided"}); err == nil {
 		t.Fatal("create should reject an Issue title over the limit")
 	}
 	if _, err = s.UpdateIssue(issue.ID, UpdateIssueInput{Title: &tooLong}); err == nil {
@@ -43,7 +42,7 @@ func TestIssueTitleLengthLimit(t *testing.T) {
 
 func TestBoardVocabularyNormalizesPriorityAndRequiresOwnerForInProgress(t *testing.T) {
 	s := configuredStore(t)
-	issue, err := s.CreateIssue(CreateIssueInput{Title: "Queued work", Priority: "medium", WorkMode: "autonomous"})
+	issue, err := s.CreateIssue(CreateIssueInput{Title: "Queued work", Priority: "middle", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +53,7 @@ func TestBoardVocabularyNormalizesPriorityAndRequiresOwnerForInProgress(t *testi
 	if _, err = s.UpdateIssue(issue.ID, UpdateIssueInput{Status: &inProgress}); err == nil || !strings.Contains(err.Error(), "必须有负责人") {
 		t.Fatalf("unassigned in_progress error=%v", err)
 	}
-	high, err := s.CreateIssue(CreateIssueInput{Title: "Legacy urgent work", Priority: "critical", WorkMode: "autonomous"})
+	high, err := s.CreateIssue(CreateIssueInput{Title: "Legacy urgent work", Priority: "high", WorkMode: "autonomous"})
 	if err != nil || high.Priority != "high" {
 		t.Fatalf("legacy high Issue=%+v err=%v", high, err)
 	}
@@ -70,7 +69,7 @@ func TestIssueHierarchyRelationsAndCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Frontend", Objective: "Deliver the frontend.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	b, err := s.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Frontend", Objective: "Deliver the frontend.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,45 +162,10 @@ func TestTaskKeepsSelectedAgentAndEveryAgentCanDecompose(t *testing.T) {
 	}
 }
 
-func TestRequiredAgentToolsMigrationUpdatesExistingWorkers(t *testing.T) {
-	s := configuredStore(t)
-	index, exists := agentIndex(s.agents, "backend-engineer")
-	if !exists {
-		t.Fatal("backend-engineer is missing")
-	}
-	legacy := cloneAgent(s.agents[index])
-	legacy.Tools = stringsWithout(legacy.Tools, "aegis_submit_final_result")
-	s.agents[index] = legacy
-	if err := s.db.Save(&agentRecord{ID: legacy.ID, Definition: legacy, CreatedAt: legacy.CreatedAt, UpdatedAt: legacy.UpdatedAt}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := s.db.Delete(&registrySeedMigrationRecord{}, "id = ?", requiredAgentToolsMigrationID).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	if err := s.applyRequiredAgentToolsMigration(time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	updated, err := s.GetAgent(legacy.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(updated.Tools, "aegis_submit_final_result") {
-		t.Fatalf("migrated Agent tools=%v", updated.Tools)
-	}
-	var record agentRecord
-	if err := s.db.First(&record, "id = ?", legacy.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(record.Definition.Tools, "aegis_submit_final_result") {
-		t.Fatalf("persisted Agent tools=%v", record.Definition.Tools)
-	}
-}
-
 func TestSessionDetailIncludesPromptSnapshots(t *testing.T) {
 	s := configuredStore(t)
 	issue, err := s.CreateIssue(CreateIssueInput{
-		Title: "Prompt snapshot task", Objective: "Capture prompt snapshots.", Priority: "medium", WorkMode: "autonomous",
+		Title: "Prompt snapshot task", Objective: "Capture prompt snapshots.", Priority: "middle", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
@@ -255,8 +219,8 @@ func TestRelationCycleRejectedAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, _ := s.CreateIssue(CreateIssueInput{Title: "A", Objective: "Complete A.", Priority: "medium", WorkMode: "guided"})
-	b, _ := s.CreateIssue(CreateIssueInput{Title: "B", Objective: "Complete B.", Priority: "medium", WorkMode: "guided"})
+	a, _ := s.CreateIssue(CreateIssueInput{Title: "A", Objective: "Complete A.", Priority: "middle", WorkMode: "guided"})
+	b, _ := s.CreateIssue(CreateIssueInput{Title: "B", Objective: "Complete B.", Priority: "middle", WorkMode: "guided"})
 	if _, err = s.AddRelation(a.ID, CreateRelationInput{RelatedIssueID: b.ID}); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +257,7 @@ func TestFindingCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.ID == "" || f.Status != "open" || f.Domain != "example.com" {
+	if f.ID == "" || f.Status != "open" || f.Domain != "example.com" || f.AuditLevel != AuditLevelB {
 		t.Fatalf("unexpected finding: %+v", f)
 	}
 	if f.Evidence == nil {
@@ -394,8 +358,17 @@ func TestFindingCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Title != "Updated title" || updated.Severity != "critical" {
+	if updated.Title != "Updated title" || updated.Severity != "critical" || updated.AuditLevel != AuditLevelA {
 		t.Fatalf("update mismatch: %+v", updated)
+	}
+
+	level := AuditLevelS
+	updated, err = s.UpdateFinding(f.ID, UpdateFindingInput{AuditLevel: &level})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.AuditLevel != AuditLevelS || updated.Severity != "critical" {
+		t.Fatalf("audit level update mismatch: %+v", updated)
 	}
 
 	// Invalid category should fail
@@ -591,7 +564,7 @@ func TestExploreAgentIsSeededForReadOnlyCodeDiscovery(t *testing.T) {
 func TestExploreAgentReceivesCodeDiscoveryIssuesWithoutStealingSecurityAudits(t *testing.T) {
 	s := configuredStore(t)
 	exploration, err := s.CreateIssue(CreateIssueInput{
-		Title: "阅读项目并梳理调用链", Objective: "说明入口、核心调用链和实现改动的影响范围。", Priority: "medium", WorkMode: "autonomous",
+		Title: "阅读项目并梳理调用链", Objective: "说明入口、核心调用链和实现改动的影响范围。", Priority: "middle", WorkMode: "autonomous",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -809,24 +782,6 @@ func TestSecurityOutcomeGradeContractOnlyAppliesToSecurityAgents(t *testing.T) {
 	}
 }
 
-func TestLegacySystemContextIsRemovedFromVisibleUserPrompt(t *testing.T) {
-	original := "帮我对目标进行红队测试，创建一个 Issue"
-	for _, injected := range []string{
-		"\n\n## Organization delegation boundary\nAvailable direct reports: ...",
-		"\n\n<organization_delegation_boundary>\nAvailable direct reports: ...\n</organization_delegation_boundary>",
-		"\n\n<agent_permission_boundary>\nWorkspace boundary: ...\n</agent_permission_boundary>",
-		"\n\n<agent_memo>\nRemember prior work.\n</agent_memo>",
-	} {
-		if got := stripLegacyUserPromptContext(original + injected); got != original {
-			t.Fatalf("legacy context was not removed: got=%q", got)
-		}
-	}
-	untouched := "  用户主动输入 <agent_memo> 作为普通文本  "
-	if got := stripLegacyUserPromptContext(untouched); got != untouched {
-		t.Fatalf("ordinary user text was changed: got=%q", got)
-	}
-}
-
 func TestVulnerabilityReportAgentUsesRequiredFormatAndReceivesReportIssues(t *testing.T) {
 	s := configuredStore(t)
 	agent, err := s.GetAgent("vulnerability-report-engineer")
@@ -964,65 +919,6 @@ func TestRedTeamAgentsHaveDefaultRedAndOptionalBlueAssessmentStandards(t *testin
 				t.Fatalf("agent %s prompt is missing %q", agentID, required)
 			}
 		}
-	}
-}
-
-func TestRedTeamAssessmentOrientationMigrationIsAppliedOnce(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.db.Delete(&registrySeedMigrationRecord{}, "id = ?", redTeamAssessmentModeMigrationID).Error; err != nil {
-		t.Fatal(err)
-	}
-	for _, agentID := range []string{"red-team-lead", "red-team-engineer"} {
-		var record agentRecord
-		if err := store.db.First(&record, "id = ?", agentID).Error; err != nil {
-			t.Fatal(err)
-		}
-		record.Definition.SystemPrompt = "operator-customized prompt"
-		if err := store.db.Save(&record).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	database, _ := store.db.DB()
-	_ = database.Close()
-
-	reopened, err := NewStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, agentID := range []string{"red-team-lead", "red-team-engineer"} {
-		agent, getErr := reopened.GetAgent(agentID)
-		if getErr != nil {
-			t.Fatal(getErr)
-		}
-		if !strings.HasPrefix(agent.SystemPrompt, "operator-customized prompt") || !strings.Contains(agent.SystemPrompt, "RED-TEAM VALUE STANDARD (default)") {
-			t.Fatalf("migration did not append assessment standards to %s: %s", agentID, agent.SystemPrompt)
-		}
-	}
-	var leadRecord agentRecord
-	if err := reopened.db.First(&leadRecord, "id = ?", "red-team-lead").Error; err != nil {
-		t.Fatal(err)
-	}
-	leadRecord.Definition.SystemPrompt = "later operator customization"
-	if err := reopened.db.Save(&leadRecord).Error; err != nil {
-		t.Fatal(err)
-	}
-	database, _ = reopened.db.DB()
-	_ = database.Close()
-
-	reopenedAgain, err := NewStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lead, err := reopenedAgain.GetAgent("red-team-lead")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lead.SystemPrompt != "later operator customization" {
-		t.Fatalf("completed migration overwrote later Agent customization: %s", lead.SystemPrompt)
 	}
 }
 

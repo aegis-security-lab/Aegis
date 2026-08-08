@@ -44,7 +44,7 @@ func TestCoordinationModeAPI(t *testing.T) {
 	}
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := manager.CreateIssue(control.CreateIssueInput{Title: "Mode API", Objective: "test", Priority: "low", Status: "backlog", WorkMode: "autonomous"})
+	issue, err := manager.CreateIssue(control.CreateIssueInput{Title: "Mode API", Objective: "test", Priority: "low", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -77,7 +78,17 @@ func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed"}).Error; err != nil {
+	sameTaskRoot, err := store.CreateIssue(CreateIssueInput{
+		TaskSourceID: issue.TaskSourceID,
+		Title:        "Second root in the same task",
+		Objective:    "Must share the Task-scoped Phone Board.",
+		Priority:     "middle",
+		WorkMode:     "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "done", "execution_phase": "completed", "updated_at": time.Now().Add(time.Second)}).Error; err != nil {
 		t.Fatal(err)
 	}
 	other, err := store.CreateIssue(CreateIssueInput{
@@ -98,8 +109,15 @@ func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	phones, err := manager.TaskPhones(context.Background(), issue.TaskSourceID)
+	if err != nil || len(phones) != 1 || phones[0].TaskID != issue.TaskSourceID {
+		t.Fatalf("Task-scoped Phone list=%+v err=%v", phones, err)
+	}
+	if _, err = manager.TaskPhones(context.Background(), issue.ID); err == nil {
+		t.Fatal("TaskPhones accepted an Issue id instead of a Task id")
+	}
 	board := phoneAction(t, client, started.PhoneSessionID, started.Page, agentapp.ActionOpenApp, "@1", "open-board", nil).Page
-	if board.PageID != "board.home" || !strings.Contains(board.Text, issue.Identifier) || strings.Contains(board.Text, other.Identifier) {
+	if board.PageID != "board.home" || !strings.Contains(board.Text, issue.Identifier) || !strings.Contains(board.Text, sameTaskRoot.Identifier) || strings.Contains(board.Text, other.Identifier) {
 		t.Fatalf("control issue was not exposed through Board:\n%s", board.Text)
 	}
 	var identity TaskAgent
@@ -137,6 +155,78 @@ func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T)
 	}
 	if len(comments) != 1 || comments[0].AuthorID != issue.AssigneeTaskAgentID || comments[0].ExecutionID != "execution-native-1" || comments[0].Body != "Verified through Agent Phone." {
 		t.Fatalf("comments=%+v", comments)
+	}
+}
+
+func TestControlPhoneBoardAuthorizesByTaskAcrossRootIssueTrees(t *testing.T) {
+	store, manager := bridgeTestManager(t)
+	_, firstRoot, err := store.CreateTask(CreateIssueInput{
+		Title: "Shared task root", Objective: "Coordinate the shared task.",
+		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRoot, err := store.CreateIssue(CreateIssueInput{
+		TaskSourceID:    firstRoot.TaskSourceID,
+		Title:           "Independent root in shared task",
+		Objective:       "Produce a result visible to the first root.",
+		Priority:        "middle",
+		WorkMode:        "autonomous",
+		AssigneeAgentID: "frontend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondChild, err := store.CreateIssue(CreateIssueInput{
+		ParentID: secondRoot.ID, Title: "Nested result", Objective: "Remain visible across roots.",
+		Priority: "low", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, otherRoot, err := store.CreateTask(CreateIssueInput{
+		Title: "Different task", Objective: "Stay isolated.", Priority: "low", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repository := controlBoardRepository{manager: manager}
+	actor := agentapp.Actor{
+		AgentID: firstRoot.AssigneeAgentID, TaskAgentID: firstRoot.AssigneeTaskAgentID,
+		TaskID: firstRoot.ID, Authenticated: true,
+	}
+	issues, err := repository.ListIssues(context.Background(), actor, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := make(map[string]bool, len(issues))
+	for _, issue := range issues {
+		visible[issue.ID] = true
+	}
+	for _, expectedID := range []string{firstRoot.ID, secondRoot.ID, secondChild.ID} {
+		if !visible[expectedID] {
+			t.Fatalf("same-Task Issue %s was omitted: %+v", expectedID, issues)
+		}
+	}
+	if visible[otherRoot.ID] {
+		t.Fatalf("cross-Task root %s leaked into Board: %+v", otherRoot.ID, issues)
+	}
+	if _, _, err = repository.GetIssue(context.Background(), actor, secondRoot.ID); err != nil {
+		t.Fatalf("same-Task root must be readable: %v", err)
+	}
+	if _, _, err = repository.GetIssue(context.Background(), actor, secondChild.ID); err != nil {
+		t.Fatalf("same-Task nested Issue must be readable: %v", err)
+	}
+	if _, _, err = repository.GetIssue(context.Background(), actor, otherRoot.ID); !errors.Is(err, agentapp.ErrPermissionDenied) {
+		t.Fatalf("cross-Task read err=%v, want permission denied", err)
+	}
+
+	forgedActor := actor
+	forgedActor.TaskID = secondChild.ID
+	if _, err = repository.ListIssues(context.Background(), forgedActor, ""); !errors.Is(err, agentapp.ErrPermissionDenied) {
+		t.Fatalf("child Issue cannot be used as a Phone coordination root: %v", err)
 	}
 }
 

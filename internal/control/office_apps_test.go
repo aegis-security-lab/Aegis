@@ -7,7 +7,7 @@ import (
 
 func TestBoardCommentRequiresExplicitAgentCommand(t *testing.T) {
 	store := configuredStore(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Board work", Objective: "Deliver it", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Board work", Objective: "Deliver it", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +92,11 @@ func TestBoardCanRemoveRelationAndArchiveRunningIssueTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Target", Objective: "Run work", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	target, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Target", Objective: "Run work", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocker, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Blocker", Objective: "Block target", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	blocker, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Blocker", Objective: "Block target", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestBoardCanRemoveRelationAndArchiveRunningIssueTree(t *testing.T) {
 
 func TestBoardStatusInReviewCancelsRunningExecutionAndTriggersValidation(t *testing.T) {
 	store := configuredStore(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Review me", Objective: "Deliver the review", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Review me", Objective: "Deliver the review", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

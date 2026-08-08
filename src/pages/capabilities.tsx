@@ -17,7 +17,7 @@ import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -105,7 +105,9 @@ export function CapabilitiesPage() {
   const descriptors = React.useMemo(() => {
     const result = [...catalog]
     for (const skill of state?.skills ?? []) {
-      if (!result.some((item) => item.kind === "skill" && item.name === skill.id)) {
+      if (
+        !result.some((item) => item.kind === "skill" && item.name === skill.id)
+      ) {
         result.push({ kind: "skill", name: skill.id })
       }
     }
@@ -118,7 +120,8 @@ export function CapabilitiesPage() {
   }, [catalog, state?.skills])
 
   const agents = (state?.agents ?? []).filter(
-    (agent) => agent.enabled && !agent.internal && agent.category !== "concierge"
+    (agent) =>
+      agent.enabled && !agent.internal && agent.category !== "concierge"
   )
 
   return (
@@ -127,17 +130,23 @@ export function CapabilitiesPage() {
         eyebrow="Capability control plane"
         title="能力控制台"
         actions={
-          <Button variant="outline" size="sm" render={<Link to="/skills" />} nativeButton={false}>
+          <Link
+            to="/skills"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
             <Sparkles data-icon="inline-start" />
             管理 Skills
-          </Button>
+          </Link>
         }
       />
 
       <AuthorizationRail enabled={enabled} />
 
       <Tabs defaultValue="catalog" className="gap-5">
-        <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+        <TabsList
+          variant="line"
+          className="w-full justify-start overflow-x-auto"
+        >
           <TabsTrigger value="catalog">能力目录</TabsTrigger>
           <TabsTrigger value="agents">Agent 类型默认能力</TabsTrigger>
           <TabsTrigger value="policy">任务授权模型</TabsTrigger>
@@ -146,25 +155,39 @@ export function CapabilitiesPage() {
         <TabsContent value="catalog">
           {loading ? (
             <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
-              <Spinner />正在读取 Runtime Registry…
+              <Spinner />
+              正在读取 Runtime Registry…
             </div>
           ) : error ? (
             <Card>
-              <CardContent className="py-10 text-sm text-destructive">{error}</CardContent>
+              <CardContent className="py-10 text-sm text-destructive">
+                {error}
+              </CardContent>
             </Card>
           ) : descriptors.length === 0 ? (
             <Empty className="py-16">
               <EmptyHeader>
-                <EmptyMedia variant="icon"><Blocks /></EmptyMedia>
+                <EmptyMedia variant="icon">
+                  <Blocks />
+                </EmptyMedia>
                 <EmptyTitle>没有注册能力</EmptyTitle>
-                <EmptyDescription>在组合根注册 Capability Source 后会出现在这里。</EmptyDescription>
+                <EmptyDescription>
+                  在组合根注册 Capability Source 后会出现在这里。
+                </EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
             <div className="grid gap-4 xl:grid-cols-2">
               {kindOrder.map((kind) => {
                 const items = descriptors.filter((item) => item.kind === kind)
-                return <CapabilityGroup key={kind} kind={kind} items={items} agents={agents} />
+                return (
+                  <CapabilityGroup
+                    key={kind}
+                    kind={kind}
+                    items={items}
+                    agents={agents}
+                  />
+                )
               })}
             </div>
           )}
@@ -177,10 +200,16 @@ export function CapabilitiesPage() {
             </CardHeader>
             <CardContent className="divide-y p-0">
               {agents.map((agent) => (
-                <AgentCapabilityRow key={agent.id} agent={agent} webEnabled={Boolean(state?.config.webSearch.enabled)} />
+                <AgentCapabilityRow
+                  key={agent.id}
+                  agent={agent}
+                  webEnabled={Boolean(state?.config.webSearch.enabled)}
+                />
               ))}
               {agents.length === 0 ? (
-                <p className="p-6 text-sm text-muted-foreground">暂无启用的 Agent 类型。</p>
+                <p className="p-6 text-sm text-muted-foreground">
+                  暂无启用的 Agent 类型。
+                </p>
               ) : null}
             </CardContent>
           </Card>
@@ -206,20 +235,32 @@ function AuthorizationRail({ enabled }: { enabled: boolean }) {
       <CardContent className="p-0">
         <div className="flex items-center justify-between gap-4 border-b bg-muted/25 px-5 py-3">
           <div className="flex items-center gap-2 text-sm font-medium">
-            <span className={cn("size-2 rounded-full", enabled ? "bg-success" : "bg-destructive")} />
+            <span
+              className={cn(
+                "size-2 rounded-full",
+                enabled ? "bg-success" : "bg-destructive"
+              )}
+            />
             {enabled ? "能力控制平面在线" : "能力控制平面不可用"}
           </div>
-          <span className="font-mono text-[11px] text-muted-foreground">deny by default</span>
+          <span className="font-mono text-[11px] text-muted-foreground">
+            deny by default
+          </span>
         </div>
         <div className="grid md:grid-cols-4">
           {stages.map((stage, index) => (
-            <div key={stage.label} className="relative flex min-h-24 items-center gap-3 px-5 py-4 md:border-r md:last:border-r-0">
+            <div
+              key={stage.label}
+              className="relative flex min-h-24 items-center gap-3 px-5 py-4 md:border-r md:last:border-r-0"
+            >
               <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
                 <stage.icon className="size-4" />
               </div>
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{stage.label}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{stage.detail}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {stage.detail}
+                </p>
               </div>
               {index < stages.length - 1 ? (
                 <ChevronRight className="absolute right-[-9px] z-10 hidden size-4 rounded-full bg-card text-muted-foreground md:block" />
@@ -232,8 +273,20 @@ function AuthorizationRail({ enabled }: { enabled: boolean }) {
   )
 }
 
-function CapabilityGroup({ kind, items, agents }: { kind: CapabilityKind; items: CapabilityDescriptor[]; agents: AgentDefinition[] }) {
-  const meta = kindMeta[kind] ?? { label: kind, description: "自定义能力来源。", icon: Blocks }
+function CapabilityGroup({
+  kind,
+  items,
+  agents,
+}: {
+  kind: CapabilityKind
+  items: CapabilityDescriptor[]
+  agents: AgentDefinition[]
+}) {
+  const meta = kindMeta[kind] ?? {
+    label: kind,
+    description: "自定义能力来源。",
+    icon: Blocks,
+  }
   return (
     <Card className="min-h-64">
       <CardHeader>
@@ -244,20 +297,39 @@ function CapabilityGroup({ kind, items, agents }: { kind: CapabilityKind; items:
             </div>
             <div>
               <CardTitle>{meta.label}</CardTitle>
-              <CardDescription className="mt-1">{meta.description}</CardDescription>
+              <CardDescription className="mt-1">
+                {meta.description}
+              </CardDescription>
             </div>
           </div>
-          <Badge variant="outline" className="tabular-nums">{items.length}</Badge>
+          <Badge variant="outline" className="tabular-nums">
+            {items.length}
+          </Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
         {items.map((item) => {
-          const usedBy = item.kind === "skill" ? agents.filter((agent) => agent.skillIds.includes(item.name)).length : null
+          const usedBy =
+            item.kind === "skill"
+              ? agents.filter((agent) => agent.skillIds.includes(item.name))
+                  .length
+              : null
           return (
-            <div key={`${item.kind}/${item.name}`} className="flex items-center gap-3 rounded-md bg-muted/35 px-3 py-2.5">
-              <code className="min-w-0 flex-1 truncate text-xs">{item.kind}/{item.name}</code>
-              {item.dynamic ? <Badge variant="secondary">动态 Source</Badge> : null}
-              {usedBy !== null ? <span className="shrink-0 text-xs text-muted-foreground">{usedBy} 个类型</span> : null}
+            <div
+              key={`${item.kind}/${item.name}`}
+              className="flex items-center gap-3 rounded-md bg-muted/35 px-3 py-2.5"
+            >
+              <code className="min-w-0 flex-1 truncate text-xs">
+                {item.kind}/{item.name}
+              </code>
+              {item.dynamic ? (
+                <Badge variant="secondary">动态 Source</Badge>
+              ) : null}
+              {usedBy !== null ? (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {usedBy} 个类型
+                </span>
+              ) : null}
             </div>
           )
         })}
@@ -272,7 +344,13 @@ function CapabilityGroup({ kind, items, agents }: { kind: CapabilityKind; items:
   )
 }
 
-function AgentCapabilityRow({ agent, webEnabled }: { agent: AgentDefinition; webEnabled: boolean }) {
+function AgentCapabilityRow({
+  agent,
+  webEnabled,
+}: {
+  agent: AgentDefinition
+  webEnabled: boolean
+}) {
   const nativeCount = agent.skillIds.length + 2 + (webEnabled ? 1 : 0)
   return (
     <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center">
@@ -282,18 +360,42 @@ function AgentCapabilityRow({ agent, webEnabled }: { agent: AgentDefinition; web
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{agent.name}</p>
-          <p className="truncate font-mono text-[11px] text-muted-foreground">{agent.id}</p>
+          <p className="truncate font-mono text-[11px] text-muted-foreground">
+            {agent.id}
+          </p>
         </div>
       </div>
       <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-        <Badge variant="secondary"><MessagesSquare className="size-3" />coordination</Badge>
-        <Badge variant="secondary"><Smartphone className="size-3" />phone/default</Badge>
-        {webEnabled ? <Badge variant="secondary"><Globe2 className="size-3" />web/default</Badge> : null}
-        {agent.skillIds.map((id) => <Badge key={id} variant="outline">skill/{id}</Badge>)}
+        <Badge variant="secondary">
+          <MessagesSquare className="size-3" />
+          coordination
+        </Badge>
+        <Badge variant="secondary">
+          <Smartphone className="size-3" />
+          phone/default
+        </Badge>
+        {webEnabled ? (
+          <Badge variant="secondary">
+            <Globe2 className="size-3" />
+            web/default
+          </Badge>
+        ) : null}
+        {agent.skillIds.map((id) => (
+          <Badge key={id} variant="outline">
+            skill/{id}
+          </Badge>
+        ))}
       </div>
       <div className="flex items-center justify-between gap-3 lg:justify-end">
-        <span className="text-xs tabular-nums text-muted-foreground">{nativeCount} 项原生能力</span>
-        <Button size="sm" variant="ghost" render={<Link to={`/agents?agent=${encodeURIComponent(agent.id)}`} />} nativeButton={false}>配置</Button>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {nativeCount} 项原生能力
+        </span>
+        <Link
+          to={`/agents?agent=${encodeURIComponent(agent.id)}`}
+          className={buttonVariants({ size: "sm", variant: "ghost" })}
+        >
+          配置
+        </Link>
       </div>
     </div>
   )
@@ -313,7 +415,10 @@ function PolicyModel() {
         </CardHeader>
         <CardContent className="space-y-3">
           {rules.map(([name, description, note]) => (
-            <div key={name} className="grid gap-2 rounded-md border px-4 py-3 sm:grid-cols-[90px_1fr_auto] sm:items-center">
+            <div
+              key={name}
+              className="grid gap-2 rounded-md border px-4 py-3 sm:grid-cols-[90px_1fr_auto] sm:items-center"
+            >
               <code className="text-xs font-semibold text-primary">{name}</code>
               <span className="text-sm">{description}</span>
               <Badge variant="outline">{note}</Badge>
@@ -326,10 +431,16 @@ function PolicyModel() {
           <CardTitle>强制约束</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
-          <PolicyLine label="Allowed" value="能力白名单；为空时不代表全部允许" />
+          <PolicyLine
+            label="Allowed"
+            value="能力白名单；为空时不代表全部允许"
+          />
           <PolicyLine label="Denied" value="显式拒绝，优先级高于默认分配" />
           <PolicyLine label="Required" value="每次执行必须携带的系统能力" />
-          <PolicyLine label="Snapshot" value="实际物化结果写入 Execution 证据" />
+          <PolicyLine
+            label="Snapshot"
+            value="实际物化结果写入 Execution 证据"
+          />
         </CardContent>
       </Card>
     </div>
@@ -340,7 +451,12 @@ function PolicyLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-3">
       <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" />
-      <div><p className="font-mono text-xs font-medium">{label}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{value}</p></div>
+      <div>
+        <p className="font-mono text-xs font-medium">{label}</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          {value}
+        </p>
+      </div>
     </div>
   )
 }

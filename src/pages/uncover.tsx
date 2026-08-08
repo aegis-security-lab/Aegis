@@ -248,7 +248,7 @@ export function UncoverPage() {
                                 {engine.anonymous ? (
                                   <Badge variant="secondary">免密钥</Badge>
                                 ) : engine.configured ? (
-                                  <CheckCircle2 className="ml-auto size-3.5 text-emerald-600" />
+                                  <CheckCircle2 className="ml-auto size-3.5 text-success" />
                                 ) : (
                                   <KeyRound className="ml-auto size-3.5 text-muted-foreground" />
                                 )}
@@ -463,8 +463,8 @@ function ProviderStatusCard({
             引擎凭据
           </CardTitle>
           <CardDescription>
-            {configuredCredentialCount}/{credentialEngines.length} 个付费引擎已配置，
-            共 {configuredCount} 个引擎可用。
+            {configuredCredentialCount}/{credentialEngines.length}{" "}
+            个付费引擎已配置， 共 {configuredCount} 个引擎可用。
           </CardDescription>
           <CardAction>
             <Button
@@ -486,7 +486,7 @@ function ProviderStatusCard({
         <CardContent className="flex flex-col gap-3">
           <div className="flex items-start gap-3 rounded-lg border bg-muted/30 px-3 py-3">
             {selectedEngine?.anonymous || selectedEngine?.configured ? (
-              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
             ) : (
               <KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             )}
@@ -619,7 +619,9 @@ function ProviderConfigDialog({
                           <InputGroupButton
                             size="icon-xs"
                             aria-label={
-                              visible[field.key] ? "隐藏输入内容" : "显示输入内容"
+                              visible[field.key]
+                                ? "隐藏输入内容"
+                                : "显示输入内容"
                             }
                             onClick={() =>
                               setVisible((current) => ({

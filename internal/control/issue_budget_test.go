@@ -186,7 +186,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 func TestTaskTimeBudgetRejectsNonPositiveValue(t *testing.T) {
 	store := configuredStore(t)
 	minutes := 0
-	if _, _, err := store.CreateTask(CreateIssueInput{Title: "Invalid budget", Priority: "medium", WorkMode: "autonomous", TimeBudgetMinutes: &minutes}); err == nil {
+	if _, _, err := store.CreateTask(CreateIssueInput{Title: "Invalid budget", Priority: "middle", WorkMode: "autonomous", TimeBudgetMinutes: &minutes}); err == nil {
 		t.Fatal("non-positive task budget was accepted")
 	}
 }

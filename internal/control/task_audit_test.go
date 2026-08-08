@@ -108,7 +108,7 @@ func TestTaskAuditFreezesEvidenceStreamsAndKeepsHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	audit, err := manager.CreateTaskAudit(context.Background(), root.ID)
+	audit, err := manager.CreateTaskAudit(context.Background(), root.TaskSourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestTaskAuditFreezesEvidenceStreamsAndKeepsHistory(t *testing.T) {
 	if report, readErr := os.ReadFile(filepath.Join(filepath.Dir(audit.EvidencePath), "report.md")); readErr != nil || string(report) != audit.ReportMarkdown {
 		t.Fatalf("report file mismatch: %q err=%v", report, readErr)
 	}
-	items, err := manager.ListTaskAudits(root.ID)
+	items, err := manager.ListTaskAudits(root.TaskSourceID)
 	if err != nil || len(items) != 1 || items[0].ID != audit.ID {
 		t.Fatalf("history=%+v err=%v", items, err)
 	}

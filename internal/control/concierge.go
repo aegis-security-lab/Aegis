@@ -159,7 +159,7 @@ func (s *Store) incrementConciergeMessages(executionID string) {
 
 func (s *Store) recordConciergeTask(executionID string, issue Issue) {
 	_ = s.db.Model(&ConciergeConversation{}).Where("execution_id = ?", executionID).Updates(map[string]any{
-		"created_task_id": issue.ID, "updated_at": time.Now(),
+		"created_task_id": issue.TaskSourceID, "updated_at": time.Now(),
 	}).Error
 }
 

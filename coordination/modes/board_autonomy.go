@@ -160,7 +160,9 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 		return result, nil
 
 	case coordination.EventIssueCompleted, coordination.EventExecutionCompleted:
-		if event.ParentAgentID == "" {
+		// A root Issue has no parent Issue to notify. CreatedBy may be "operator",
+		// but that is audit identity rather than a routable Agent recipient.
+		if event.ParentIssueID == "" || event.ParentAgentID == "" {
 			return nil, nil
 		}
 		completed, err := decode[coordination.Completion](event.Payload)

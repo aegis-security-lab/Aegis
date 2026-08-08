@@ -496,7 +496,7 @@ function UncoverSearchDetails({ tool }: { tool: ToolData }) {
         </div>
       ) : null}
       {warnings.length > 0 ? (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-5 whitespace-pre-wrap text-amber-800 dark:text-amber-300">
+        <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs leading-5 whitespace-pre-wrap text-warning">
           {warnings.join("\n")}
         </div>
       ) : null}

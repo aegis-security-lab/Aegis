@@ -17,7 +17,7 @@ func TestTaskTimelineAggregatesWholeIssueTree(t *testing.T) {
 	}
 	child, err := store.CreateIssue(CreateIssueInput{
 		ParentID: task.ID, Title: "Child work", Objective: "The child result is recorded.",
-		Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer",
+		Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +25,13 @@ func TestTaskTimelineAggregatesWholeIssueTree(t *testing.T) {
 	other, err := store.CreateIssue(CreateIssueInput{
 		Title: "Other task", Objective: "Remain outside the selected timeline.",
 		Priority: "low", WorkMode: "autonomous",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	additionalRoot, err := store.CreateIssue(CreateIssueInput{
+		TaskSourceID: task.TaskSourceID, Title: "Additional Task root", Objective: "Appear in the same Task timeline.",
+		Priority: "middle", WorkMode: "autonomous",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,11 +64,11 @@ func TestTaskTimelineAggregatesWholeIssueTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	timeline, err := store.TaskTimeline(child.ID)
+	timeline, err := store.TaskTimeline(task.TaskSourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if timeline.Task.ID != task.ID || timeline.IssueCount != 2 {
+	if timeline.Task.ID != task.TaskSourceID || timeline.IssueCount != 3 {
 		t.Fatalf("unexpected task tree: %+v", timeline)
 	}
 	kinds := make([]string, len(timeline.Events))
@@ -70,6 +77,11 @@ func TestTaskTimelineAggregatesWholeIssueTree(t *testing.T) {
 		if event.IssueID == other.ID || event.Summary == "This must not appear." {
 			t.Fatalf("timeline leaked another task: %+v", event)
 		}
+	}
+	if !slices.ContainsFunc(timeline.Events, func(event TaskTimelineEvent) bool {
+		return event.IssueID == additionalRoot.ID
+	}) {
+		t.Fatalf("additional root missing from Task timeline: %+v", timeline.Events)
 	}
 	for _, expected := range []string{"issue", "execution", "result", "comment"} {
 		if !slices.Contains(kinds, expected) {

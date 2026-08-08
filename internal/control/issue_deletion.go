@@ -53,8 +53,16 @@ func (s *Store) DeleteIssueTree(issueID string) (DeleteIssueResult, error) {
 	}
 
 	taskIDs := []string{}
+	taskAgentRootIDs := []string{}
 	if root.ParentID == "" && strings.TrimSpace(root.TaskSourceID) != "" {
-		taskIDs = append(taskIDs, root.TaskSourceID)
+		taskAgentRootIDs = append(taskAgentRootIDs, root.ID)
+		var remainingRoots int64
+		if err := s.db.Model(&Issue{}).Where("task_source_id = ? AND parent_id = '' AND id <> ?", root.TaskSourceID, root.ID).Count(&remainingRoots).Error; err != nil {
+			return DeleteIssueResult{}, err
+		}
+		if remainingRoots == 0 {
+			taskIDs = append(taskIDs, root.TaskSourceID)
+		}
 	}
 	var containers []ContainerInstance
 	if len(taskIDs) > 0 {
@@ -77,7 +85,7 @@ func (s *Store) DeleteIssueTree(issueID string) (DeleteIssueResult, error) {
 		storagePaths = append(storagePaths, attachment.StoragePath)
 	}
 	var inputAttachments []InputAttachment
-	inputQuery := s.db.Where("issue_id IN ?", issueIDs)
+	inputQuery := s.db.Where("issue_id IN ? AND task_id = ''", issueIDs)
 	if len(executionIDs) > 0 {
 		inputQuery = inputQuery.Or("execution_id IN ?", executionIDs)
 	}
@@ -132,6 +140,11 @@ func (s *Store) DeleteIssueTree(issueID string) (DeleteIssueResult, error) {
 		}
 		if len(inputAttachmentIDs) > 0 {
 			if err := tx.Delete(&InputAttachment{}, "id IN ?", inputAttachmentIDs).Error; err != nil {
+				return err
+			}
+		}
+		if len(taskAgentRootIDs) > 0 {
+			if err := tx.Delete(&TaskAgent{}, "task_id IN ?", taskAgentRootIDs).Error; err != nil {
 				return err
 			}
 		}

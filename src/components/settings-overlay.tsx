@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
 import type { SettingsSection } from "@/pages/settings"
 
 // Lazy-loaded pages so each overlay group only pays for what it shows.
@@ -145,7 +146,7 @@ function renderOverlayPage(item: string): React.ReactNode {
 function OverlayFallback() {
   return (
     <div className="flex h-64 items-center justify-center gap-2 text-sm text-muted-foreground">
-      <span className="size-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+      <Spinner />
       加载中…
     </div>
   )
@@ -249,7 +250,7 @@ export function SettingsOverlay({
             })}
           </nav>
           <ScrollArea className="min-h-0 flex-1">
-            <div className="mx-auto w-full max-w-[1200px] px-4 py-5 lg:px-6 lg:py-6">
+            <div className="mx-auto w-full max-w-[1200px] px-4 py-5 lg:px-6 lg:py-6 [&_[data-slot=page-header-identity]]:hidden [&_[data-slot=page-header]]:justify-end [&_[data-slot=page-header]]:border-0 [&_[data-slot=page-header]]:pb-0">
               <React.Suspense fallback={<OverlayFallback />}>
                 {group === "system" ? (
                   <SettingsPage

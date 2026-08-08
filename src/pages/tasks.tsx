@@ -1,6 +1,5 @@
-import {
-  ListTodo,
-} from "lucide-react"
+import * as React from "react"
+import { ListTodo } from "lucide-react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
@@ -20,22 +19,38 @@ import {
 import { Progress } from "@/components/ui/progress"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { formatCost, formatTime } from "@/lib/format"
-import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
+import { issueRuntimeMap, taskRuntimeView } from "@/lib/issue-runtime"
+import { issuesByTask, latestUpdatedAt } from "@/lib/collections"
 import { useAppState } from "@/lib/state"
 import type { Issue, IssueRuntimeView, Task } from "@/types"
 
 type TaskFilter = "all" | "active" | "review" | "done" | "attention"
 
+const activeExecutionStatuses = new Set([
+  "queued",
+  "starting",
+  "running",
+  "waiting_approval",
+])
+const completedIssueStatuses = new Set(["done", "cancelled"])
+
 export function TasksPage() {
   const { state } = useAppState()
   const [searchParams, setSearchParams] = useSearchParams()
   const query = searchParams.get("q") ?? ""
+  const deferredQuery = React.useDeferredValue(query)
   const filterParam = searchParams.get("status")
   const filter: TaskFilter = isTaskFilter(filterParam) ? filterParam : "all"
-  const issues = state?.issues ?? []
-  const executions = state?.executions ?? []
-  const tasks = state?.tasks ?? []
-  const runtimeMap = issueRuntimeMap(state?.issueRuntimes ?? [])
+  const issues = React.useMemo(() => state?.issues ?? [], [state?.issues])
+  const executions = React.useMemo(
+    () => state?.executions ?? [],
+    [state?.executions]
+  )
+  const tasks = React.useMemo(() => state?.tasks ?? [], [state?.tasks])
+  const runtimeMap = React.useMemo(
+    () => issueRuntimeMap(state?.issueRuntimes ?? []),
+    [state?.issueRuntimes]
+  )
 
   const setQuery = (value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -51,36 +66,42 @@ export function TasksPage() {
     setSearchParams(next, { replace: true })
   }
 
-  const rows = tasks
-    .map((task) => taskRow(task, issues, executions, runtimeMap))
-    .filter((row) => {
-      const normalized = query.trim().toLocaleLowerCase()
+  const taskRows = React.useMemo(
+    () => buildTaskRows(tasks, issues, executions, runtimeMap),
+    [executions, issues, runtimeMap, tasks]
+  )
+  const rows = React.useMemo(() => {
+    const normalized = deferredQuery.trim().toLocaleLowerCase()
+    return taskRows.filter((row) => {
       const matchesQuery =
         !normalized ||
         row.task.title.toLocaleLowerCase().includes(normalized) ||
-        row.latest?.identifier.toLocaleLowerCase().includes(normalized)
+        row.issues.some((issue) =>
+          `${issue.identifier} ${issue.title}`
+            .toLocaleLowerCase()
+            .includes(normalized)
+        )
       if (!matchesQuery) return false
       if (filter === "all") return true
-      if (!row.latest) return filter === "attention"
+      if (!row.runtime) return filter === "attention"
       if (filter === "active") {
         return (
-          row.runtime!.state !== "in_review" &&
-          ["running", "waiting", "pending"].includes(row.runtime!.kind)
+          row.runtime.state !== "in_review" &&
+          ["running", "waiting", "pending"].includes(row.runtime.kind)
         )
       }
       if (filter === "review") return row.runtime!.state === "in_review"
       if (filter === "done") return row.runtime!.kind === "completed"
       return ["failed", "cancelled"].includes(row.runtime!.kind)
     })
-    .sort((left, right) =>
-      right.task.updatedAt.localeCompare(left.task.updatedAt)
-    )
+  }, [deferredQuery, filter, taskRows])
 
   return (
     <div className="flex w-full flex-col gap-5">
       <PageHeader
         eyebrow="Work"
         title="任务"
+        description="按任务汇总全部 Issues、完成度与资源消耗。"
       />
 
       <Card className="min-w-0">
@@ -155,35 +176,29 @@ export function TasksPage() {
                   className="group relative grid min-w-0 gap-3 px-4 py-3 pr-12 transition-colors duration-150 hover:bg-muted/35 xl:grid-cols-[6rem_minmax(220px,1fr)_9rem_5rem_6rem_8rem_2.5rem] xl:items-center xl:pr-4"
                 >
                   <div className="flex items-center gap-2 xl:block">
-                    {row.latest ? (
+                    {row.runtime ? (
                       <IssueRuntimeBadge runtime={row.runtime!} />
                     ) : (
                       <Badge variant="outline">待初始化</Badge>
                     )}
                     <span className="font-mono text-[11px] text-muted-foreground xl:hidden">
-                      {row.latest?.identifier ?? "—"}
+                      {row.issueCount} Issues
                     </span>
                   </div>
 
                   <div className="min-w-0">
-                    {row.latest ? (
-                      <Link
-                        to={`/tasks/${row.latest.id}`}
-                        className="flex min-h-11 items-center truncate text-sm font-medium hover:text-primary focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none xl:block xl:min-h-0"
-                      >
-                        {row.task.title}
-                      </Link>
-                    ) : (
-                      <p className="truncate text-sm font-medium">
-                        {row.task.title}
-                      </p>
-                    )}
+                    <Link
+                      to={`/tasks/${row.task.id}`}
+                      className="flex min-h-11 items-center truncate text-sm font-medium hover:text-primary focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none xl:block xl:min-h-0"
+                    >
+                      {row.task.title}
+                    </Link>
                     <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
                       <span className="hidden font-mono xl:inline">
-                        {row.latest?.identifier ?? "尚无执行"}
+                        {row.issueCount} Issues
                       </span>
                       <span className="truncate">{row.task.workspace}</span>
-                      <span>第 {row.runs.length} 次执行</span>
+                      <span>{row.rootCount} 个根 Issue</span>
                     </p>
                   </div>
 
@@ -200,12 +215,9 @@ export function TasksPage() {
 
                   <TaskMeta label="活跃执行" value={row.active} />
                   <TaskMeta label="成本" value={formatCost(row.cost)} />
-                  <TaskMeta
-                    label="更新"
-                    value={formatTime(row.task.updatedAt)}
-                  />
+                  <TaskMeta label="更新" value={formatTime(row.updatedAt)} />
 
-                  <TaskRowMenu task={row.task} />
+                  <TaskRowMenu task={row.task} taskIssues={row.issues} />
                 </div>
               ))}
             </div>
@@ -216,75 +228,60 @@ export function TasksPage() {
   )
 }
 
-function taskRow(
-  task: Task,
+function buildTaskRows(
+  tasks: Task[],
   issues: Issue[],
   executions: Array<{ issueId: string; status: string; cost: number }>,
   runtimeMap: Map<string, IssueRuntimeView>
 ) {
-  const runs = issues
-    .filter((issue) => !issue.parentId && issue.taskSourceId === task.id)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-  const latest = runs[0]
-  const runtime = latest
-    ? issueRuntimeOrUnavailable(runtimeMap, latest.id)
-    : undefined
-  const issueIDs = latest
-    ? taskTreeIssueIDs(latest.id, issues)
-    : new Set<string>()
-  const descendants = Math.max(0, issueIDs.size - 1)
-  const completed = issues.filter(
-    (issue) =>
-      issue.id !== latest?.id &&
-      issueIDs.has(issue.id) &&
-      ["done", "cancelled"].includes(issue.status)
-  ).length
-  const progress = descendants
-    ? Math.round((completed / descendants) * 100)
-    : runtime?.kind === "completed"
-      ? 100
-      : 0
-  const treeExecutions = executions.filter((execution) =>
-    issueIDs.has(execution.issueId)
-  )
-  const active = treeExecutions.filter((execution) =>
-    ["queued", "starting", "running", "waiting_approval"].includes(
-      execution.status
-    )
-  ).length
-  const cost = treeExecutions.reduce(
-    (total, execution) => total + execution.cost,
-    0
-  )
-  return {
-    task,
-    runs,
-    latest,
-    runtime,
-    progress,
-    active,
-    cost,
-    issueCount: issueIDs.size,
+  const executionsByIssue = new Map<string, typeof executions>()
+  const taskIssuesByID = issuesByTask(issues)
+  for (const execution of executions) {
+    const values = executionsByIssue.get(execution.issueId)
+    if (values) values.push(execution)
+    else executionsByIssue.set(execution.issueId, [execution])
   }
+
+  return tasks
+    .map((task) => {
+      const taskIssues = taskIssuesByID.get(task.id) ?? []
+      const updatedAt = latestUpdatedAt(task.updatedAt, taskIssues)
+      const rootCount = taskIssues.filter((issue) => !issue.parentId).length
+      const runtime = taskRuntimeView(task.id, taskIssues, runtimeMap)
+      let completed = 0
+      let active = 0
+      let cost = 0
+
+      for (const issue of taskIssues) {
+        if (completedIssueStatuses.has(issue.status)) completed += 1
+        for (const execution of executionsByIssue.get(issue.id) ?? []) {
+          cost += execution.cost
+          if (activeExecutionStatuses.has(execution.status)) active += 1
+        }
+      }
+
+      const progress = taskIssues.length
+        ? Math.round((completed / taskIssues.length) * 100)
+        : runtime?.kind === "completed"
+          ? 100
+          : 0
+      return {
+        task,
+        issues: taskIssues,
+        issueCount: taskIssues.length,
+        rootCount,
+        updatedAt,
+        runtime,
+        progress,
+        active,
+        cost,
+      }
+    })
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
 function isTaskFilter(value: string | null): value is TaskFilter {
   return ["all", "active", "review", "done", "attention"].includes(value ?? "")
-}
-
-function taskTreeIssueIDs(rootID: string, issues: Issue[]) {
-  const ids = new Set([rootID])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const issue of issues) {
-      if (issue.parentId && ids.has(issue.parentId) && !ids.has(issue.id)) {
-        ids.add(issue.id)
-        changed = true
-      }
-    }
-  }
-  return ids
 }
 
 function TaskMeta({ label, value }: { label: string; value: string | number }) {

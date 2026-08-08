@@ -9,7 +9,7 @@ import (
 func TestIssueObjectiveIsOptionalAndPersistedWhenProvided(t *testing.T) {
 	store := configuredStore(t)
 	withoutObjective, err := store.CreateIssue(CreateIssueInput{
-		Title: "No acceptance objective", Priority: "medium", WorkMode: "autonomous",
+		Title: "No acceptance objective", Priority: "middle", WorkMode: "autonomous",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestIssueObjectiveIsOptionalAndPersistedWhenProvided(t *testing.T) {
 func TestIssueWithoutObjectiveCompletesWithoutValidation(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Summarize the workspace", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Summarize the workspace", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -128,22 +128,6 @@ func TestMergedNoProxyAlwaysBypassesLocalControlPlane(t *testing.T) {
 	}
 }
 
-func TestParseValidationDecision(t *testing.T) {
-	decision, err := parseValidationDecision("response: {\"outcome\":\"retry\",\"summary\":\"Tests are missing.\",\"feedback\":\"Run and report the integration test.\",\"impossibilityProof\":\"\"}")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.Outcome != "retry" || decision.Summary != "Tests are missing." || decision.Feedback == "" {
-		t.Fatalf("unexpected decision: %+v", decision)
-	}
-	if _, err = parseValidationDecision("{\"outcome\":\"retry\",\"summary\":\"Incomplete\",\"feedback\":\"\"}"); err == nil {
-		t.Fatal("failed validation without actionable feedback should be rejected")
-	}
-	if _, err = parseValidationDecision("{\"outcome\":\"abandoned\",\"summary\":\"Impossible\",\"impossibilityProof\":\"\"}"); err == nil {
-		t.Fatal("abandoned validation without proof should be rejected")
-	}
-}
-
 func TestValidationPassCompletesIssueAndFailurePreparesSameAgentRetry(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
@@ -219,7 +203,7 @@ func TestValidationPassCompletesIssueAndFailurePreparesSameAgentRetry(t *testing
 
 func TestSubmitValidationDecisionPersistsStructuredResult(t *testing.T) {
 	store := configuredStore(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Structured validation", Objective: "Provide evidence.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Structured validation", Objective: "Provide evidence.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +224,7 @@ func TestSubmitValidationDecisionPersistsStructuredResult(t *testing.T) {
 	if err = store.db.First(&record, "id = ?", record.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	decision, err := submittedValidationDecision(record, "not json")
+	decision, err := submittedValidationDecision(record)
 	if err != nil || decision.Outcome != "retry" || decision.Feedback != input.Feedback {
 		t.Fatalf("structured decision was not persisted: decision=%+v err=%v", decision, err)
 	}

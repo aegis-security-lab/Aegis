@@ -590,6 +590,14 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, v)
 	})
+	api.GET("/tasks/:id", func(c *gin.Context) {
+		v, err := store.GetTaskDetail(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
 	api.GET("/tasks/:id/timeline", func(c *gin.Context) {
 		v, err := store.TaskTimeline(c.Param("id"))
 		if err != nil {
@@ -734,7 +742,7 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		if !bindJSON(c, &in) {
 			return
 		}
-		task, _, err := store.UpdateTaskBudget(c.Param("id"), in.TimeBudgetMinutes)
+		task, err := store.UpdateTaskBudget(c.Param("id"), in.TimeBudgetMinutes)
 		if err != nil {
 			writeError(c, http.StatusUnprocessableEntity, err)
 			return

@@ -217,6 +217,13 @@ type Task struct {
 	UpdatedAt               time.Time `json:"updatedAt"`
 }
 
+// TaskDetail contains Task-owned data only. Issue executions and their
+// histories remain available through the Task timeline and Issue pages.
+type TaskDetail struct {
+	Task             Task              `json:"task"`
+	InputAttachments []InputAttachment `json:"inputAttachments"`
+}
+
 // TaskAudit is one immutable evaluation attempt over a point-in-time Task
 // evidence snapshot. Events carry the evaluator's live trace, ReportMarkdown
 // stores only the validated final deliverable, and EvidencePath keeps the exact
@@ -1193,7 +1200,7 @@ type CloseValidatedIssueInput struct {
 }
 
 type TaskCancellationResult struct {
-	Task                Issue `json:"task"`
+	Task                Task  `json:"task"`
 	TotalIssues         int   `json:"totalIssues"`
 	CancelledIssues     int64 `json:"cancelledIssues"`
 	CancelledExecutions int64 `json:"cancelledExecutions"`
@@ -1210,7 +1217,7 @@ type ToolInterruptResult struct {
 // TaskTimeline is a read model for observing the important lifecycle events of
 // an entire top-level task and all Issues below it.
 type TaskTimeline struct {
-	Task       Issue               `json:"task"`
+	Task       Task                `json:"task"`
 	IssueCount int                 `json:"issueCount"`
 	Events     []TaskTimelineEvent `json:"events"`
 }
@@ -1311,6 +1318,7 @@ type Finding struct {
 }
 
 type CreateFindingInput struct {
+	AuditLevel       string `json:"auditLevel"`
 	Domain           string `json:"domain"`
 	Category         string `json:"category"`
 	Severity         string `json:"severity"`
@@ -1322,6 +1330,7 @@ type CreateFindingInput struct {
 }
 
 type UpdateFindingInput struct {
+	AuditLevel       *string `json:"auditLevel"`
 	Domain           *string `json:"domain"`
 	Category         *string `json:"category"`
 	Severity         *string `json:"severity"`

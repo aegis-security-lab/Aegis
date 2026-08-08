@@ -5,7 +5,7 @@ import "testing"
 func TestSteerSealsStreamingAssistantMessageBeforeUserMessage(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Long-running employee chat", Priority: "medium", WorkMode: "autonomous",
+		Title: "Long-running employee chat", Priority: "middle", WorkMode: "autonomous",
 		AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {

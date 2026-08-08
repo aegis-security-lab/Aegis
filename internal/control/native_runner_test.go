@@ -112,7 +112,7 @@ func TestNativeIssueRunnerCompletesWorkThroughAgentHost(t *testing.T) {
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Native work", Objective: "Return native delivery", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Native work", Objective: "Return native delivery", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestNativeIssueRunnerTreatsTerminatedSleepAsSuspension(t *testing.T) {
 	}
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Sleep", Objective: "resume later", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Sleep", Objective: "resume later", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestNativeIssueRunnerRecoversCancelledWorkerContextWithoutFailingIssue(t *t
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Recover native work", Objective: "Continue after worker restart", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Recover native work", Objective: "Continue after worker restart", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -322,11 +322,11 @@ func TestNativeIssueRunnerReleasesParentWhileChildrenRun(t *testing.T) {
 	}
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
-	parent, err := store.CreateIssue(CreateIssueInput{Title: "Parent", Objective: "integrate children", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	parent, err := store.CreateIssue(CreateIssueInput{Title: "Parent", Objective: "integrate children", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "work", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"}); err != nil {
+	if _, err = store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "work", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = store.db.Model(&Issue{}).Where("id = ?", parent.ID).Updates(map[string]any{"container_profile_id": "", "container_id": "", "validation_disabled": true}).Error; err != nil {
@@ -351,7 +351,7 @@ func TestNativeIssueRunnerReleasesParentWhileChildrenRun(t *testing.T) {
 
 func TestDurableSleepStartsNewCoordinationExecutionOnWake(t *testing.T) {
 	store, manager := bridgeTestManager(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Durable sleep", Objective: "wake in a new turn", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Durable sleep", Objective: "wake in a new turn", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestNativeIssueRunnerUsesCoordinationCapabilityPolicy(t *testing.T) {
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Policy controlled work", Objective: "use only selected software", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Policy controlled work", Objective: "use only selected software", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 		CapabilitySelection: "replace", Capabilities: []capability.Ref{{Kind: capability.KindPhone, Name: "default", Config: map[string]any{"installedApps": []any{"aegis.board"}}}},
 	})
 	if err != nil {
@@ -540,7 +540,7 @@ func TestNativeIssueRunnerInjectsGoalPreservingPolicyIntoLeaderContext(t *testin
 
 func TestCoordinationExecutionRunsNativeIssueRunner(t *testing.T) {
 	store, manager := bridgeTestManager(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Native scheduled", Objective: "Done", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Native scheduled", Objective: "Done", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,8 +580,8 @@ func TestCoordinationExecutionRunsNativeIssueRunner(t *testing.T) {
 func TestResumePromptIncludesFailedAndBudgetExceededChildrenThatArrivedWhileQueued(t *testing.T) {
 	store, manager := bridgeTestManager(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	failed, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Failed child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
-	exceeded, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Budget child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
+	failed, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Failed child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	exceeded, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Budget child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
 	if err := store.db.Model(&Issue{}).Where("id = ?", failed.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"failed"}), "execution_phase": "completed", "error": "connection failed"}).Error; err != nil {
 		t.Fatal(err)
 	}

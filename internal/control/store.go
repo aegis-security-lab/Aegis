@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/url"
 	"os"
@@ -18,9 +17,7 @@ import (
 
 	"aegis/capability"
 	"aegis/observability"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 var sequence atomic.Uint64
@@ -69,571 +66,6 @@ type skillRecord struct {
 	Definition SkillDefinition `gorm:"serializer:json;type:text"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
-}
-type registrySeedMigrationRecord struct {
-	ID        string `gorm:"primaryKey"`
-	AppliedAt time.Time
-}
-
-const decompositionDefaults100MigrationID = "decomposition-defaults-100-v1"
-
-func (s *Store) migrateDecompositionDefaults(now time.Time) error {
-	var applied int64
-	if err := s.db.Model(&registrySeedMigrationRecord{}).Where("id = ?", decompositionDefaults100MigrationID).Count(&applied).Error; err != nil {
-		return err
-	}
-	if applied > 0 {
-		return nil
-	}
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 8/16 were the former shipped defaults. Upgrade only that exact pair;
-		// custom configurations are preserved.
-		if s.config.Configured && s.config.MaxChildrenPerRequest == 8 && s.config.MaxDirectChildren == 16 {
-			s.config.MaxChildrenPerRequest = 100
-			s.config.MaxDirectChildren = 100
-			s.config.UpdatedAt = now
-			if err := tx.Save(&configRecord{ID: 1, Value: s.config, UpdatedAt: now}).Error; err != nil {
-				return err
-			}
-		}
-		return tx.Create(&registrySeedMigrationRecord{ID: decompositionDefaults100MigrationID, AppliedAt: now}).Error
-	})
-}
-
-func migrateTasks(db *gorm.DB) error {
-	var roots []Issue
-	if err := db.Where("hidden = ? AND parent_id = ? AND task_source_id = ?", false, "", "").Find(&roots).Error; err != nil {
-		return err
-	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		for _, root := range roots {
-			now := root.CreatedAt
-			if now.IsZero() {
-				now = time.Now()
-			}
-			task := Task{ID: nextID("task"), ProjectID: root.ProjectID, Title: root.Title, Description: root.Description, Objective: root.Objective, Priority: root.Priority, WorkMode: root.WorkMode, AssigneeAgentID: root.AssigneeAgentID, Workspace: root.Workspace, ContainerProfileID: root.ContainerProfileID, ContainerID: root.ContainerID, Constraints: root.Constraints, CreatedAt: now, UpdatedAt: root.UpdatedAt}
-			if err := tx.Create(&task).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&Issue{}).Where("id = ?", root.ID).Update("task_source_id", task.ID).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func migrateTaskContainers(db *gorm.DB) error {
-	var tasks []Task
-	var issues []Issue
-	var containers []ContainerInstance
-	if err := db.Find(&tasks).Error; err != nil {
-		return err
-	}
-	if err := db.Select("id", "parent_id", "task_source_id", "container_profile_id", "container_id").Find(&issues).Error; err != nil {
-		return err
-	}
-	if err := db.Find(&containers).Error; err != nil {
-		return err
-	}
-	var defaultProfile ContainerProfile
-	if err := db.Where("enabled = ?", true).
-		Order("case when lower(name) = 'default' then 0 else 1 end").
-		Order("created_at asc").First(&defaultProfile).Error; err != nil {
-		return errors.New("没有可用的 Docker 容器配置，无法迁移任务容器")
-	}
-	containerByTask := make(map[string]ContainerInstance, len(containers))
-	for _, container := range containers {
-		containerByTask[container.TaskID] = container
-	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		for _, task := range tasks {
-			profileID := strings.TrimSpace(task.ContainerProfileID)
-			if profileID == "" {
-				profileID = defaultProfile.ID
-			}
-			container, exists := containerByTask[task.ID]
-			if !exists {
-				var profile ContainerProfile
-				if err := tx.First(&profile, "id = ?", profileID).Error; err != nil || !profile.Enabled {
-					profile = defaultProfile
-					profileID = profile.ID
-				}
-				now := time.Now()
-				container = ContainerInstance{
-					ID: nextID("container"), ContainerProfileID: profile.ID, TaskID: task.ID,
-					Image:         profile.Image,
-					WorkspacePath: profile.WorkspacePath, NetworkMode: profile.NetworkMode,
-					MemoryMB: profile.MemoryMB, CPUs: profile.CPUs, CreatedAt: now, UpdatedAt: now,
-				}
-				container.Name = taskContainerName(container.ID)
-				if err := tx.Create(&container).Error; err != nil {
-					return err
-				}
-			}
-			if err := tx.Model(&Task{}).Where("id = ?", task.ID).Updates(map[string]any{
-				"container_profile_id": container.ContainerProfileID,
-				"container_id":         container.ID,
-			}).Error; err != nil {
-				return err
-			}
-			bound := make(map[string]bool)
-			for _, issue := range issues {
-				if issue.TaskSourceID == task.ID {
-					bound[issue.ID] = true
-				}
-			}
-			for changed := true; changed; {
-				changed = false
-				for _, issue := range issues {
-					if issue.ParentID != "" && bound[issue.ParentID] && !bound[issue.ID] {
-						bound[issue.ID] = true
-						changed = true
-					}
-				}
-			}
-			ids := make([]string, 0, len(bound))
-			for id := range bound {
-				ids = append(ids, id)
-			}
-			if len(ids) > 0 {
-				if err := tx.Model(&Issue{}).Where("id IN ?", ids).Updates(map[string]any{
-					"container_profile_id": container.ContainerProfileID,
-					"container_id":         container.ID,
-				}).Error; err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-}
-
-func NewStore(dataDir string) (*Store, error) {
-	if strings.TrimSpace(dataDir) == "" {
-		return nil, errors.New("data directory is required")
-	}
-	abs, err := filepath.Abs(dataDir)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(abs, 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(abs, 0o700); err != nil {
-		return nil, fmt.Errorf("secure data directory: %w", err)
-	}
-	// Attachments are untrusted user/Agent output and may themselves contain Go
-	// source. A nested module boundary prevents `go test ./...` and `go vet
-	// ./...` from treating runtime artifacts as Aegis packages when the default
-	// data directory lives below the repository root.
-	moduleBoundary := filepath.Join(abs, "go.mod")
-	if _, statErr := os.Stat(moduleBoundary); errors.Is(statErr, os.ErrNotExist) {
-		if writeErr := os.WriteFile(moduleBoundary, []byte("module aegis-runtime-data\n\ngo 1.25\n"), 0o600); writeErr != nil {
-			return nil, fmt.Errorf("isolate runtime data from Go source tree: %w", writeErr)
-		}
-	} else if statErr != nil {
-		return nil, fmt.Errorf("inspect runtime data Go boundary: %w", statErr)
-	}
-	dbLog := logger.New(log.New(os.Stderr, "", log.LstdFlags), logger.Config{SlowThreshold: time.Second, LogLevel: logger.Error, IgnoreRecordNotFoundError: true})
-	dbPath := filepath.Join(abs, "aegis.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_journal_mode=WAL&_busy_timeout=30000&_foreign_keys=on&_synchronous=NORMAL"), &gorm.Config{Logger: dbLog})
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	// SQLite permits concurrent readers but only one writer. A single pooled
-	// connection prevents goroutines in this process from competing through
-	// multiple SQLite connections and lets the busy timeout serialize writes.
-	if sqlDB, dbErr := db.DB(); dbErr != nil {
-		return nil, fmt.Errorf("configure sqlite pool: %w", dbErr)
-	} else {
-		sqlDB.SetMaxOpenConns(1)
-		sqlDB.SetMaxIdleConns(1)
-		sqlDB.SetConnMaxLifetime(0)
-	}
-	if err := os.Chmod(dbPath, 0o600); err != nil {
-		return nil, fmt.Errorf("secure sqlite database: %w", err)
-	}
-	if err := db.AutoMigrate(&configRecord{}, &agentRecord{}, &skillRecord{}, &registrySeedMigrationRecord{}, &uncoverProviderRecord{}, &KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{}, &Task{}, &TaskAudit{}, &TaskAuditEvent{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{}, &IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{}, &IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{}); err != nil {
-		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
-	}
-	// Audit model streams are process-local. Preserve their partial report and
-	// evidence, but never leave history claiming that an interrupted audit is
-	// still active after a service restart.
-	recoveredAt := time.Now()
-	if err := db.Model(&TaskAudit{}).Where("status IN ?", []string{"preparing", "running"}).Updates(map[string]any{
-		"status": "failed", "error": "服务重启中断了本次审计；请新建审计以生成新的冻结证据快照。",
-		"completed_at": recoveredAt, "updated_at": recoveredAt,
-	}).Error; err != nil {
-		return nil, fmt.Errorf("recover interrupted task audits: %w", err)
-	}
-	// Keep one public Board priority vocabulary. These aliases existed in older
-	// releases, so normalize them in place before any scheduler reads the queue.
-	if err := db.Transaction(func(tx *gorm.DB) error {
-		for _, model := range []any{&Issue{}, &Task{}} {
-			if err := tx.Model(model).Where("priority = ?", "medium").Update("priority", "middle").Error; err != nil {
-				return err
-			}
-			if err := tx.Model(model).Where("priority = ?", "critical").Update("priority", "high").Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("migrate Issue priorities: %w", err)
-	}
-	// Older releases created blocks edges between sibling Issues and from each
-	// child to its parent. Hierarchy plus IssueChildWait now owns coordination.
-	if err := db.Exec(`DELETE FROM issue_relations
-		WHERE EXISTS (
-			SELECT 1 FROM issues blocker, issues blocked
-			WHERE blocker.id = issue_relations.issue_id
-			  AND blocked.id = issue_relations.related_issue_id
-			  AND (blocker.parent_id = blocked.id
-			    OR blocked.parent_id = blocker.id
-			    OR (blocker.parent_id <> '' AND blocker.parent_id = blocked.parent_id))
-		)`).Error; err != nil {
-		return nil, fmt.Errorf("remove legacy child Issue dependencies: %w", err)
-	}
-	var containerProfileCount int64
-	if err := db.Model(&ContainerProfile{}).Count(&containerProfileCount).Error; err != nil {
-		return nil, fmt.Errorf("inspect default container profile: %w", err)
-	}
-	if containerProfileCount == 0 {
-		now := time.Now()
-		profile := ContainerProfile{
-			ID: "container-profile-default", Name: "default", Description: "Aegis 默认 Docker 隔离环境",
-			Image: WorkerContainerImage, WorkspacePath: "/workspace",
-			NetworkMode: "bridge", Enabled: true, CreatedAt: now, UpdatedAt: now,
-		}
-		if err := db.Create(&profile).Error; err != nil {
-			return nil, fmt.Errorf("create default container profile: %w", err)
-		}
-	}
-	if err := migrateLegacyUserPromptContext(db); err != nil {
-		return nil, fmt.Errorf("migrate legacy user prompt context: %w", err)
-	}
-	if err := db.Model(&IssueComment{}).Where("type = '' OR type IS NULL").Update("type", "normal").Error; err != nil {
-		return nil, fmt.Errorf("migrate Issue comment types: %w", err)
-	}
-	if err := migrateTasks(db); err != nil {
-		return nil, fmt.Errorf("migrate reusable Tasks: %w", err)
-	}
-	if err := migrateTaskContainers(db); err != nil {
-		return nil, fmt.Errorf("migrate one container per Task: %w", err)
-	}
-	if err := migrateTaskWorkspaceIsolation(db); err != nil {
-		return nil, fmt.Errorf("migrate private Task workspaces: %w", err)
-	}
-	if err := dropLegacyContextColumns(db); err != nil {
-		return nil, fmt.Errorf("drop legacy context columns: %w", err)
-	}
-	if err := db.Where("status = ? AND type = ?", "pending", "tool_call").Delete(&Approval{}).Error; err != nil {
-		return nil, fmt.Errorf("remove invalid approvals: %w", err)
-	}
-	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), updatedAt: time.Now()}
-	var settings configRecord
-	if err := db.First(&settings, 1).Error; err == nil {
-		s.config = settings.Value
-		s.config.ValidationMode, s.config.MaxValidationAttempts = normalizeValidationPolicy(s.config.ValidationMode, s.config.MaxValidationAttempts)
-		s.config.MaxIssueDepth, s.config.MaxChildrenPerRequest, s.config.MaxDirectChildren = normalizeDecompositionLimits(s.config.MaxIssueDepth, s.config.MaxChildrenPerRequest, s.config.MaxDirectChildren)
-		s.config.IssueBudget = normalizeIssueBudget(s.config.IssueBudget)
-		s.config.IssueHeartbeat = normalizeIssueHeartbeat(s.config.IssueHeartbeat)
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if err := s.migrateDecompositionDefaults(time.Now()); err != nil {
-		return nil, fmt.Errorf("migrate decomposition defaults: %w", err)
-	}
-	if err := s.loadRegistry(); err != nil {
-		return nil, err
-	}
-	if err := s.seedProject(); err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	if err := db.Transaction(func(tx *gorm.DB) error {
-		var activeExecutions []Execution
-		if err := tx.Where("status IN ?", activeExecutionStatuses).Find(&activeExecutions).Error; err != nil {
-			return err
-		}
-		activeByIssue := make(map[string][]Execution, len(activeExecutions))
-		activeIDs := make([]string, 0, len(activeExecutions))
-		for _, execution := range activeExecutions {
-			activeByIssue[execution.IssueID] = append(activeByIssue[execution.IssueID], execution)
-			activeIDs = append(activeIDs, execution.ID)
-		}
-		if len(activeIDs) > 0 {
-			if err := tx.Model(&Execution{}).Where("id IN ?", activeIDs).Updates(map[string]any{
-				"status": "disconnected", "pid": 0, "finished_at": now, "updated_at": now,
-			}).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&Message{}).Where("execution_id IN ? AND streaming = ?", activeIDs, true).Updates(map[string]any{"streaming": false, "updated_at": now}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("execution_id IN ? AND status = ?", activeIDs, "pending").Delete(&Approval{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&ExecutionEvent{}).Where("execution_id IN ? AND status = ?", activeIDs, "running").Updates(map[string]any{"status": "interrupted", "updated_at": now}).Error; err != nil {
-				return err
-			}
-			// Heartbeats are coordination turns over an already waiting Issue. If
-			// the service stops mid-heartbeat, restore the durable waiting state
-			// instead of treating the heartbeat as interrupted primary work.
-			var interruptedHeartbeats []AgentWakeup
-			if err := tx.Where("execution_id IN ? AND reason = ? AND status = ?", activeIDs, issueHeartbeatReason, "delivered").Find(&interruptedHeartbeats).Error; err != nil {
-				return err
-			}
-			for _, wakeup := range interruptedHeartbeats {
-				if err := tx.Model(&AgentWakeup{}).Where("id = ?", wakeup.ID).Updates(map[string]any{
-					"status": "failed", "error": "Aegis 服务重启，本次心跳已中断", "completed_at": now,
-				}).Error; err != nil {
-					return err
-				}
-				priorStatus := fallback(wakeup.PriorIssueStatus, "todo")
-				priorPhase := fallback(wakeup.PriorExecutionPhase, "active")
-				if err := tx.Model(&Issue{}).Where("id = ? AND current_execution_id = ?", wakeup.IssueID, wakeup.ExecutionID).Updates(map[string]any{
-					"status": priorStatus, "execution_phase": priorPhase, "checkout_execution_id": "",
-					"current_execution_id": wakeup.PriorExecutionID, "error": "", "updated_at": now,
-				}).Error; err != nil {
-					return err
-				}
-			}
-		}
-		if err := tx.Model(&IssueValidation{}).Where("status = ?", "running").Updates(map[string]any{"status": "interrupted", "error": "Aegis 服务重启，正在恢复原验收轮次"}).Error; err != nil {
-			return err
-		}
-		// Older versions represented runtime failures as blocked Issues. A failed
-		// execution is terminal, so migrate those records before Coordination
-		// evaluates dependency edges and waiting parents.
-		failedExecutions := tx.Model(&Execution{}).Select("id").Where("status IN ?", []string{"failed", "disconnected", "stopped"})
-		if err := tx.Model(&Issue{}).
-			Where("status = ? AND current_execution_id IN (?)", "blocked", failedExecutions).
-			Updates(map[string]any{
-				"status": "failed", "execution_phase": "completed", "checkout_execution_id": "",
-				"completed_at": now, "updated_at": now,
-			}).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&Issue{}).Where("status = ? AND execution_phase = ?", "in_progress", "summarizing").Updates(map[string]any{
-			"status": "cancelled", "execution_phase": "completed", "checkout_execution_id": "",
-			"objective_abandoned": true, "abandoned_at": now, "cancelled_at": now, "updated_at": now,
-		}).Error; err != nil {
-			return err
-		}
-		var interruptedIssues []Issue
-		if err := tx.Where("hidden = ? AND status = ? AND execution_phase NOT IN ?", false, "in_progress", []string{"waiting_children", "sleeping", "summarizing", "blocked"}).Find(&interruptedIssues).Error; err != nil {
-			return err
-		}
-		for _, issue := range interruptedIssues {
-			executionID := strings.TrimSpace(issue.CheckoutExecutionID)
-			if executionID == "" {
-				executionID = strings.TrimSpace(issue.CurrentExecutionID)
-			}
-			if executionID == "" {
-				candidates := activeByIssue[issue.ID]
-				for _, candidate := range candidates {
-					if candidate.Kind != "wakeup" {
-						executionID = candidate.ID
-						break
-					}
-				}
-				if executionID == "" && len(candidates) > 0 {
-					executionID = candidates[0].ID
-				}
-			}
-			var recoveryExecution Execution
-			if executionID != "" {
-				_ = tx.First(&recoveryExecution, "id = ? AND issue_id = ?", executionID, issue.ID).Error
-			}
-			settledCommentWakeup := false
-			if recoveryExecution.Kind == "wakeup" {
-				var settledWakeups int64
-				if err := tx.Model(&AgentWakeup{}).Where("execution_id = ? AND status IN ?", recoveryExecution.ID, []string{"delivered", "completed"}).Count(&settledWakeups).Error; err != nil {
-					return err
-				}
-				settledCommentWakeup = settledWakeups > 0
-			}
-			if recoveryExecution.ID != "" && recoveryExecution.Status == "completed" &&
-				(slices.Contains([]string{"work", "rework", "continuation"}, recoveryExecution.Kind) || settledCommentWakeup) &&
-				strings.TrimSpace(recoveryExecution.Result) != "" {
-				if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-					"status": "todo", "execution_phase": "recovering", "checkout_execution_id": "",
-					"current_execution_id": executionID, "recovery_execution_id": executionID,
-					"recovery_phase": "settled", "recovery_requested_at": now, "updated_at": now,
-				}).Error; err != nil {
-					return err
-				}
-				continue
-			}
-			updates := map[string]any{
-				"status": "todo", "checkout_execution_id": "", "updated_at": now,
-			}
-			if executionID == "" {
-				updates["execution_phase"] = "active"
-				updates["current_execution_id"] = ""
-			} else {
-				updates["execution_phase"] = "recovering"
-				updates["recovery_execution_id"] = executionID
-				updates["recovery_phase"] = issue.ExecutionPhase
-				updates["recovery_requested_at"] = now
-				updates["current_execution_id"] = executionID
-				if err := tx.Model(&Execution{}).Where("id = ? AND status NOT IN ?", executionID, []string{"cancelled", "failed"}).Updates(map[string]any{
-					"status": "disconnected", "pid": 0, "finished_at": now, "updated_at": now,
-				}).Error; err != nil {
-					return err
-				}
-			}
-			if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-		if err := migrateLegacyIssueStatuses(tx, now); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
-// migrateLegacyIssueStatuses rewrites pre-label statuses onto the five-state
-// workflow. Operational outcomes are preserved as labels so historical boards
-// keep their signal. The function is idempotent: it only touches rows whose
-// status is still in the legacy vocabulary, so it may run on every startup.
-func migrateLegacyIssueStatuses(tx *gorm.DB, now time.Time) error {
-	var issues []Issue
-	if err := tx.Where("status IN ?", []string{"backlog", "blocked", "failed", "budget_exceeded"}).Find(&issues).Error; err != nil {
-		return err
-	}
-	for _, issue := range issues {
-		status, labels := normalizeIssueStatus(issue.Status)
-		updates := map[string]any{
-			"status":     status,
-			"labels":     issueLabelsColumn(withIssueLabels(issue, labels...)),
-			"updated_at": now,
-		}
-		if status == "done" && issue.CompletedAt == nil {
-			updates["completed_at"] = &now
-		}
-		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func dropLegacyContextColumns(db *gorm.DB) error {
-	// The Context field was removed from Task and Issue in a model cleanup;
-	// SQLite does not drop columns automatically, so remove the leftover
-	// column if it still exists. Safe to run on every startup.
-	drop := func(table string) error {
-		has := false
-		if err := db.Raw("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'context'", table).Scan(&has).Error; err != nil {
-			return err
-		}
-		if !has {
-			return nil
-		}
-		return db.Exec("ALTER TABLE " + table + " DROP COLUMN context").Error
-	}
-	if err := drop("tasks"); err != nil {
-		return err
-	}
-	return drop("issues")
-}
-
-func migrateTaskWorkspaceIsolation(db *gorm.DB) error {
-	return db.Transaction(func(tx *gorm.DB) error {
-		var tasks []Task
-		if err := tx.Where("container_profile_id <> ''").Find(&tasks).Error; err != nil {
-			return err
-		}
-		for _, task := range tasks {
-			if strings.TrimSpace(filepath.ToSlash(task.Workspace)) == TaskWorkspacePath {
-				continue
-			}
-			updates := map[string]any{
-				"workspace":   TaskWorkspacePath,
-				"description": rewriteWorkspacePaths(task.Description, TaskWorkspacePath, task.Workspace),
-				"objective":   rewriteWorkspacePaths(task.Objective, TaskWorkspacePath, task.Workspace),
-				"constraints": rewriteWorkspacePaths(task.Constraints, TaskWorkspacePath, task.Workspace),
-			}
-			if err := tx.Model(&Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-		var issues []Issue
-		if err := tx.Where("container_profile_id <> ''").Find(&issues).Error; err != nil {
-			return err
-		}
-		for _, issue := range issues {
-			if strings.TrimSpace(filepath.ToSlash(issue.Workspace)) == TaskWorkspacePath {
-				continue
-			}
-			updates := map[string]any{
-				"workspace":   TaskWorkspacePath,
-				"description": rewriteWorkspacePaths(issue.Description, TaskWorkspacePath, issue.Workspace),
-				"objective":   rewriteWorkspacePaths(issue.Objective, TaskWorkspacePath, issue.Workspace),
-				"constraints": rewriteWorkspacePaths(issue.Constraints, TaskWorkspacePath, issue.Workspace),
-			}
-			if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-		if err := tx.Model(&ContainerProfile{}).Where("workspace_path <> ?", TaskWorkspacePath).Update("workspace_path", TaskWorkspacePath).Error; err != nil {
-			return err
-		}
-		return tx.Model(&ContainerInstance{}).Where("workspace_path <> ?", TaskWorkspacePath).Update("workspace_path", TaskWorkspacePath).Error
-	})
-}
-
-func stripLegacyUserPromptContext(content string) string {
-	cut := len(content)
-	for _, marker := range []string{
-		"\n\n## Organization delegation boundary\n",
-		"\n\n<organization_delegation_boundary>",
-		"\n\n<agent_permission_boundary>",
-		"\n\n<agent_memo>",
-	} {
-		if index := strings.Index(content, marker); index >= 0 && index < cut {
-			cut = index
-		}
-	}
-	if cut == len(content) {
-		return content
-	}
-	return strings.TrimSpace(content[:cut])
-}
-
-func migrateLegacyUserPromptContext(db *gorm.DB) error {
-	var messages []Message
-	if err := db.Where("role = ?", "user").Find(&messages).Error; err != nil {
-		return err
-	}
-	for _, message := range messages {
-		cleaned := stripLegacyUserPromptContext(message.Content)
-		if cleaned != message.Content {
-			if err := db.Model(&Message{}).Where("id = ?", message.ID).UpdateColumn("content", cleaned).Error; err != nil {
-				return err
-			}
-		}
-	}
-	var executions []Execution
-	if err := db.Where("initial_prompt <> ?", "").Find(&executions).Error; err != nil {
-		return err
-	}
-	for _, execution := range executions {
-		cleaned := stripLegacyUserPromptContext(execution.InitialPrompt)
-		if cleaned != execution.InitialPrompt {
-			if err := db.Model(&Execution{}).Where("id = ?", execution.ID).UpdateColumn("initial_prompt", cleaned).Error; err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (s *Store) seedProject() error {
@@ -829,7 +261,7 @@ func validateIssueBudget(budget IssueBudgetConfig) error {
 
 func normalizeDecompositionLimits(depth, perRequest, direct int) (int, int, int) {
 	if depth < 1 {
-		depth = 4
+		depth = defaultMaxIssueDepth
 	}
 	if depth > 20 {
 		depth = 20
@@ -904,10 +336,24 @@ func (s *Store) stateViewLocked() StateView {
 	for index := range executions {
 		executions[index] = compactExecution(executions[index])
 	}
-	return StateView{Configured: s.config.Configured, Config: configView(s.config), Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, IssueRuntimes: s.issueRuntimeViews(issues), Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), TaskAgents: taskAgents, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: s.updatedAt}
+	updatedAt := s.updatedAt
+	for _, issue := range issues {
+		if issue.UpdatedAt.After(updatedAt) {
+			updatedAt = issue.UpdatedAt
+		}
+	}
+	for _, execution := range executions {
+		if execution.UpdatedAt.After(updatedAt) {
+			updatedAt = execution.UpdatedAt
+		}
+	}
+	return StateView{Configured: s.config.Configured, Config: configView(s.config), Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, IssueRuntimes: s.issueRuntimeViews(issues), Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), TaskAgents: taskAgents, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: updatedAt}
 }
 func (s *Store) Subscribe() (<-chan StateView, func()) {
-	ch := make(chan StateView, 4)
+	// StateView is a full snapshot, so intermediate values have no semantic
+	// value once a newer snapshot exists. A one-slot latest-value channel keeps
+	// slow SSE clients convergent instead of silently losing the terminal state.
+	ch := make(chan StateView, 1)
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
 	view := s.stateViewLocked()
@@ -928,10 +374,23 @@ func (s *Store) broadcastLocked() {
 	}
 	view := s.stateViewLocked()
 	for ch := range s.subscribers {
-		select {
-		case ch <- view:
-		default:
-		}
+		publishLatestState(ch, view)
+	}
+}
+
+func publishLatestState(ch chan StateView, view StateView) {
+	select {
+	case ch <- view:
+		return
+	default:
+	}
+	select {
+	case <-ch:
+	default:
+	}
+	select {
+	case ch <- view:
+	default:
 	}
 }
 func (s *Store) touchLocked() {
@@ -946,9 +405,8 @@ func (s *Store) changedLocked() {
 func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	requestedWorkspace := strings.TrimSpace(input.Workspace)
 	parentWorkspace := ""
-	// Every visible root Issue belongs to a reusable Task. Keep the lower-level
-	// Issue API backward compatible by promoting unsourced roots instead of
-	// allowing a second, task-less root concept to leak into the product model.
+	// Every visible root Issue belongs to a reusable Task. Creating an unsourced
+	// root therefore creates the Task aggregate instead of a task-less Issue.
 	if strings.TrimSpace(input.ParentID) == "" && strings.TrimSpace(input.TaskSourceID) == "" {
 		_, issue, err := s.CreateTask(input)
 		return issue, err
@@ -1085,7 +543,6 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	if status == "" {
 		status = "todo"
 	}
-	status, derivedLabels := normalizeIssueStatus(status)
 	if !validIssueStatus(status) {
 		return Issue{}, errors.New("invalid issue status")
 	}
@@ -1101,7 +558,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Labels: derivedLabels, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -1218,28 +675,40 @@ func (s *Store) GetTask(id string) (Task, error) {
 	return task, nil
 }
 
-func (s *Store) UpdateTaskBudget(id string, minutes *int) (Task, Issue, error) {
+func (s *Store) GetTaskDetail(id string) (TaskDetail, error) {
+	task, err := s.GetTask(strings.TrimSpace(id))
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	var attachments []InputAttachment
+	if err = s.db.Where("task_id = ?", task.ID).Order("created_at asc, id asc").Find(&attachments).Error; err != nil {
+		return TaskDetail{}, err
+	}
+	return TaskDetail{Task: task, InputAttachments: attachments}, nil
+}
+
+func (s *Store) UpdateTaskBudget(id string, minutes *int) (Task, error) {
 	if minutes == nil || *minutes <= 0 {
-		return Task{}, Issue{}, errors.New("任务时间预算必须大于 0 分钟")
+		return Task{}, errors.New("任务时间预算必须大于 0 分钟")
 	}
 	var task Task
 	if err := s.db.First(&task, "id = ?", id).Error; err != nil {
-		return Task{}, Issue{}, errors.New("task not found")
+		return Task{}, errors.New("task not found")
 	}
-	var issue Issue
-	if err := s.db.Where("task_source_id = ? AND parent_id = ''", id).Order("created_at desc").First(&issue).Error; err != nil {
-		return Task{}, Issue{}, errors.New("根 Issue 不存在")
+	var rootCount int64
+	if err := s.db.Model(&Issue{}).Where("task_source_id = ? AND parent_id = ''", id).Count(&rootCount).Error; err != nil || rootCount == 0 {
+		return Task{}, errors.New("Task 没有根 Issue")
 	}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&task).Updates(map[string]any{"time_budget_minutes": *minutes, "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"time_budget_minutes": *minutes, "updated_at": time.Now()}).Error
+		return tx.Model(&Issue{}).Where("task_source_id = ? AND parent_id = ''", task.ID).Updates(map[string]any{"time_budget_minutes": *minutes, "updated_at": time.Now()}).Error
 	}); err != nil {
-		return Task{}, Issue{}, err
+		return Task{}, err
 	}
 	updated, err := s.GetTask(id)
-	return updated, issue, err
+	return updated, err
 }
 
 func (s *Store) GetIssue(id string) (Issue, error) {
@@ -1252,20 +721,13 @@ func (s *Store) GetIssue(id string) (Issue, error) {
 }
 
 func (s *Store) TaskWorkspace(id string) (TaskWorkspace, error) {
-	workspace := ""
-	containerID := ""
-	containerProfileID := ""
-	if task, err := s.GetTask(id); err == nil {
-		workspace = task.Workspace
-		containerID = task.ContainerID
-		containerProfileID = task.ContainerProfileID
-	} else if issue, issueErr := s.GetIssue(id); issueErr == nil && issue.ParentID == "" {
-		workspace = issue.Workspace
-		containerID = issue.ContainerID
-		containerProfileID = issue.ContainerProfileID
-	} else {
-		return TaskWorkspace{}, errors.New("task not found")
+	task, err := s.GetTask(strings.TrimSpace(id))
+	if err != nil {
+		return TaskWorkspace{}, err
 	}
+	workspace := task.Workspace
+	containerID := task.ContainerID
+	containerProfileID := task.ContainerProfileID
 	if containerID != "" {
 		container, err := s.GetContainer(containerID)
 		if err != nil {
@@ -1462,7 +924,7 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		labelsChanged = !slices.Equal(labels, issue.Labels)
 	}
 	if input.Status != nil {
-		status, legacyLabels := normalizeIssueStatus(*input.Status)
+		status := *input.Status
 		if !validIssueStatus(status) {
 			return Issue{}, errors.New("invalid issue status")
 		}
@@ -1490,10 +952,6 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 					labelsChanged = true
 				}
 			}
-		}
-		if len(legacyLabels) > 0 {
-			labels = withIssueLabels(issue, legacyLabels...)
-			labelsChanged = true
 		}
 	}
 	if labelsChanged {
@@ -1527,34 +985,14 @@ func validIssueStatus(v string) bool {
 // labels instead of competing statuses.
 var workflowIssueStatuses = []string{"todo", "in_progress", "in_review", "done", "cancelled"}
 
-// normalizeIssueStatus maps legacy status values onto the five-state workflow
-// and returns any labels that should accompany the transition. Legacy values
-// may still exist in old databases until the startup migration rewrites them.
-func normalizeIssueStatus(value string) (string, []string) {
-	switch value {
-	case "backlog":
-		return "todo", nil
-	case "blocked":
-		return "in_progress", []string{issueLabelBlocked}
-	case "failed":
-		return "done", []string{issueLabelFailed}
-	case "budget_exceeded":
-		return "done", []string{issueLabelBudgetExceeded}
-	default:
-		return value, nil
-	}
-}
-
 func normalizeIssuePriority(value string) string {
-	switch strings.TrimSpace(strings.ToLower(value)) {
-	case "", "medium", "middle":
+	switch normalized := strings.TrimSpace(strings.ToLower(value)); normalized {
+	case "":
 		return "middle"
-	case "critical", "high":
-		return "high"
-	case "low":
-		return "low"
+	case "high", "middle", "low":
+		return normalized
 	default:
-		return strings.TrimSpace(strings.ToLower(value))
+		return normalized
 	}
 }
 
@@ -1689,12 +1127,20 @@ func (s *Store) CreateFinding(input CreateFindingInput) (Finding, error) {
 	if !validFindingSeverity(severity) {
 		return Finding{}, errors.New("invalid severity, must be one of: critical, high, medium, low, info")
 	}
+	auditLevel, err := NormalizeAuditLevel(input.AuditLevel, severity)
+	if err != nil {
+		return Finding{}, err
+	}
+	if strings.TrimSpace(input.AuditLevel) != "" {
+		severity = SeverityFromAuditLevel(auditLevel)
+	}
 	if title == "" {
 		return Finding{}, errors.New("title is required")
 	}
 	now := time.Now()
 	finding := Finding{
 		ID:               nextID("finding"),
+		AuditLevel:       auditLevel,
 		Domain:           domain,
 		Category:         category,
 		Severity:         severity,
@@ -1781,6 +1227,18 @@ func (s *Store) UpdateFinding(id string, input UpdateFindingInput) (Finding, err
 			return Finding{}, errors.New("invalid severity")
 		}
 		finding.Severity = v
+	}
+	if input.AuditLevel != nil {
+		level, normalizeErr := NormalizeAuditLevel(*input.AuditLevel, finding.Severity)
+		if normalizeErr != nil {
+			return Finding{}, normalizeErr
+		}
+		finding.AuditLevel = level
+		if strings.TrimSpace(*input.AuditLevel) != "" {
+			finding.Severity = SeverityFromAuditLevel(level)
+		}
+	} else if input.Severity != nil {
+		finding.AuditLevel = AuditLevelFromSeverity(finding.Severity)
 	}
 	if input.Title != nil {
 		v := strings.TrimSpace(*input.Title)

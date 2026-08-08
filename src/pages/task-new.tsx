@@ -1,8 +1,5 @@
 import * as React from "react"
-import {
-  Copy,
-  Send,
-} from "lucide-react"
+import { Copy, Send } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
@@ -128,7 +125,7 @@ export function TaskNewPage() {
     setBusy(true)
     try {
       const title = form.title.trim() || limitIssueTitle(description)
-      const { issue } = await createTask({
+      const { task, issue } = await createTask({
         ...form,
         title,
         description,
@@ -140,7 +137,7 @@ export function TaskNewPage() {
       toast.success(`任务已交给 ${selectedAgent?.name ?? selectedAgentId}`, {
         description: issue.identifier,
       })
-      navigate(`/tasks/${issue.id}`)
+      navigate(`/tasks/${task.id}`)
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "发布失败")
     } finally {
@@ -206,8 +203,7 @@ export function TaskNewPage() {
                           {enabledAgentTypes.map((agent) => (
                             <SelectItem key={agent.id} value={agent.id}>
                               {agent.name} ·{" "}
-                              {categoryLabels[agent.category] ??
-                                agent.category}
+                              {categoryLabels[agent.category] ?? agent.category}
                             </SelectItem>
                           ))}
                         </SelectGroup>
@@ -228,7 +224,7 @@ export function TaskNewPage() {
                   }
                   placeholder="默认使用任务说明的前几个字符…"
                 />
-                <span className="text-right text-[11px] tabular-nums text-muted-foreground">
+                <span className="text-right text-[11px] text-muted-foreground tabular-nums">
                   {issueTitleLength(form.title) || "—"} /{" "}
                   {ISSUE_TITLE_MAX_LENGTH}
                 </span>

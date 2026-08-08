@@ -862,7 +862,7 @@ func (b *CoordinationBridge) EnqueueIssueExecution(ctx context.Context, issueID 
 }
 
 func issueExecutionPriority(priority string) int {
-	switch normalizeIssuePriority(priority) {
+	switch priority {
 	case "high":
 		return coordination.ExecutionPriorityIssueHigh
 	case "low":
@@ -874,7 +874,7 @@ func issueExecutionPriority(priority string) int {
 
 // EnqueuePreparedIssueExecution schedules a durable domain Execution whose
 // Issue transition has already been committed (validation, rework, recovery,
-// or a legacy wakeup). AgentCore materialization still happens only after a
+// or a wakeup). AgentCore materialization still happens only after a
 // Coordination worker claims this envelope.
 func (b *CoordinationBridge) EnqueuePreparedIssueExecution(ctx context.Context, issue Issue, execution Execution, prompt, wakeupID string, priority int) error {
 	if b == nil || b.executions == nil || b.manager == nil {

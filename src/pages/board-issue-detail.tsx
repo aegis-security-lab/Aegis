@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   ChevronRight,
+  MessageSquareWarning,
   Pencil,
   Plus,
   SlidersHorizontal,
@@ -15,6 +16,7 @@ import { IssueAgentActivity } from "@/components/issue-agent-activity"
 import { IssueChildTree } from "@/components/issue-child-tree"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { MarkdownContent } from "@/components/markdown-content"
+import { ManualRejectValidationDialog } from "@/components/manual-reject-validation-dialog"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -79,6 +81,19 @@ import type {
   IssueStatus,
 } from "@/types"
 
+function newestProjection<T extends { updatedAt: string }>(
+  detailValue: T | undefined,
+  stateValue: T | undefined
+) {
+  if (!detailValue) return stateValue
+  if (!stateValue) return detailValue
+  const detailTime = Date.parse(detailValue.updatedAt)
+  const stateTime = Date.parse(stateValue.updatedAt)
+  if (Number.isNaN(stateTime)) return detailValue
+  if (Number.isNaN(detailTime)) return stateValue
+  return stateTime > detailTime ? stateValue : detailValue
+}
+
 const issueStatuses: IssueStatus[] = workflowStatuses
 const issuePriorities = ["high", "middle", "low"] as const
 
@@ -119,6 +134,7 @@ export function BoardIssueDetailPage() {
   const [busy, setBusy] = React.useState(false)
   const [editOpen, setEditOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
+  const [manualRejectOpen, setManualRejectOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [childTreeOpen, setChildTreeOpen] = React.useState(false)
   const [childForm, setChildForm] =
@@ -136,6 +152,10 @@ export function BoardIssueDetailPage() {
     () => (issueId ? fetchIssue(issueId) : Promise.resolve(null)),
     [issueId]
   )
+  const stateIssue = state?.issues.find((candidate) => candidate.id === issueId)
+  const stateRuntime = state?.issueRuntimes?.find(
+    (candidate) => candidate.issueId === issueId
+  )
   React.useEffect(() => {
     let active = true
     void load()
@@ -148,21 +168,17 @@ export function BoardIssueDetailPage() {
     return () => {
       active = false
     }
-  }, [load, state?.updatedAt])
+  }, [load, stateIssue?.updatedAt, stateRuntime?.updatedAt])
   if (!detail)
     return (
       <div className="flex size-full items-center justify-center">
         <Spinner />
       </div>
     )
-  const issue =
-    state?.issues.find((candidate) => candidate.id === detail.issue.id) ??
-    detail.issue
+  const issue = newestProjection(detail.issue, stateIssue) ?? detail.issue
+  const resolvedRuntime = newestProjection(detail.runtime, stateRuntime)
   const runtime = issueRuntimeOrUnavailable(
-    issueRuntimeMap([
-      ...(detail.runtime ? [detail.runtime] : []),
-      ...(state?.issueRuntimes ?? []),
-    ]),
+    issueRuntimeMap(resolvedRuntime ? [resolvedRuntime] : []),
     issue.id
   )
   const assignee = state?.agents.find(
@@ -229,7 +245,9 @@ export function BoardIssueDetailPage() {
       toast.success(`已删除 ${result.deletedIssues} 个 Issue`)
       const root = rootIssueOf(issue.id, state?.issues ?? [])
       navigate(
-        fromBoard && root ? `/tasks/${root.id}/board` : "/issues"
+        fromBoard && root?.taskSourceId
+          ? `/tasks/${root.taskSourceId}/board`
+          : "/issues"
       )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除 Issue 失败")
@@ -301,7 +319,10 @@ export function BoardIssueDetailPage() {
             </Link>
           ) : null}
           <header className="flex flex-col gap-2">
-            <h1 className="truncate text-base font-semibold" title={issue.title}>
+            <h1
+              className="truncate text-base font-semibold"
+              title={issue.title}
+            >
               {issue.title}
             </h1>
             <div className="flex flex-wrap items-center gap-2">
@@ -317,6 +338,19 @@ export function BoardIssueDetailPage() {
                 <Trash2 />
                 删除
               </Button>
+              {(issue.status === "done" || issue.status === "in_review") &&
+              detail.validations.some(
+                (validation) => validation.status === "passed"
+              ) ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setManualRejectOpen(true)}
+                >
+                  <MessageSquareWarning />
+                  改判验收
+                </Button>
+              ) : null}
               <Popover>
                 <PopoverTrigger render={<Button variant="outline" size="sm" />}>
                   <SlidersHorizontal data-icon="inline-start" />
@@ -342,9 +376,15 @@ export function BoardIssueDetailPage() {
                     />
                     <Meta label="优先级" value={issue.priority} />
                     <Meta label="协作模式" value="Board Autonomy" />
-                    <Meta label="创建时间" value={formatTime(issue.createdAt)} />
+                    <Meta
+                      label="创建时间"
+                      value={formatTime(issue.createdAt)}
+                    />
                     {issue.startedAt ? (
-                      <Meta label="开始时间" value={formatTime(issue.startedAt)} />
+                      <Meta
+                        label="开始时间"
+                        value={formatTime(issue.startedAt)}
+                      />
                     ) : null}
                     {issue.completedAt ? (
                       <Meta
@@ -358,7 +398,10 @@ export function BoardIssueDetailPage() {
                         value={formatTime(issue.cancelledAt)}
                       />
                     ) : null}
-                    <Meta label="更新时间" value={formatTime(issue.updatedAt)} />
+                    <Meta
+                      label="更新时间"
+                      value={formatTime(issue.updatedAt)}
+                    />
                   </div>
                 </PopoverContent>
               </Popover>
@@ -390,9 +433,7 @@ export function BoardIssueDetailPage() {
                     )}
                   />
                   子 Issues
-                  <span className="tabular-nums">
-                    {detail.children.length}
-                  </span>
+                  <span className="tabular-nums">{detail.children.length}</span>
                 </button>
               </section>
             ) : null}
@@ -408,20 +449,14 @@ export function BoardIssueDetailPage() {
             ) : null}
           </header>
           <div className="mt-4 flex flex-col gap-5">
-            <Section
-              label="描述"
-              value={issue.description || "未填写"}
-            />
+            <Section label="描述" value={issue.description || "未填写"} />
             <Section label="目标" value={issue.objective || "未填写"} />
-            <Section
-              label="执行边界"
-              value={issue.constraints || "未填写"}
-            />
+            <Section label="执行边界" value={issue.constraints || "未填写"} />
             {issue.result ? (
               <Section label="最新交付" value={issue.result} />
             ) : null}
           </div>
-          <section className="mt-4 border-t pt-3">
+          <section className="mt-4" aria-label="评论">
             <IssueCommentsList
               embedded
               comments={detail.comments}
@@ -444,13 +479,13 @@ export function BoardIssueDetailPage() {
         </div>
       </div>
       <aside className="absolute inset-y-0 right-2 hidden w-[360px] flex-col overflow-hidden rounded-xl bg-card lg:flex">
-          <IssueAgentActivity
-            executions={detail.executions}
-            messages={detail.messages}
-            events={detail.events}
-            validations={detail.validations}
-            approvals={detail.approvals}
-          />
+        <IssueAgentActivity
+          executions={detail.executions}
+          messages={detail.messages}
+          events={detail.events}
+          validations={detail.validations}
+          approvals={detail.approvals}
+        />
       </aside>
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
@@ -502,33 +537,33 @@ export function BoardIssueDetailPage() {
                 className="min-h-28"
               />
             </div>
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="grid gap-2">
-                  <Label>状态</Label>
-                  <Select
-                    value={editForm.status}
-                    onValueChange={(value) =>
-                      value &&
-                      setEditForm((current) => ({
-                        ...current,
-                        status: value as IssueStatus,
-                      }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {issueStatuses.map((status) => (
-                          <SelectItem key={status} value={status}>
-                            {workflowStatusLabels[status]}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="grid gap-2">
+                <Label>状态</Label>
+                <Select
+                  value={editForm.status}
+                  onValueChange={(value) =>
+                    value &&
+                    setEditForm((current) => ({
+                      ...current,
+                      status: value as IssueStatus,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {issueStatuses.map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {workflowStatusLabels[status]}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="grid gap-2">
                 <Label>优先级</Label>
                 <Select
@@ -788,6 +823,15 @@ export function BoardIssueDetailPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <ManualRejectValidationDialog
+        open={manualRejectOpen}
+        onOpenChange={setManualRejectOpen}
+        issueId={issue.id}
+        onRejected={async () => {
+          const next = await load()
+          if (next) setDetail(next)
+        }}
+      />
     </div>
   )
 }

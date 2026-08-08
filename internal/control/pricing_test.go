@@ -8,7 +8,7 @@ import (
 func TestExecutionPricingSnapshotAndConfiguredCost(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Costed work", Objective: "Complete and account for the work.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Costed work", Objective: "Complete and account for the work.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)

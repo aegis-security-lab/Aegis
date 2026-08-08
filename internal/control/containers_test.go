@@ -73,7 +73,7 @@ func TestManagerCreatesPrivateTaskVolumeAtPublication(t *testing.T) {
 	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
 	task, issue, err := manager.CreateTask(CreateIssueInput{
 		Title: "private volume task", Objective: "write " + requestedWorkspace + "/report.md",
-		Priority: "medium", WorkMode: "autonomous", Workspace: requestedWorkspace,
+		Priority: "middle", WorkMode: "autonomous", Workspace: requestedWorkspace,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -95,41 +95,6 @@ func TestManagerCreatesPrivateTaskVolumeAtPublication(t *testing.T) {
 	}
 }
 
-func TestWorkspaceIsolationMigrationRewritesLegacyHostPaths(t *testing.T) {
-	installFakeDocker(t)
-	store := configuredStore(t)
-	task, issue, err := store.CreateTask(CreateIssueInput{Title: "legacy task", Objective: "initial", Priority: "medium", WorkMode: "autonomous"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := "/Users/example/aegis_workspace_3"
-	if err = store.db.Model(&Task{}).Where("id = ?", task.ID).Updates(map[string]any{"workspace": legacy, "objective": "clone into " + legacy + "/repo"}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"workspace": legacy, "description": "inspect " + legacy + "/repo"}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Model(&ContainerProfile{}).Where("id = ?", task.ContainerProfileID).Update("workspace_path", "/work").Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Model(&ContainerInstance{}).Where("id = ?", task.ContainerID).Update("workspace_path", "/work").Error; err != nil {
-		t.Fatal(err)
-	}
-	if err = migrateTaskWorkspaceIsolation(store.db); err != nil {
-		t.Fatal(err)
-	}
-	task, _ = store.GetTask(task.ID)
-	issue, _ = store.GetIssue(issue.ID)
-	profile, _ := store.GetContainerProfile(task.ContainerProfileID)
-	container, _ := store.GetContainer(task.ContainerID)
-	if task.Workspace != TaskWorkspacePath || issue.Workspace != TaskWorkspacePath || profile.WorkspacePath != TaskWorkspacePath || container.WorkspacePath != TaskWorkspacePath {
-		t.Fatalf("migration did not normalize workspaces: task=%+v issue=%+v profile=%+v container=%+v", task, issue, profile, container)
-	}
-	if task.Objective != "clone into /workspace/repo" || issue.Description != "inspect /workspace/repo" {
-		t.Fatalf("migration retained legacy host paths: task=%q issue=%q", task.Objective, issue.Description)
-	}
-}
-
 func TestTaskWorkspaceDoesNotCopyOrBrowseContainerContents(t *testing.T) {
 	logPath, _ := installFakeDocker(t)
 	store := configuredStore(t)
@@ -137,7 +102,7 @@ func TestTaskWorkspaceDoesNotCopyOrBrowseContainerContents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, _, err := store.CreateTask(CreateIssueInput{Title: "private task", Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID})
+	task, _, err := store.CreateTask(CreateIssueInput{Title: "private task", Priority: "middle", WorkMode: "autonomous", ContainerProfileID: profile.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +152,7 @@ func TestTaskCreationBindsPersistentContainerAndExecutionStartsIt(t *testing.T) 
 	}
 	task, issue, err := store.CreateTask(CreateIssueInput{
 		Title: "run in an on-demand container", Objective: "the task is queued",
-		Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 		Workspace: t.TempDir(), ContainerProfileID: profile.ID,
 	})
 	if err != nil {
@@ -222,7 +187,7 @@ func TestTaskCreationBindsPersistentContainerAndExecutionStartsIt(t *testing.T) 
 	child := Issue{
 		ID: nextID("issue"), Number: now.UnixNano(), Identifier: "TEST-CONTAINER-CHILD", ParentID: issue.ID,
 		Title: "child container work", Objective: "reuse the task container", Status: "todo", ExecutionPhase: "active",
-		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID, ContainerID: container.ID,
+		Priority: "middle", WorkMode: "autonomous", ContainerProfileID: profile.ID, ContainerID: container.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err = store.db.Create(&child).Error; err != nil {
@@ -272,7 +237,7 @@ func TestUnsourcedRootIssueIsPromotedToTaskWithContainer(t *testing.T) {
 	}
 	root, err := store.CreateIssue(CreateIssueInput{
 		Title: "promote this root", Objective: "bind task and container",
-		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID,
+		Priority: "middle", WorkMode: "autonomous", ContainerProfileID: profile.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -292,7 +257,7 @@ func TestUnsourcedRootIssueIsPromotedToTaskWithContainer(t *testing.T) {
 func TestFinishedTaskAutomaticallyStopsContainerAndKeepsWorkspaceVolume(t *testing.T) {
 	logPath, statePath := installFakeDocker(t)
 	store := configuredStore(t)
-	task, root, err := store.CreateTask(CreateIssueInput{Title: "auto stop task", Objective: "finish and release runtime", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	task, root, err := store.CreateTask(CreateIssueInput{Title: "auto stop task", Objective: "finish and release runtime", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +265,7 @@ func TestFinishedTaskAutomaticallyStopsContainerAndKeepsWorkspaceVolume(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "last child", Objective: "finish first", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "last child", Objective: "finish first", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +328,7 @@ func TestFinishedTaskAutomaticallyStopsContainerAndKeepsWorkspaceVolume(t *testi
 func TestFinishedTaskWaitsForActiveExecutionBeforeStoppingContainer(t *testing.T) {
 	_, statePath := installFakeDocker(t)
 	store := configuredStore(t)
-	_, root, err := store.CreateTask(CreateIssueInput{Title: "active execution guard", Objective: "do not stop early", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	_, root, err := store.CreateTask(CreateIssueInput{Title: "active execution guard", Objective: "do not stop early", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +380,7 @@ func TestRootIssueCreationAutomaticallyCreatesTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, err := store.CreateIssue(CreateIssueInput{
-		Title: "standalone root", Objective: "run without a Task", Priority: "medium",
+		Title: "standalone root", Objective: "run without a Task", Priority: "middle",
 		WorkMode: "autonomous", ContainerProfileID: profile.ID,
 	})
 	if err != nil {
@@ -423,7 +388,7 @@ func TestRootIssueCreationAutomaticallyCreatesTask(t *testing.T) {
 	}
 	child, err := store.CreateIssue(CreateIssueInput{
 		ParentID: root.ID, Title: "standalone child", Objective: "reuse the Issue tree container",
-		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID,
+		Priority: "middle", WorkMode: "autonomous", ContainerProfileID: profile.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -453,7 +418,7 @@ func TestDeleteContainerRequiresConfirmationAndCascadesTaskData(t *testing.T) {
 		t.Fatal(err)
 	}
 	task, root, err := store.CreateTask(CreateIssueInput{
-		Title: "container task", Objective: "verify cascade", Priority: "medium",
+		Title: "container task", Objective: "verify cascade", Priority: "middle",
 		WorkMode: "autonomous", Workspace: t.TempDir(), ContainerProfileID: profile.ID,
 	})
 	if err != nil {
@@ -467,7 +432,7 @@ func TestDeleteContainerRequiresConfirmationAndCascadesTaskData(t *testing.T) {
 	child := Issue{
 		ID: nextID("issue"), Number: now.UnixNano(), Identifier: "TEST-DELETE-CHILD", ParentID: root.ID,
 		Title: "child", Objective: "child work", Status: "in_progress", ExecutionPhase: "active",
-		Priority: "medium", WorkMode: "autonomous", ContainerProfileID: profile.ID, ContainerID: container.ID,
+		Priority: "middle", WorkMode: "autonomous", ContainerProfileID: profile.ID, ContainerID: container.ID,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err = store.db.Create(&child).Error; err != nil {
@@ -550,7 +515,7 @@ func TestBatchStopImpactAndDeleteContainers(t *testing.T) {
 	containers := make([]ContainerInstance, 0, 2)
 	for _, title := range []string{"batch one", "batch two"} {
 		_, root, err := store.CreateTask(CreateIssueInput{
-			Title: title, Objective: "batch lifecycle", Priority: "medium",
+			Title: title, Objective: "batch lifecycle", Priority: "middle",
 			WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 		})
 		if err != nil {

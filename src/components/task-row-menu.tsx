@@ -4,13 +4,11 @@ import {
   Clock3,
   Copy,
   FileSearch,
-  MessageSquareWarning,
   MoreHorizontal,
 } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
-import { ManualRejectValidationDialog } from "@/components/manual-reject-validation-dialog"
 import { TaskAuditDrawer } from "@/components/task-audit-drawer"
 import { TaskBudgetDialog } from "@/components/task-budget-dialog"
 import { Button } from "@/components/ui/button"
@@ -21,18 +19,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { useAppState } from "@/lib/state"
 import type { Issue, Task } from "@/types"
 
 interface TaskRowMenuProps {
   task: Task
+  taskIssues: Issue[]
   align?: "start" | "end"
   triggerRender?: React.ReactElement
 }
 
 export function TaskRowMenu({
   task,
+  taskIssues,
   align = "end",
   triggerRender,
 }: TaskRowMenuProps) {
@@ -40,14 +39,10 @@ export function TaskRowMenu({
   const navigate = useNavigate()
   const [auditOpen, setAuditOpen] = React.useState(false)
   const [cancelTarget, setCancelTarget] = React.useState<{
-    root: Issue
+    taskId: string
     title: string
     totalIssues: number
     activeExecutions: number
-  } | null>(null)
-  const [rejectTarget, setRejectTarget] = React.useState<{
-    issueId: string
-    title: string
   } | null>(null)
   const [budgetOpen, setBudgetOpen] = React.useState(false)
   const [now, setNow] = React.useState(() => Date.now())
@@ -57,21 +52,8 @@ export function TaskRowMenu({
     return () => window.clearInterval(timer)
   }, [])
 
-  const issues = state?.issues ?? []
   const executions = state?.executions ?? []
-  const runs = issues
-    .filter((issue) => !issue.parentId && issue.taskSourceId === task.id)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-  const latest = runs[0]
-  const runtime = latest
-    ? issueRuntimeOrUnavailable(
-        issueRuntimeMap(state?.issueRuntimes ?? []),
-        latest.id
-      )
-    : undefined
-  const issueIDs = latest
-    ? taskTreeIssueIDs(latest.id, issues)
-    : new Set<string>()
+  const issueIDs = new Set(taskIssues.map((issue) => issue.id))
   const activeExecutions = executions.filter(
     (execution) =>
       issueIDs.has(execution.issueId) &&
@@ -80,9 +62,8 @@ export function TaskRowMenu({
       )
   ).length
 
-  const budgetMinutes =
-    task.timeBudgetMinutes ?? latest?.timeBudgetMinutes ?? null
-  const startedAt = Date.parse(latest?.createdAt ?? task.createdAt)
+  const budgetMinutes = task.timeBudgetMinutes ?? null
+  const startedAt = Date.parse(task.createdAt)
   const elapsedMinutes = Number.isFinite(startedAt)
     ? Math.max(0, Math.floor((now - startedAt) / 60000))
     : 0
@@ -149,12 +130,14 @@ export function TaskRowMenu({
                 {budgetLabel}
               </span>
             </DropdownMenuItem>
-            {latest && !isTerminalRuntime(runtime) ? (
+            {taskIssues.some(
+              (issue) => !["done", "cancelled"].includes(issue.status)
+            ) ? (
               <DropdownMenuItem
                 variant="destructive"
                 onClick={() =>
                   setCancelTarget({
-                    root: latest,
+                    taskId: task.id,
                     title: task.title,
                     totalIssues: issueIDs.size,
                     activeExecutions,
@@ -163,18 +146,6 @@ export function TaskRowMenu({
               >
                 <CircleStop data-icon="inline-start" />
                 取消任务
-              </DropdownMenuItem>
-            ) : null}
-            {latest &&
-            (latest.status === "done" || latest.status === "in_review") ? (
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() =>
-                  setRejectTarget({ issueId: latest.id, title: task.title })
-                }
-              >
-                <MessageSquareWarning data-icon="inline-start" />
-                改判验收不通过
               </DropdownMenuItem>
             ) : null}
           </DropdownMenuGroup>
@@ -195,21 +166,11 @@ export function TaskRowMenu({
           onOpenChange={(open) => {
             if (!open) setCancelTarget(null)
           }}
-          rootIssueId={cancelTarget.root.id}
+          taskId={cancelTarget.taskId}
           taskTitle={cancelTarget.title}
           totalIssues={cancelTarget.totalIssues}
           activeExecutions={cancelTarget.activeExecutions}
           onCancelled={() => refresh()}
-        />
-      ) : null}
-      {rejectTarget ? (
-        <ManualRejectValidationDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setRejectTarget(null)
-          }}
-          issueId={rejectTarget.issueId}
-          onRejected={() => refresh()}
         />
       ) : null}
       <TaskBudgetDialog
@@ -223,26 +184,4 @@ export function TaskRowMenu({
       />
     </>
   )
-}
-
-function taskTreeIssueIDs(rootID: string, issues: Issue[]) {
-  const ids = new Set([rootID])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const issue of issues) {
-      if (issue.parentId && ids.has(issue.parentId) && !ids.has(issue.id)) {
-        ids.add(issue.id)
-        changed = true
-      }
-    }
-  }
-  return ids
-}
-
-function isTerminalRuntime(
-  runtime: ReturnType<typeof issueRuntimeOrUnavailable> | undefined
-) {
-  if (!runtime) return false
-  return ["completed", "failed", "cancelled"].includes(runtime.kind)
 }

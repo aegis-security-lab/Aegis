@@ -15,7 +15,7 @@ import { toast } from "sonner"
 
 import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import {
   Empty,
   EmptyDescription,
@@ -44,13 +44,7 @@ import type {
 } from "@/types"
 
 type TimelineFilter =
-  | "all"
-  | "issue"
-  | "execution"
-  | "result"
-  | "comment"
-  | "approval"
-  | "system"
+  "all" | "issue" | "execution" | "result" | "comment" | "approval" | "system"
 
 const filters: Array<{ label: string; value: TimelineFilter }> = [
   { label: "全部", value: "all" },
@@ -137,7 +131,7 @@ export function TimelinePanel({
           ))}
         </div>
       ) : events.length === 0 ? (
-        <Empty className="border-0 min-h-0 flex-1">
+        <Empty className="min-h-0 flex-1 border-0">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Activity />
@@ -277,23 +271,19 @@ function TimelineItem({
             )
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="xs"
-              variant="ghost"
-              render={<Link to={"/issues/" + event.issueId} />}
-              nativeButton={false}
+            <Link
+              to={"/issues/" + event.issueId}
+              className={buttonVariants({ size: "xs", variant: "ghost" })}
             >
               查看 Issue
-            </Button>
+            </Link>
             {event.executionId ? (
-              <Button
-                size="xs"
-                variant="ghost"
-                render={<Link to={"/sessions/" + event.executionId} />}
-                nativeButton={false}
+              <Link
+                to={"/sessions/" + event.executionId}
+                className={buttonVariants({ size: "xs", variant: "ghost" })}
               >
                 查看 Session
-              </Button>
+              </Link>
             ) : null}
           </div>
         </div>

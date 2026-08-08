@@ -32,24 +32,27 @@ export function buildCrumbs(
 ): Crumb[] {
   if (pathname === "/") return [{ label: "概览", current: true }]
   if (pathname === "/tasks/new") {
-    return [{ label: "任务", to: "/tasks" }, { label: "新建任务", current: true }]
+    return [
+      { label: "任务", to: "/tasks" },
+      { label: "新建任务", current: true },
+    ]
   }
 
   const parts = pathname.split("/").filter(Boolean)
   if (parts[0] === "tasks" && parts.length === 2) {
-    const root = rootIssue(parts[1], issues)
+    const task = tasks.find((candidate) => candidate.id === parts[1])
     return [
       {
-        label: taskTitle(root, tasks) ?? "任务",
+        label: task?.title ?? "任务",
         to: `/tasks/${parts[1]}`,
       },
       { label: "Home", current: true },
     ]
   }
   if (parts[0] === "tasks" && parts.length === 3) {
-    const root = rootIssue(parts[1], issues)
+    const task = tasks.find((candidate) => candidate.id === parts[1])
     const taskCrumb = {
-      label: taskTitle(root, tasks) ?? "任务",
+      label: task?.title ?? "任务",
       to: `/tasks/${parts[1]}`,
     }
     if (parts[2] === "issues") {
@@ -62,28 +65,35 @@ export function buildCrumbs(
   if (parts[0] === "issues" && parts.length === 2) {
     const issue = issues.find((candidate) => candidate.id === parts[1])
     const root = rootIssue(parts[1], issues)
+    const taskID = root?.taskSourceId
     return [
       {
-        label: taskTitle(root, tasks) ?? "任务",
-        to: root ? `/tasks/${root.id}` : "/tasks",
+        label: taskTitle(taskID, tasks) ?? "任务",
+        to: taskID ? `/tasks/${taskID}` : "/tasks",
       },
       fromBoard
         ? {
             label: "Board",
-            to: root ? `/tasks/${root.id}/board` : "/tasks",
+            to: taskID ? `/tasks/${taskID}/board` : "/tasks",
           }
         : {
             label: "Issues",
-            to: root ? `/tasks/${root.id}/issues` : "/issues",
+            to: taskID ? `/tasks/${taskID}/issues` : "/issues",
           },
       { label: issue?.title ?? "Issue", current: true },
     ]
   }
   if (parts[0] === "sessions" && parts.length === 2) {
-    return [{ label: "执行会话", to: "/sessions" }, { label: "Session", current: true }]
+    return [
+      { label: "执行会话", to: "/sessions" },
+      { label: "Session", current: true },
+    ]
   }
   if (parts[0] === "knowledge-bases" && parts.length === 2) {
-    return [{ label: "知识库", to: "/knowledge-bases" }, { label: "详情", current: true }]
+    return [
+      { label: "知识库", to: "/knowledge-bases" },
+      { label: "详情", current: true },
+    ]
   }
 
   const simple = simpleCrumbs.find((item) => pathname.startsWith(item.prefix))
@@ -110,8 +120,7 @@ function rootIssue(issueId: string, issues: Issue[]) {
   return current
 }
 
-function taskTitle(root: Issue | undefined, tasks: Task[]) {
-  if (!root) return null
-  const task = tasks.find((candidate) => candidate.id === root.taskSourceId)
-  return task?.title ?? root.identifier ?? root.title
+function taskTitle(taskID: string | undefined, tasks: Task[]) {
+  if (!taskID) return null
+  return tasks.find((candidate) => candidate.id === taskID)?.title ?? null
 }

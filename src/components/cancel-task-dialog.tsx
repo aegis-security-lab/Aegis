@@ -30,7 +30,7 @@ const DEFAULT_CANCELLATION_REASON = "不想继续执行，取消任务，无其�
 interface CancelTaskDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  rootIssueId: string
+  taskId: string
   taskTitle: string
   totalIssues: number
   activeExecutions: number
@@ -40,7 +40,7 @@ interface CancelTaskDialogProps {
 export function CancelTaskDialog({
   open,
   onOpenChange,
-  rootIssueId,
+  taskId,
   taskTitle,
   totalIssues,
   activeExecutions,
@@ -71,7 +71,7 @@ export function CancelTaskDialog({
     setSubmitting(true)
     setError("")
     try {
-      const result = await cancelTask(rootIssueId, normalizedReason)
+      const result = await cancelTask(taskId, normalizedReason)
       let refreshFailed = false
       try {
         await onCancelled?.(result)

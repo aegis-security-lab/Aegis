@@ -31,11 +31,11 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Child", Objective: "Complete the child.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: task.ID, Title: "Child", Objective: "Complete the child.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	grandchild, err := store.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Grandchild", Objective: "Complete the grandchild.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	grandchild, err := store.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Grandchild", Objective: "Complete the grandchild.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +45,14 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	}
 	done := "done"
 	if _, err = store.UpdateIssue(doneChild.ID, UpdateIssueInput{Status: &done}); err != nil {
+		t.Fatal(err)
+	}
+	additionalRoot, err := store.CreateIssue(CreateIssueInput{TaskSourceID: task.TaskSourceID, Title: "Additional root", Objective: "Cancel every root in the Task.", Priority: "middle", WorkMode: "autonomous"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	additionalChild, err := store.CreateIssue(CreateIssueInput{ParentID: additionalRoot.ID, Title: "Additional child", Objective: "Remain in the same Task cancellation scope.", Priority: "low", WorkMode: "autonomous"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,21 +98,21 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	nativeAborter := &trackedNativeAborter{}
 	manager.nativeSessions = nativeAborter
 
-	result, err := manager.CancelTask(task.ID, "operator cancelled")
+	result, err := manager.CancelTask(task.TaskSourceID, "operator cancelled")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.TotalIssues != 4 || result.CancelledIssues != 3 || result.CancelledExecutions != 2 {
+	if result.Task.ID != task.TaskSourceID || result.TotalIssues != 6 || result.CancelledIssues != 5 || result.CancelledExecutions != 2 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if !session.closed.Load() || !stdin.closed {
 		t.Fatal("active Pi session was not closed")
 	}
-	if len(nativeAborter.issueIDs) != 4 {
+	if len(nativeAborter.issueIDs) != 6 {
 		t.Fatalf("native AgentCore sessions were not aborted for the whole task tree: %v", nativeAborter.issueIDs)
 	}
 
-	for _, id := range []string{task.ID, child.ID, grandchild.ID} {
+	for _, id := range []string{task.ID, child.ID, grandchild.ID, additionalRoot.ID, additionalChild.ID} {
 		issue, getErr := store.GetIssue(id)
 		if getErr != nil {
 			t.Fatal(getErr)
@@ -150,7 +158,7 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	if _, err = manager.CancelTask(child.ID, "invalid"); err == nil {
 		t.Fatal("child Issue must not be accepted as a task")
 	}
-	second, err := manager.CancelTask(task.ID, "idempotent retry")
+	second, err := manager.CancelTask(task.TaskSourceID, "idempotent retry")
 	if err != nil {
 		t.Fatal(err)
 	}

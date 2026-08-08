@@ -39,7 +39,7 @@ func TestStateRuntimeUsesCurrentExecutionPointerInsteadOfNewestExecution(t *test
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Use exact execution pointer", Objective: "Render the durable current execution.",
-		Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)

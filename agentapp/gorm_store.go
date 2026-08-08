@@ -75,9 +75,6 @@ func NewGormStore(db *gorm.DB) (*GormStore, error) {
 	if err := db.AutoMigrate(&phoneSessionRow{}, &auditEventRow{}); err != nil {
 		return nil, err
 	}
-	if err := db.Exec("DROP INDEX IF EXISTS idx_agent_phone_task_agent").Error; err != nil {
-		return nil, fmt.Errorf("replace legacy task Phone identity index: %w", err)
-	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_phone_task_identity ON agent_app_phone_sessions(task_id, task_agent_id) WHERE task_id <> '' AND task_agent_id <> ''").Error; err != nil {
 		return nil, fmt.Errorf("create task Phone identity index: %w", err)
 	}

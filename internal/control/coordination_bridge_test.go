@@ -19,9 +19,6 @@ func TestIssueExecutionPriorityUsesBoardOrder(t *testing.T) {
 	if high, middle, low := issueExecutionPriority("high"), issueExecutionPriority("middle"), issueExecutionPriority("low"); !(high > middle && middle > low) {
 		t.Fatalf("priority order high=%d middle=%d low=%d", high, middle, low)
 	}
-	if issueExecutionPriority("critical") != issueExecutionPriority("high") || issueExecutionPriority("medium") != issueExecutionPriority("middle") {
-		t.Fatal("legacy priority aliases are not normalized")
-	}
 	if issueExecutionPriority("high") >= coordination.ExecutionPriorityWakeup {
 		t.Fatal("ordinary Issue priority must not preempt durable wakeup recovery")
 	}
@@ -38,7 +35,7 @@ func TestFailedChildImmediatelyWakesWaitingParentThroughCoordination(t *testing.
 
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	failedChild, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Fragile child", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
-	runningChild, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Still running", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
+	runningChild, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Still running", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
 	parentExecution, _ := store.createExecution(parent, parent.AssigneeAgentID, "work")
 	failedExecution, _ := store.createExecution(failedChild, failedChild.AssigneeAgentID, "work")
 	anchor := time.Now().Add(-time.Second)
@@ -131,7 +128,7 @@ func TestBoardAutonomyDispatchesAssignedIssueWithoutSuspendingParent(t *testing.
 	bridge.Start(ctx)
 	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
 
-	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Async Board work", Objective: "Run independently", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Async Board work", Objective: "Run independently", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +155,7 @@ func TestBoardAutonomyDispatchesAssignedIssueWithoutSuspendingParent(t *testing.
 
 func TestPublicDispatchCreatesCoordinationOwnedExecution(t *testing.T) {
 	store, manager := bridgeTestManager(t)
-	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Gateway work", Objective: "route centrally", Priority: "medium", Status: "backlog", WorkMode: "autonomous"})
+	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Gateway work", Objective: "route centrally", Priority: "middle", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +194,7 @@ func TestPublicDispatchReservesIssueAndDeduplicatesBeforeDecisionWorker(t *testi
 	}
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Deduplicate dispatch", Objective: "one event", Priority: "medium", Status: "todo", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Deduplicate dispatch", Objective: "one event", Priority: "middle", Status: "todo", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +229,7 @@ func TestResumeEnqueueRecoversInterruptedDurableEffect(t *testing.T) {
 	}
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Resume", Objective: "recover wake enqueue", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Resume", Objective: "recover wake enqueue", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +308,7 @@ func TestBoardCommentSteersExactTaskAgentThroughCoordination(t *testing.T) {
 	bridge.Start(ctx)
 	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
 
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Comment routing", Objective: "steer exact identity", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Comment routing", Objective: "steer exact identity", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +340,7 @@ func TestBindingRejectsInvalidCapabilityPolicy(t *testing.T) {
 	}
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Invalid policy", Objective: "reject", Priority: "low", Status: "backlog", WorkMode: "autonomous"})
+	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Invalid policy", Objective: "reject", Priority: "low", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +360,7 @@ func TestBoardDelegationPersistsCapabilityPlanOnChildIssue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	bridge.Start(ctx)
 	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
-	parent, err := manager.CreateIssue(CreateIssueInput{Title: "Capability parent", Objective: "delegate", Priority: "medium", Status: "backlog", WorkMode: "autonomous"})
+	parent, err := manager.CreateIssue(CreateIssueInput{Title: "Capability parent", Objective: "delegate", Priority: "middle", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +400,7 @@ func TestDelegationRejectsUnapprovedPluginBeforeOutbox(t *testing.T) {
 	}
 	manager.SetCoordination(bridge)
 	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
-	parent, err := manager.CreateIssue(CreateIssueInput{Title: "Policy parent", Objective: "protect", Priority: "medium", Status: "backlog", WorkMode: "autonomous"})
+	parent, err := manager.CreateIssue(CreateIssueInput{Title: "Policy parent", Objective: "protect", Priority: "middle", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,11 +431,11 @@ func TestBoardAutonomyCompletionFlowsBackToParent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	bridge.Start(ctx)
 	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
-	parent, err := store.CreateIssue(CreateIssueInput{Title: "Parent", Objective: "integrate", Priority: "medium", Status: "in_progress", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	parent, err := store.CreateIssue(CreateIssueInput{Title: "Parent", Objective: "integrate", Priority: "middle", Status: "in_progress", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "produce evidence", Priority: "medium", Status: "in_progress", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer", CreatedBy: "frontend-engineer"})
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "produce evidence", Priority: "middle", Status: "in_progress", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer", CreatedBy: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +471,7 @@ func TestAssignExistingIssueIsRoutedThroughSelectedMode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	bridge.Start(ctx)
 	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Unassigned", Objective: "Assign later", Priority: "low", Status: "backlog", WorkMode: "autonomous"})
+	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Unassigned", Objective: "Assign later", Priority: "low", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +499,7 @@ func TestCoordinationCanProactivelyInvokeAgent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	bridge.Start(ctx)
 	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Operator controlled", Objective: "coordinate proactively", Priority: "medium", Status: "backlog", WorkMode: "autonomous"})
+	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Operator controlled", Objective: "coordinate proactively", Priority: "middle", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +541,7 @@ func TestBoardAutonomySleepWakesAgentAfterDurableDelay(t *testing.T) {
 	bridge.runtime.Poll = 5 * time.Millisecond
 	bridge.Start(ctx)
 	t.Cleanup(func() { cancel(); bridge.Close(); manager.SetCoordination(nil) })
-	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Timed", Objective: "Wake later", Priority: "low", Status: "backlog", WorkMode: "autonomous"})
+	issue, err := manager.CreateIssue(CreateIssueInput{Title: "Timed", Objective: "Wake later", Priority: "low", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}

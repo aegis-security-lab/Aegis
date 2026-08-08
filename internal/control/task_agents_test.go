@@ -24,18 +24,18 @@ func TestSameAgentTypeGetsDistinctTaskIdentitiesAndPhones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit API", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
+	first, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit API", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit auth", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
+	second, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit auth", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.AssigneeTaskAgentID == "" || second.AssigneeTaskAgentID == "" || first.AssigneeTaskAgentID == second.AssigneeTaskAgentID {
 		t.Fatalf("task identities were not unique: first=%+v second=%+v", first, second)
 	}
-	identities, err := store.TaskAgents(root.ID)
+	identities, err := store.TaskAgents(root.TaskSourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +83,11 @@ func TestRelayInboxIsolatedByTaskAgentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit API", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
+	first, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit API", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit auth", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
+	second, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Audit auth", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "red-team-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

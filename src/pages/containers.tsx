@@ -109,10 +109,10 @@ import type {
 } from "@/types"
 
 const defaults: SaveContainerProfileInput = {
-	name: "",
-	description: "",
-	image: "aegis-worker:latest",
-	workspacePath: "/workspace",
+  name: "",
+  description: "",
+  image: "aegis-worker:latest",
+  workspacePath: "/workspace",
   networkMode: "bridge",
   memoryMb: 2048,
   cpus: 2,
@@ -177,7 +177,8 @@ export function ContainersPage() {
     ["running", "paused", "restarting"].includes(container.runtimeStatus)
   )
   const allContainersSelected =
-    containers.length > 0 && activeSelectedContainerIds.size === containers.length
+    containers.length > 0 &&
+    activeSelectedContainerIds.size === containers.length
   const someContainersSelected =
     activeSelectedContainerIds.size > 0 && !allContainersSelected
 
@@ -238,7 +239,8 @@ export function ContainersPage() {
   const changeRuntime = async (container: ContainerInstance) => {
     setBusyAction(`runtime:${container.id}`)
     try {
-      if (container.runtimeStatus === "running") await stopContainer(container.id)
+      if (container.runtimeStatus === "running")
+        await stopContainer(container.id)
       else await startContainer(container.id)
       await refresh()
       toast.success(
@@ -317,7 +319,9 @@ export function ContainersPage() {
         await fetchContainerBatchDeleteImpact([...activeSelectedContainerIds])
       )
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : "无法检查批量删除影响")
+      toast.error(
+        reason instanceof Error ? reason.message : "无法检查批量删除影响"
+      )
     } finally {
       setBusyAction(null)
     }
@@ -356,9 +360,9 @@ export function ContainersPage() {
 
   const profileHasReferences = Boolean(
     profileDeleteImpact &&
-      (profileDeleteImpact.containerCount > 0 ||
-        profileDeleteImpact.taskCount > 0 ||
-        profileDeleteImpact.issueCount > 0)
+    (profileDeleteImpact.containerCount > 0 ||
+      profileDeleteImpact.taskCount > 0 ||
+      profileDeleteImpact.issueCount > 0)
   )
 
   return (
@@ -444,8 +448,7 @@ export function ContainersPage() {
                 const createdContainers = containers.filter(
                   (container) => container.containerProfileId === profile.id
                 )
-                const checking =
-                  busyAction === `profile-impact:${profile.id}`
+                const checking = busyAction === `profile-impact:${profile.id}`
                 return (
                   <Card key={profile.id}>
                     <CardHeader>
@@ -454,7 +457,9 @@ export function ContainersPage() {
                         {profile.description || "任务容器创建模板"}
                       </CardDescription>
                       <CardAction>
-                        <Badge variant={profile.enabled ? "outline" : "secondary"}>
+                        <Badge
+                          variant={profile.enabled ? "outline" : "secondary"}
+                        >
                           {profile.enabled ? "可供任务选择" : "已停用"}
                         </Badge>
                       </CardAction>
@@ -463,12 +468,17 @@ export function ContainersPage() {
                       <dl className="grid grid-cols-2 gap-3 text-sm">
                         <div className="col-span-2 min-w-0">
                           <dt className="text-muted-foreground">镜像</dt>
-                          <dd className="truncate font-mono" title={profile.image}>
+                          <dd
+                            className="truncate font-mono"
+                            title={profile.image}
+                          >
                             {profile.image}
                           </dd>
                         </div>
                         <div>
-                          <dt className="text-muted-foreground">容器工作目录</dt>
+                          <dt className="text-muted-foreground">
+                            容器工作目录
+                          </dt>
                           <dd className="font-mono">{profile.workspacePath}</dd>
                         </div>
                         <div>
@@ -478,13 +488,16 @@ export function ContainersPage() {
                         <div>
                           <dt className="text-muted-foreground">资源限制</dt>
                           <dd>
-                            {profile.cpus || "不限"} CPU · {profile.memoryMb ? `${profile.memoryMb} MB` : "内存不限"}
+                            {profile.cpus || "不限"} CPU ·{" "}
+                            {profile.memoryMb
+                              ? `${profile.memoryMb} MB`
+                              : "内存不限"}
                           </dd>
                         </div>
-						<div>
-							<dt className="text-muted-foreground">执行方式</dt>
-							<dd>AgentCore 通过 Docker exec 调用工具</dd>
-						</div>
+                        <div>
+                          <dt className="text-muted-foreground">执行方式</dt>
+                          <dd>AgentCore 通过 Docker exec 调用工具</dd>
+                        </div>
                       </dl>
                       <Separator />
                       <div className="flex flex-wrap items-center gap-2">
@@ -538,7 +551,8 @@ export function ContainersPage() {
                 </EmptyMedia>
                 <EmptyTitle>还没有任务容器</EmptyTitle>
                 <EmptyDescription>
-                  发布任务时，系统会立即创建并绑定唯一容器；真正执行时再启动 Docker Runtime。
+                  发布任务时，系统会立即创建并绑定唯一容器；真正执行时再启动
+                  Docker Runtime。
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -550,7 +564,13 @@ export function ContainersPage() {
               <CardContent>
                 <div className="sticky top-2 z-20 mb-3 flex min-h-12 flex-wrap items-center justify-between gap-3 rounded-lg border bg-card/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/85">
                   <div className="flex items-center gap-2 text-sm">
-                    <Badge variant={activeSelectedContainerIds.size > 0 ? "default" : "secondary"}>
+                    <Badge
+                      variant={
+                        activeSelectedContainerIds.size > 0
+                          ? "default"
+                          : "secondary"
+                      }
+                    >
                       已选 {activeSelectedContainerIds.size}
                     </Badge>
                     <span className="text-muted-foreground">
@@ -573,7 +593,9 @@ export function ContainersPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={stoppableContainers.length === 0 || busyAction !== null}
+                      disabled={
+                        stoppableContainers.length === 0 || busyAction !== null
+                      }
                       onClick={() => void stopSelectedContainers()}
                     >
                       {busyAction === "container-batch-stop" ? (
@@ -582,12 +604,17 @@ export function ContainersPage() {
                         <Square data-icon="inline-start" />
                       )}
                       停止运行项
-                      {stoppableContainers.length > 0 ? ` (${stoppableContainers.length})` : ""}
+                      {stoppableContainers.length > 0
+                        ? ` (${stoppableContainers.length})`
+                        : ""}
                     </Button>
                     <Button
                       variant="destructive"
                       size="sm"
-                      disabled={activeSelectedContainerIds.size === 0 || busyAction !== null}
+                      disabled={
+                        activeSelectedContainerIds.size === 0 ||
+                        busyAction !== null
+                      }
                       onClick={() => void prepareBatchDelete()}
                     >
                       {busyAction === "container-batch-impact" ? (
@@ -610,7 +637,9 @@ export function ContainersPage() {
                           onCheckedChange={(checked) =>
                             setSelectedContainerIds(
                               checked === true
-                                ? new Set(containers.map((container) => container.id))
+                                ? new Set(
+                                    containers.map((container) => container.id)
+                                  )
                                 : new Set()
                             )
                           }
@@ -628,7 +657,8 @@ export function ContainersPage() {
                   <TableBody>
                     {containers.map((container) => {
                       const profile = profiles.find(
-                        (candidate) => candidate.id === container.containerProfileId
+                        (candidate) =>
+                          candidate.id === container.containerProfileId
                       )
                       const task = tasks.find(
                         (candidate) => candidate.id === container.taskId
@@ -636,7 +666,8 @@ export function ContainersPage() {
                       const latestRun = issues
                         .filter(
                           (issue) =>
-                            !issue.parentId && issue.taskSourceId === container.taskId
+                            !issue.parentId &&
+                            issue.taskSourceId === container.taskId
                         )
                         .sort((left, right) =>
                           right.createdAt.localeCompare(left.createdAt)
@@ -644,7 +675,9 @@ export function ContainersPage() {
                       const changing = busyAction === `runtime:${container.id}`
                       const checkingDelete =
                         busyAction === `container-impact:${container.id}`
-                      const selected = activeSelectedContainerIds.has(container.id)
+                      const selected = activeSelectedContainerIds.has(
+                        container.id
+                      )
                       return (
                         <TableRow
                           key={container.id}
@@ -666,16 +699,26 @@ export function ContainersPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex max-w-64 flex-col gap-1">
-                              <span className="truncate font-medium" title={container.name}>
+                              <span
+                                className="truncate font-medium"
+                                title={container.name}
+                              >
                                 {container.name}
                               </span>
-                              <span className="truncate font-mono text-xs text-muted-foreground" title={container.image}>
+                              <span
+                                className="truncate font-mono text-xs text-muted-foreground"
+                                title={container.image}
+                              >
                                 {container.image}
                               </span>
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={runtimeBadgeVariant(container.runtimeStatus)}>
+                            <Badge
+                              variant={runtimeBadgeVariant(
+                                container.runtimeStatus
+                              )}
+                            >
                               {runtimeLabels[container.runtimeStatus]}
                             </Badge>
                           </TableCell>
@@ -683,7 +726,7 @@ export function ContainersPage() {
                           <TableCell>
                             {latestRun ? (
                               <Link
-                                to={`/tasks/${latestRun.id}`}
+                                to={`/tasks/${container.taskId}`}
                                 className="font-medium hover:underline"
                               >
                                 {task?.title ?? latestRun.title}
@@ -692,19 +735,23 @@ export function ContainersPage() {
                                 </span>
                               </Link>
                             ) : (
-                              task?.title ?? "任务已删除"
+                              (task?.title ?? "任务已删除")
                             )}
                           </TableCell>
                           <TableCell className="font-mono">
                             {container.workspacePath}
                           </TableCell>
-                          <TableCell>{formatTime(container.createdAt)}</TableCell>
+                          <TableCell>
+                            {formatTime(container.createdAt)}
+                          </TableCell>
                           <TableCell>
                             <div className="flex justify-end gap-2">
                               <Button
                                 variant="outline"
                                 size="sm"
-                                disabled={changing || busyAction !== null && !changing}
+                                disabled={
+                                  changing || (busyAction !== null && !changing)
+                                }
                                 onClick={() => void changeRuntime(container)}
                               >
                                 {changing ? (
@@ -714,13 +761,17 @@ export function ContainersPage() {
                                 ) : (
                                   <Play data-icon="inline-start" />
                                 )}
-                                {container.runtimeStatus === "running" ? "停止" : "启动"}
+                                {container.runtimeStatus === "running"
+                                  ? "停止"
+                                  : "启动"}
                               </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 disabled={checkingDelete}
-                                onClick={() => void prepareContainerDelete(container)}
+                                onClick={() =>
+                                  void prepareContainerDelete(container)
+                                }
                               >
                                 {checkingDelete ? (
                                   <Spinner data-icon="inline-start" />
@@ -898,7 +949,9 @@ export function ContainersPage() {
             </p>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busyAction === "container-batch-delete"}>
+            <AlertDialogCancel
+              disabled={busyAction === "container-batch-delete"}
+            >
               取消
             </AlertDialogCancel>
             <AlertDialogAction
@@ -963,7 +1016,8 @@ function ProfileDialog({
             {value === "new" ? "新增环境配置" : "编辑环境配置"}
           </DialogTitle>
           <DialogDescription>
-            此处只保存容器创建模板，不会创建或启动 Docker 容器。任务选择配置并开始执行时才会创建独立容器。
+            此处只保存容器创建模板，不会创建或启动 Docker
+            容器。任务选择配置并开始执行时才会创建独立容器。
           </DialogDescription>
         </DialogHeader>
         <FieldGroup>
@@ -1000,13 +1054,10 @@ function ProfileDialog({
           </Field>
           <Field>
             <FieldLabel htmlFor="container-workspace">容器工作目录</FieldLabel>
-            <Input
-              id="container-workspace"
-              disabled
-              value="/workspace"
-            />
+            <Input id="container-workspace" disabled value="/workspace" />
             <FieldDescription>
-              固定为 /workspace；每个任务使用自己的 Docker Volume，不映射宿主机目录。
+              固定为 /workspace；每个任务使用自己的 Docker
+              Volume，不映射宿主机目录。
             </FieldDescription>
           </Field>
           <FieldGroup className="grid sm:grid-cols-3">
@@ -1036,7 +1087,9 @@ function ProfileDialog({
                 type="number"
                 min={0}
                 value={form.memoryMb}
-                onChange={(event) => set("memoryMb", Number(event.target.value))}
+                onChange={(event) =>
+                  set("memoryMb", Number(event.target.value))
+                }
               />
             </Field>
             <Field>

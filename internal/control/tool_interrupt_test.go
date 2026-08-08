@@ -17,7 +17,7 @@ func TestInterruptCurrentToolKeepsIssueAndSessionActive(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
 		Title: "Run a long test", Objective: "The test completes successfully.",
-		Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)

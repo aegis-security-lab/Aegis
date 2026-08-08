@@ -15,7 +15,7 @@ func TestContinuationPromptIncludesAllChildCommentsAndSpillsLargeHistory(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "Produce evidence", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "Produce evidence", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer", Workspace: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}

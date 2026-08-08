@@ -50,7 +50,7 @@ func TestNativeValidationCapabilityIsNarrowAndPersistsDecisionWithoutPiSession(t
 	if err = store.db.First(&validation, "id = ?", validation.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	decision, err := submittedValidationDecision(validation, "")
+	decision, err := submittedValidationDecision(validation)
 	if err != nil || decision.Outcome != "passed" {
 		t.Fatalf("decision=%+v err=%v", decision, err)
 	}
@@ -65,7 +65,7 @@ func TestNativeValidationCapabilityIsNarrowAndPersistsDecisionWithoutPiSession(t
 
 func TestResumedValidationSessionReactivatesInterruptedRound(t *testing.T) {
 	store := configuredStore(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Resumed validation", Objective: "Verify the evidence", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Resumed validation", Objective: "Verify the evidence", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

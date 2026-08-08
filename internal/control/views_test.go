@@ -12,7 +12,7 @@ func TestStateAndSessionListsOmitHeavyExecutionContent(t *testing.T) {
 	issue, err := s.CreateIssue(CreateIssueInput{
 		Title:           "Inspect compact state",
 		Objective:       "Keep list payloads small while preserving detail data.",
-		Priority:        "medium",
+		Priority:        "middle",
 		WorkMode:        "guided",
 		AssigneeAgentID: "backend-engineer",
 	})
@@ -73,7 +73,7 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 	issue, err := s.CreateIssue(CreateIssueInput{
 		Title:           "Inspect event pagination",
 		Objective:       "Return a bounded event summary and preserve full event details.",
-		Priority:        "medium",
+		Priority:        "middle",
 		WorkMode:        "guided",
 		AssigneeAgentID: "backend-engineer",
 	})
@@ -166,7 +166,7 @@ func TestIssueDetailBoundsEventsAndLoadsFullEventOnDemand(t *testing.T) {
 func TestDetailCursorPagesAndSessionDelta(t *testing.T) {
 	s := configuredStore(t)
 	issue, err := s.CreateIssue(CreateIssueInput{
-		Title: "Paginated activity", Objective: "Keep large histories bounded.", Priority: "medium", WorkMode: "guided", AssigneeAgentID: "backend-engineer",
+		Title: "Paginated activity", Objective: "Keep large histories bounded.", Priority: "middle", WorkMode: "guided", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -259,6 +259,53 @@ func TestNotifyCoalescesRapidBroadcasts(t *testing.T) {
 	case <-updates:
 		t.Fatal("rapid notifications produced more than one state broadcast")
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestSubscriberKeepsLatestStateWhenConsumerIsSlow(t *testing.T) {
+	s := configuredStore(t)
+	updates, unsubscribe := s.Subscribe()
+	defer unsubscribe()
+
+	first := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	latest := first.Add(time.Minute)
+	s.mu.Lock()
+	s.updatedAt = first
+	s.broadcastLocked()
+	s.updatedAt = latest
+	s.broadcastLocked()
+	s.mu.Unlock()
+
+	select {
+	case state := <-updates:
+		if !state.UpdatedAt.Equal(latest) {
+			t.Fatalf("subscriber received stale state %s, want %s", state.UpdatedAt, latest)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("latest state was not delivered")
+	}
+}
+
+func TestStateRevisionIncludesLatestIssueAndExecution(t *testing.T) {
+	s := configuredStore(t)
+	issue, err := s.CreateIssue(CreateIssueInput{Title: "Revision", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := s.createExecution(issue, "backend-engineer", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := time.Date(2026, 8, 8, 12, 30, 0, 0, time.UTC)
+	if err = s.db.Model(&Execution{}).Where("id = ?", execution.ID).Updates(map[string]any{"updated_at": latest}).Error; err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.updatedAt = latest.Add(-time.Hour)
+	s.cachedState = nil
+	s.mu.Unlock()
+	if state := s.State(); !state.UpdatedAt.Equal(latest) {
+		t.Fatalf("state revision=%s, want latest entity revision %s", state.UpdatedAt, latest)
 	}
 }
 

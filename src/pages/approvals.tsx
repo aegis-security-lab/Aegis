@@ -12,7 +12,7 @@ import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -36,12 +36,19 @@ export function ApprovalsPage() {
   const { state, refresh } = useAppState()
   const [busy, setBusy] = React.useState<string | null>(null)
   const [reviewText, setReviewText] = React.useState<Record<string, string>>({})
-  const approvals = state?.approvals ?? []
-  const pending = approvals.filter((approval) => approval.status === "pending")
-  const history = approvals.filter(
-    (approval) =>
-      approval.status === "approved" || approval.status === "rejected"
-  )
+  const { pending, history, issueById } = React.useMemo(() => {
+    const approvals = state?.approvals ?? []
+    return {
+      pending: approvals.filter((approval) => approval.status === "pending"),
+      history: approvals.filter(
+        (approval) =>
+          approval.status === "approved" || approval.status === "rejected"
+      ),
+      issueById: new Map(
+        (state?.issues ?? []).map((issue) => [issue.id, issue])
+      ),
+    }
+  }, [state?.approvals, state?.issues])
 
   const decide = async (id: string, approved: boolean) => {
     const approval = pending.find((item) => item.id === id)
@@ -67,6 +74,7 @@ export function ApprovalsPage() {
       <PageHeader
         eyebrow="Human in the loop"
         title="审批中心"
+        description="集中处理需要人工判断的工具调用、返工与验收请求。"
       />
       {pending.length === 0 ? (
         <Card>
@@ -87,15 +95,15 @@ export function ApprovalsPage() {
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
           {pending.map((approval) => {
-            const issue = state?.issues.find(
-              (item) => item.id === approval.issueId
-            )
+            const issue = approval.issueId
+              ? issueById.get(approval.issueId)
+              : undefined
             const Icon = approval.type === "issue_rework" ? RefreshCw : Terminal
             return (
-              <Card key={approval.id} className="border-amber-300/60">
+              <Card key={approval.id} className="border-warning/40">
                 <CardHeader>
                   <div className="flex items-start gap-3">
-                    <span className="flex size-10 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
+                    <span className="flex size-10 items-center justify-center rounded-xl bg-warning/10 text-warning">
                       <ShieldAlert className="size-5" />
                     </span>
                     <div className="min-w-0">
@@ -133,26 +141,26 @@ export function ApprovalsPage() {
                     />
                   ) : null}
                   <div className="mt-4 flex justify-between">
-                    <Button
-                      variant="ghost"
-                      render={<Link to={`/issues/${approval.issueId}`} />}
+                    <Link
+                      to={`/issues/${approval.issueId}`}
+                      className={buttonVariants({ variant: "ghost" })}
                     >
                       查看 Issue
-                    </Button>
+                    </Link>
                     <div className="flex gap-2">
                       <Button
                         variant="outline"
                         disabled={busy === approval.id}
                         onClick={() => void decide(approval.id, false)}
                       >
-                        <X />
+                        <X data-icon="inline-start" />
                         拒绝
                       </Button>
                       <Button
                         disabled={busy === approval.id}
                         onClick={() => void decide(approval.id, true)}
                       >
-                        <Check />
+                        <Check data-icon="inline-start" />
                         批准
                       </Button>
                     </div>

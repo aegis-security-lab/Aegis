@@ -5,68 +5,28 @@ import (
 	"time"
 )
 
-func TestLegacyIssueStatusMigrationRewritesStatusesToLabels(t *testing.T) {
+func TestIssueWritesRejectRetiredWorkflowAliases(t *testing.T) {
 	store := configuredStore(t)
-	now := time.Now()
-	legacy := map[string]struct {
-		expectedStatus string
-		expectedLabels []string
-	}{
-		"backlog":         {"todo", nil},
-		"blocked":         {"in_progress", []string{"blocked"}},
-		"failed":          {"done", []string{"failed"}},
-		"budget_exceeded": {"done", []string{"budget_exceeded"}},
-	}
-	issueIDs := make(map[string]string, len(legacy))
-	for status := range legacy {
-		issue, err := store.CreateIssue(CreateIssueInput{Title: "Legacy " + status, Priority: "medium", WorkMode: "autonomous", Status: status, AssigneeAgentID: "backend-engineer"})
-		if err != nil {
-			t.Fatalf("create legacy %s: %v", status, err)
+	for _, input := range []CreateIssueInput{
+		{Title: "Retired status", Priority: "middle", Status: "backlog", WorkMode: "autonomous"},
+		{Title: "Retired priority", Priority: "medium", Status: "todo", WorkMode: "autonomous"},
+	} {
+		if _, err := store.CreateIssue(input); err == nil {
+			t.Fatalf("retired workflow value was accepted: %+v", input)
 		}
-		issueIDs[status] = issue.ID
-		// Rewrite directly in the new model vocabulary to simulate pre-migration rows.
-		_ = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-			"status": status, "labels": issueLabelsColumn(nil),
-		}).Error
 	}
-	if err := migrateLegacyIssueStatuses(store.db, now); err != nil {
+
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Canonical workflow", Priority: "middle", Status: "todo", WorkMode: "autonomous"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	for status, want := range legacy {
-		issue, err := store.GetIssue(issueIDs[status])
-		if err != nil {
-			t.Fatal(err)
-		}
-		if issue.Status != want.expectedStatus {
-			t.Fatalf("%s: status = %q, want %q", status, issue.Status, want.expectedStatus)
-		}
-		if len(issue.Labels) != len(want.expectedLabels) {
-			t.Fatalf("%s: labels = %v, want %v", status, issue.Labels, want.expectedLabels)
-		}
-		for i, label := range want.expectedLabels {
-			if issue.Labels[i] != label {
-				t.Fatalf("%s: labels = %v, want %v", status, issue.Labels, want.expectedLabels)
-			}
-		}
-		if status == "backlog" && issue.ExecutionPhase != "active" {
-			t.Fatalf("backlog migration left phase %q", issue.ExecutionPhase)
-		}
-		if want.expectedStatus == "done" && issue.CompletedAt == nil {
-			t.Fatalf("%s: done issue missing completed_at", status)
-		}
+	retiredStatus := "failed"
+	if _, err = store.UpdateIssue(issue.ID, UpdateIssueInput{Status: &retiredStatus}); err == nil {
+		t.Fatal("retired update status was accepted")
 	}
-	// A second run must be idempotent.
-	if err := migrateLegacyIssueStatuses(store.db, now); err != nil {
-		t.Fatal(err)
-	}
-	for status, want := range legacy {
-		issue, err := store.GetIssue(issueIDs[status])
-		if err != nil {
-			t.Fatal(err)
-		}
-		if issue.Status != want.expectedStatus || len(issue.Labels) != len(want.expectedLabels) {
-			t.Fatalf("%s: second migration changed %+v", status, issue)
-		}
+	retiredPriority := "critical"
+	if _, err = store.UpdateIssue(issue.ID, UpdateIssueInput{Priority: &retiredPriority}); err == nil {
+		t.Fatal("retired update priority was accepted")
 	}
 }
 

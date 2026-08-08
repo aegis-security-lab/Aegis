@@ -109,7 +109,7 @@ fi
 
 func TestNativeDeliveryRejectsAttachmentOutsideTaskWorkspace(t *testing.T) {
 	store := configuredStore(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Isolated", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Isolated", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

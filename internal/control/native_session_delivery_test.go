@@ -161,7 +161,7 @@ func TestNativeSessionDeliveryBudgetSteersIntoSummaryAfterFinalWorkTurn(t *testi
 
 func TestNativeSessionDeliveryRestoresTaskSessionInNewRun(t *testing.T) {
 	store, manager := bridgeTestManager(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Persistent session", Objective: "continue after wake", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Persistent session", Objective: "continue after wake", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestNativeSessionDeliveryRestoresTaskSessionInNewRun(t *testing.T) {
 
 func TestNativeSessionDeliveryReleasesSleepingTaskAgent(t *testing.T) {
 	store, manager := bridgeTestManager(t)
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Sleep and wake", Objective: "resume the same task identity", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Sleep and wake", Objective: "resume the same task identity", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestNativeSessionDeliveryIntegratesAlreadyTerminalChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "produce evidence", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Child", Objective: "produce evidence", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}

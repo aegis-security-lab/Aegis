@@ -620,10 +620,6 @@ func (m *Manager) CreateTaskAudit(ctx context.Context, requestedID string) (Task
 func (m *Manager) ListTaskAudits(requestedID string) ([]TaskAudit, error) {
 	var audits []TaskAudit
 	query := m.store.db.Where("requested_id = ? OR task_id = ?", requestedID, requestedID)
-	var issue Issue
-	if err := m.store.db.First(&issue, "id = ?", requestedID).Error; err == nil && issue.TaskSourceID != "" {
-		query = m.store.db.Where("requested_id = ? OR task_id = ?", requestedID, issue.TaskSourceID)
-	}
 	err := query.Order("created_at desc").Find(&audits).Error
 	return audits, err
 }

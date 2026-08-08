@@ -18,10 +18,7 @@ import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Empty,
   EmptyDescription,
@@ -66,20 +63,18 @@ const SEVERITY_LABEL: Record<Severity, string> = {
 }
 
 const SEVERITY_COLOR: Record<Severity, string> = {
-  critical:
-    "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
-  high: "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300",
-  medium:
-    "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
-  low: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300",
+  critical: "border-destructive/30 bg-destructive/15 text-destructive",
+  high: "border-destructive/25 bg-destructive/10 text-destructive",
+  medium: "border-warning/25 bg-warning/10 text-warning",
+  low: "border-info/25 bg-info/10 text-info",
   info: "border-border bg-muted text-muted-foreground",
 }
 
 const SEVERITY_DOT: Record<Severity, string> = {
-  critical: "bg-red-500",
-  high: "bg-orange-500",
-  medium: "bg-amber-500",
-  low: "bg-sky-500",
+  critical: "bg-destructive",
+  high: "bg-destructive/70",
+  medium: "bg-warning",
+  low: "bg-info",
   info: "bg-muted-foreground/40",
 }
 
@@ -95,16 +90,41 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const STATUS_TRANSITIONS: Record<
   string,
-  { label: string; target: string; icon: typeof CheckCircle2; variant: "default" | "secondary" | "destructive" | "outline" | "ghost" }[]
+  {
+    label: string
+    target: string
+    icon: typeof CheckCircle2
+    variant: "default" | "secondary" | "destructive" | "outline" | "ghost"
+  }[]
 > = {
   open: [
-    { label: "验证确认", target: "verified", icon: CheckCircle2, variant: "default" },
-    { label: "误报", target: "false_positive", icon: XCircle, variant: "secondary" },
-    { label: "关闭", target: "closed", icon: AlertTriangle, variant: "outline" },
+    {
+      label: "验证确认",
+      target: "verified",
+      icon: CheckCircle2,
+      variant: "default",
+    },
+    {
+      label: "误报",
+      target: "false_positive",
+      icon: XCircle,
+      variant: "secondary",
+    },
+    {
+      label: "关闭",
+      target: "closed",
+      icon: AlertTriangle,
+      variant: "outline",
+    },
   ],
   verified: [
     { label: "重新打开", target: "open", icon: Bug, variant: "secondary" },
-    { label: "关闭", target: "closed", icon: AlertTriangle, variant: "outline" },
+    {
+      label: "关闭",
+      target: "closed",
+      icon: AlertTriangle,
+      variant: "outline",
+    },
   ],
   false_positive: [
     { label: "重新打开", target: "open", icon: Bug, variant: "secondary" },
@@ -122,11 +142,9 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  open: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
-  verified:
-    "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-  false_positive:
-    "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300",
+  open: "border-warning/25 bg-warning/10 text-warning",
+  verified: "border-success/25 bg-success/10 text-success",
+  false_positive: "border-info/25 bg-info/10 text-info",
   closed: "border-border bg-muted text-muted-foreground",
 }
 
@@ -222,9 +240,7 @@ export function FindingsPage() {
     try {
       const updated = await updateFinding(finding.id, { status: newStatus })
       setData((prev) =>
-        prev
-          ? prev.map((f) => (f.id === updated.id ? updated : f))
-          : null
+        prev ? prev.map((f) => (f.id === updated.id ? updated : f)) : null
       )
       toast.success(
         `「${finding.title}」状态已更新为 ${STATUS_LABELS[newStatus] ?? newStatus}`
@@ -244,10 +260,7 @@ export function FindingsPage() {
   if (loading) {
     return (
       <div className="flex flex-col gap-7">
-        <PageHeader
-          eyebrow="Security"
-          title="安全发现"
-        />
+        <PageHeader eyebrow="Security" title="安全发现" />
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-16 w-full rounded-xl" />
@@ -261,10 +274,7 @@ export function FindingsPage() {
   if (error) {
     return (
       <div className="flex flex-col gap-7">
-        <PageHeader
-          eyebrow="Security"
-          title="安全发现"
-        />
+        <PageHeader eyebrow="Security" title="安全发现" />
         <Card>
           <CardContent className="py-16">
             <Empty>
@@ -290,10 +300,7 @@ export function FindingsPage() {
   if (findings.length === 0) {
     return (
       <div className="flex flex-col gap-7">
-        <PageHeader
-          eyebrow="Security"
-          title="安全发现"
-        />
+        <PageHeader eyebrow="Security" title="安全发现" />
         <div className="flex flex-wrap items-center gap-3">
           <FilterSelect
             label="类别"
@@ -335,10 +342,7 @@ export function FindingsPage() {
                 </EmptyDescription>
               </EmptyHeader>
               {(categoryParam || severityParam) && (
-                <Button
-                  variant="outline"
-                  onClick={() => setSearchParams({})}
-                >
+                <Button variant="outline" onClick={() => setSearchParams({})}>
                   清除筛选
                 </Button>
               )}
@@ -390,11 +394,7 @@ export function FindingsPage() {
           onChange={(v) => setFilter("severity", v)}
         />
         {(categoryParam || severityParam) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSearchParams({})}
-          >
+          <Button variant="ghost" size="sm" onClick={() => setSearchParams({})}>
             清除筛选
           </Button>
         )}
@@ -420,19 +420,15 @@ export function FindingsPage() {
               {/* ── Summary row (always visible) ── */}
               <button
                 type="button"
-                onClick={() =>
-                  setExpandedId(isExpanded ? null : finding.id)
-                }
-                className="flex w-full items-start gap-3 px-(--card-spacing) py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                onClick={() => setExpandedId(isExpanded ? null : finding.id)}
+                className="flex w-full items-start gap-3 px-(--card-spacing) py-3 text-left focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
                 aria-expanded={isExpanded}
               >
                 <span
                   className={cn(
                     "mt-1.5 size-2 shrink-0 rounded-full",
                     SEVERITY_DOT[
-                      isSeverity(finding.severity)
-                        ? finding.severity
-                        : "info"
+                      isSeverity(finding.severity) ? finding.severity : "info"
                     ]
                   )}
                 />
@@ -471,7 +467,7 @@ export function FindingsPage() {
 
               {/* ── Expanded detail ── */}
               {isExpanded && (
-                <div className="border-t px-(--card-spacing) pb-4 pt-3">
+                <div className="border-t px-(--card-spacing) pt-3 pb-4">
                   <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
                     {/* Left column */}
                     <div className="flex flex-col gap-5">
@@ -612,9 +608,7 @@ function FilterSelect({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs font-medium text-muted-foreground">
-        {label}
-      </span>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <Select value={value} onValueChange={(v) => onChange(v ?? "")}>
         <SelectTrigger className="h-7 w-36 text-xs">
           <SelectValue />
@@ -653,10 +647,7 @@ function AuditLevelBadge({
 function SeverityBadge({ severity }: { severity: string }) {
   const sev = isSeverity(severity) ? severity : "info"
   return (
-    <Badge
-      variant="outline"
-      className={cn("font-medium", SEVERITY_COLOR[sev])}
-    >
+    <Badge variant="outline" className={cn("font-medium", SEVERITY_COLOR[sev])}>
       {SEVERITY_LABEL[sev]}
     </Badge>
   )
@@ -673,11 +664,11 @@ function DetailBlock({
 }) {
   return (
     <div>
-      <h4 className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <h4 className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
         {title}
       </h4>
       {content ? (
-        <p className="whitespace-pre-wrap text-sm leading-6">{content}</p>
+        <p className="text-sm leading-6 whitespace-pre-wrap">{content}</p>
       ) : null}
       {children}
     </div>
@@ -691,30 +682,19 @@ function SyntaxHighlightJSON({ json }: { json: string }) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(
-      /("(?:\\.|[^"\\])*")\s*:/g,
-      '<span class="text-sky-600 dark:text-sky-400">$1</span>:'
-    )
+    .replace(/("(?:\\.|[^"\\])*")\s*:/g, '<span class="text-info">$1</span>:')
     .replace(
       /:\s*("(?:\\.|[^"\\])*")/g,
-      ': <span class="text-emerald-600 dark:text-emerald-400">$1</span>'
+      ': <span class="text-success">$1</span>'
     )
-    .replace(
-      /:\s*(true|false)/g,
-      ': <span class="text-amber-600 dark:text-amber-400">$1</span>'
-    )
-    .replace(
-      /:\s*(null)/g,
-      ': <span class="text-muted-foreground">$1</span>'
-    )
+    .replace(/:\s*(true|false)/g, ': <span class="text-warning">$1</span>')
+    .replace(/:\s*(null)/g, ': <span class="text-muted-foreground">$1</span>')
     .replace(
       /:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-      ': <span class="text-violet-600 dark:text-violet-400">$1</span>'
+      ': <span class="text-primary-foreground">$1</span>'
     )
 
-  return (
-    <span dangerouslySetInnerHTML={{ __html: highlighted }} />
-  )
+  return <span dangerouslySetInnerHTML={{ __html: highlighted }} />
 }
 
 /* ── time formatter (inline to avoid import cycle) ── */

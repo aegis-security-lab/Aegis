@@ -4,13 +4,8 @@ import { Link } from "react-router-dom"
 
 import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { buttonVariants } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { SearchInput } from "@/components/ui/search-input"
 import {
   Table,
@@ -26,17 +21,22 @@ import { useAppState } from "@/lib/state"
 export function SessionsPage() {
   const { state } = useAppState()
   const [query, setQuery] = React.useState("")
-  const sessions = (state?.sessions ?? []).filter((session) =>
-    `${session.execution.id} ${session.execution.sessionId} ${session.agentName} ${session.issueIdentifier} ${session.issueTitle}`
-      .toLowerCase()
-      .includes(query.toLowerCase())
-  )
+  const deferredQuery = React.useDeferredValue(query)
+  const sessions = React.useMemo(() => {
+    const normalized = deferredQuery.trim().toLocaleLowerCase()
+    return (state?.sessions ?? []).filter((session) =>
+      `${session.execution.id} ${session.execution.sessionId} ${session.agentName} ${session.issueIdentifier} ${session.issueTitle}`
+        .toLocaleLowerCase()
+        .includes(normalized)
+    )
+  }, [deferredQuery, state?.sessions])
 
   return (
     <div className="flex flex-col gap-7">
       <PageHeader
         eyebrow="Runtime observability"
         title="Sessions"
+        description="检查 Agent 会话状态、模型用量与完整对话记录。"
       />
       <Card>
         <CardHeader className="gap-4 md:flex-row md:items-end md:justify-between">
@@ -96,18 +96,29 @@ export function SessionsPage() {
                     <br />${session.execution.cost.toFixed(4)}
                   </TableCell>
                   <TableCell>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      render={<Link to={`/sessions/${session.execution.id}`} />}
-                      nativeButton={false}
+                    <Link
+                      to={`/sessions/${session.execution.id}`}
+                      className={buttonVariants({
+                        size: "sm",
+                        variant: "outline",
+                      })}
                     >
                       <MessageSquareText data-icon="inline-start" />
                       查看对话
-                    </Button>
+                    </Link>
                   </TableCell>
                 </TableRow>
               ))}
+              {sessions.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={7}
+                    className="h-32 text-center text-sm text-muted-foreground"
+                  >
+                    没有匹配的会话
+                  </TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
         </CardContent>

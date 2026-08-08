@@ -28,14 +28,14 @@ func TestTaskEvidenceDownloadAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(manager.Close)
-	issue, err := manager.CreateIssue(control.CreateIssueInput{Title: "Export through API", Objective: "download evidence", Priority: "low", Status: "backlog", WorkMode: "autonomous"})
+	issue, err := manager.CreateIssue(control.CreateIssueInput{Title: "Export through API", Objective: "download evidence", Priority: "low", Status: "todo", WorkMode: "autonomous"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	router := buildRouter(store, manager, t.TempDir())
 
 	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.ID+"/export?includeArtifacts=false", nil))
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.TaskSourceID+"/export?includeArtifacts=false", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -63,7 +63,7 @@ func TestTaskEvidenceDownloadAPI(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.ID+"/export?redactSecrets=maybe", nil))
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tasks/"+issue.TaskSourceID+"/export?redactSecrets=maybe", nil))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid boolean status=%d", response.Code)
 	}

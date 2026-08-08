@@ -385,7 +385,7 @@ func (m *Manager) RelayCommandFromExecution(executionID, token string, input Rel
 	routingID := fallback(execution.TaskAgentID, execution.AgentID)
 	switch result.Action {
 	case "directory":
-		identities, listErr := m.store.TaskAgents(root.ID)
+		identities, listErr := m.store.TaskAgents(root.TaskSourceID)
 		if listErr != nil {
 			return RelayCommandResult{}, listErr
 		}

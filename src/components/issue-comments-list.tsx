@@ -55,7 +55,13 @@ export function IssueCommentsList({
 
   if (comments.length === 0 && !hasMore) {
     return (
-      <Empty className={embedded ? "border-0 py-8" : "h-full border-0"}>
+      <Empty
+        className={
+          embedded
+            ? "rounded-xl border bg-card py-8"
+            : "h-full border-0"
+        }
+      >
         <EmptyHeader>
           <EmptyTitle>还没有评论</EmptyTitle>
         </EmptyHeader>
@@ -65,16 +71,9 @@ export function IssueCommentsList({
 
   if (embedded) {
     return (
-      <div className="flex flex-col">
-        {comments.map((comment) => (
-          <CommentItem
-            key={comment.id}
-            comment={comment}
-            onCopy={onCopy}
-          />
-        ))}
+      <div className="overflow-hidden rounded-xl border bg-card">
         {hasMore ? (
-          <div className="flex justify-center py-2">
+          <div className="flex justify-center border-b px-4 py-2.5">
             <Button
               type="button"
               variant="outline"
@@ -87,6 +86,16 @@ export function IssueCommentsList({
             </Button>
           </div>
         ) : null}
+        <div className="divide-y divide-border/70">
+          {comments.map((comment) => (
+            <CommentItem
+              key={comment.id}
+              comment={comment}
+              onCopy={onCopy}
+              embedded
+            />
+          ))}
+        </div>
       </div>
     )
   }
@@ -137,12 +146,14 @@ export function IssueCommentsList({
 function CommentItem({
   comment,
   onCopy,
+  embedded = false,
 }: {
   comment: IssueComment
   onCopy: (body: string) => void
+  embedded?: boolean
 }) {
   return (
-    <article className="px-1 pb-4">
+    <article className={embedded ? "px-4 py-3.5" : "px-1 pb-4"}>
       <header className="flex items-center justify-between gap-3">
         <span className="text-xs font-medium">{comment.authorId}</span>
         <div className="flex items-center gap-1">

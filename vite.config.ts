@@ -6,6 +6,21 @@ import { defineConfig } from "vite"
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "react-vendor",
+              test: /node_modules[\\/](?:react|react-dom|react-router|scheduler)[\\/]/,
+              priority: 20,
+            },
+          ],
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       "/api": "http://localhost:8080",

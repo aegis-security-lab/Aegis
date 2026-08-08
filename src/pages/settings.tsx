@@ -1,5 +1,17 @@
 import * as React from "react"
-import { Bot, Database, ExternalLink, Gauge, Languages, HeartPulse, KeyRound, Radar, Save, Search, ShieldCheck } from "lucide-react"
+import {
+  Bot,
+  Database,
+  ExternalLink,
+  Gauge,
+  Languages,
+  HeartPulse,
+  KeyRound,
+  Radar,
+  Save,
+  Search,
+  ShieldCheck,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { PageHeader } from "@/components/page-header"
@@ -47,13 +59,7 @@ const providers = [
 ]
 
 export type SettingsSection =
-  | "general"
-  | "search"
-  | "runtime"
-  | "model"
-  | "workspace"
-  | "budget"
-  | "policy"
+  "general" | "search" | "runtime" | "model" | "workspace" | "budget" | "policy"
 
 export function SettingsPage({
   embedded = false,
@@ -68,14 +74,20 @@ export function SettingsPage({
   const config = state!.config
   const [busy, setBusy] = React.useState<"save" | "test" | null>(null)
   const [searchBusy, setSearchBusy] = React.useState(false)
-  const [searchResult, setSearchResult] = React.useState<WebSearchResult | null>(null)
-  const [searchInput, setSearchInput] = React.useState<WebSearchInput>({ query: "latest AI agent news", topic: "general", searchDepth: "basic", includeAnswer: true, maxResults: 5 })
+  const [searchResult, setSearchResult] =
+    React.useState<WebSearchResult | null>(null)
+  const [searchInput, setSearchInput] = React.useState<WebSearchInput>({
+    query: "latest AI agent news",
+    topic: "general",
+    searchDepth: "basic",
+    includeAnswer: true,
+    maxResults: 5,
+  })
   const [form, setForm] = React.useState<SaveConfigInput>(() =>
     fromConfig(config)
   )
-  const [localSection, setLocalSection] = React.useState<SettingsSection>(
-    "general"
-  )
+  const [localSection, setLocalSection] =
+    React.useState<SettingsSection>("general")
   const section = controlledSection ?? localSection
   const changeSection = (next: SettingsSection) => {
     if (onSectionChange) onSectionChange(next)
@@ -132,6 +144,7 @@ export function SettingsPage({
       <PageHeader
         eyebrow="System"
         title="设置"
+        showIdentity={!embedded}
         actions={
           <Button type="submit" disabled={busy !== null}>
             {busy === "save" ? <Spinner /> : <Save />}保存设置
@@ -141,9 +154,7 @@ export function SettingsPage({
       <div
         className={cn(
           "items-start gap-5",
-          embedded
-            ? "flex flex-col"
-            : "grid md:grid-cols-[180px_minmax(0,1fr)]"
+          embedded ? "flex flex-col" : "grid md:grid-cols-[180px_minmax(0,1fr)]"
         )}
       >
         {embedded ? null : (
@@ -179,15 +190,24 @@ export function SettingsPage({
             <Card className={section === "general" ? undefined : "hidden"}>
               <CardHeader>
                 <div className="flex items-center gap-3">
-                  <span className="flex size-9 items-center justify-center rounded-lg bg-muted"><Languages className="size-4" /></span>
+                  <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
+                    <Languages className="size-4" />
+                  </span>
                   <CardTitle>语言</CardTitle>
                 </div>
               </CardHeader>
               <CardContent>
                 <Field>
                   <FieldLabel>AI 输出语言</FieldLabel>
-                  <Select value={form.language} onValueChange={(value) => update("language", value as SaveConfigInput["language"])}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                  <Select
+                    value={form.language}
+                    onValueChange={(value) =>
+                      update("language", value as SaveConfigInput["language"])
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
                         <SelectItem value="zh">中文</SelectItem>
@@ -195,7 +215,9 @@ export function SettingsPage({
                       </SelectGroup>
                     </SelectContent>
                   </Select>
-                  <FieldDescription>用于所有新启动 Agent 的文本回复、分析结论和报告。</FieldDescription>
+                  <FieldDescription>
+                    用于所有新启动 Agent 的文本回复、分析结论和报告。
+                  </FieldDescription>
                 </Field>
               </CardContent>
             </Card>
@@ -218,19 +240,32 @@ export function SettingsPage({
                   <ShieldCheck />
                   <AlertTitle>AgentCore 已内嵌</AlertTitle>
                   <AlertDescription>
-                    Agent 循环、模型调用、工具策略和调度都在 Aegis 服务进程中运行；无需 Node.js 或外部 Agent CLI。文件和命令工具通过任务专属 Docker 容器执行。
+                    Agent 循环、模型调用、工具策略和调度都在 Aegis
+                    服务进程中运行；无需 Node.js 或外部 Agent
+                    CLI。文件和命令工具通过任务专属 Docker 容器执行。
                   </AlertDescription>
                 </Alert>
               </CardContent>
             </Card>
-            <div className={section === "search" ? "grid min-h-[560px] gap-5 xl:grid-cols-[180px_minmax(320px,0.9fr)_minmax(360px,1.1fr)]" : "hidden"}>
+            <div
+              className={
+                section === "search"
+                  ? "grid min-h-[560px] gap-5 xl:grid-cols-[180px_minmax(320px,0.9fr)_minmax(360px,1.1fr)]"
+                  : "hidden"
+              }
+            >
               <Card>
                 <CardHeader>
                   <CardTitle>搜索引擎</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Button type="button" variant="secondary" className="w-full justify-start">
-                    <Search data-icon="inline-start" />Tavily
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full justify-start"
+                  >
+                    <Search data-icon="inline-start" />
+                    Tavily
                   </Button>
                 </CardContent>
               </Card>
@@ -242,56 +277,196 @@ export function SettingsPage({
                   <FieldGroup>
                     <Field>
                       <FieldLabel>启用搜索工具</FieldLabel>
-                      <ToggleGroup value={form.webSearch.enabled ? ["enabled"] : []} onValueChange={(value) => update("webSearch", { ...form.webSearch, enabled: value.includes("enabled") })} variant="outline">
+                      <ToggleGroup
+                        value={form.webSearch.enabled ? ["enabled"] : []}
+                        onValueChange={(value) =>
+                          update("webSearch", {
+                            ...form.webSearch,
+                            enabled: value.includes("enabled"),
+                          })
+                        }
+                        variant="outline"
+                      >
                         <ToggleGroupItem value="enabled">启用</ToggleGroupItem>
                       </ToggleGroup>
-                      <FieldDescription>启用后，所有 Agent 都可以调用 aegis_web_search。</FieldDescription>
+                      <FieldDescription>
+                        启用后，所有 Agent 都可以调用 aegis_web_search。
+                      </FieldDescription>
                     </Field>
                     <Field>
-                      <FieldLabel htmlFor="search-base-url">API 地址</FieldLabel>
-                      <Input id="search-base-url" value={form.webSearch.baseUrl} onChange={(event) => update("webSearch", { ...form.webSearch, baseUrl: event.target.value })} placeholder="https://example.com/api/tavily/search" />
+                      <FieldLabel htmlFor="search-base-url">
+                        API 地址
+                      </FieldLabel>
+                      <Input
+                        id="search-base-url"
+                        value={form.webSearch.baseUrl}
+                        onChange={(event) =>
+                          update("webSearch", {
+                            ...form.webSearch,
+                            baseUrl: event.target.value,
+                          })
+                        }
+                        placeholder="https://example.com/api/tavily/search"
+                      />
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="search-api-key">API Key</FieldLabel>
-                      <Input id="search-api-key" type="password" autoComplete="off" value={form.webSearch.apiKey} onChange={(event) => update("webSearch", { ...form.webSearch, apiKey: event.target.value })} placeholder={config.webSearch?.hasApiKey ? "已保存；留空保持不变" : "th-…"} />
-                      <FieldDescription>密钥只保存在服务端，不会返回前端或暴露给 Agent。</FieldDescription>
+                      <Input
+                        id="search-api-key"
+                        type="password"
+                        autoComplete="off"
+                        value={form.webSearch.apiKey}
+                        onChange={(event) =>
+                          update("webSearch", {
+                            ...form.webSearch,
+                            apiKey: event.target.value,
+                          })
+                        }
+                        placeholder={
+                          config.webSearch?.hasApiKey
+                            ? "已保存；留空保持不变"
+                            : "th-…"
+                        }
+                      />
+                      <FieldDescription>
+                        密钥只保存在服务端，不会返回前端或暴露给 Agent。
+                      </FieldDescription>
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="search-query">测试关键词</FieldLabel>
-                      <Input id="search-query" value={searchInput.query} onChange={(event) => setSearchInput((current) => ({ ...current, query: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void runSearch() } }} />
+                      <Input
+                        id="search-query"
+                        value={searchInput.query}
+                        onChange={(event) =>
+                          setSearchInput((current) => ({
+                            ...current,
+                            query: event.target.value,
+                          }))
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault()
+                            void runSearch()
+                          }
+                        }}
+                      />
                     </Field>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Field>
                         <FieldLabel>主题</FieldLabel>
-                        <Select value={searchInput.topic} onValueChange={(value) => setSearchInput((current) => ({ ...current, topic: value as WebSearchInput["topic"] }))}>
-                          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                          <SelectContent><SelectGroup><SelectItem value="general">通用</SelectItem><SelectItem value="news">新闻</SelectItem><SelectItem value="finance">金融</SelectItem></SelectGroup></SelectContent>
+                        <Select
+                          value={searchInput.topic}
+                          onValueChange={(value) =>
+                            setSearchInput((current) => ({
+                              ...current,
+                              topic: value as WebSearchInput["topic"],
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectItem value="general">通用</SelectItem>
+                              <SelectItem value="news">新闻</SelectItem>
+                              <SelectItem value="finance">金融</SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
                         </Select>
                       </Field>
                       <Field>
                         <FieldLabel>深度</FieldLabel>
-                        <Select value={searchInput.searchDepth} onValueChange={(value) => setSearchInput((current) => ({ ...current, searchDepth: value as WebSearchInput["searchDepth"] }))}>
-                          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                          <SelectContent><SelectGroup><SelectItem value="basic">Basic</SelectItem><SelectItem value="advanced">Advanced</SelectItem></SelectGroup></SelectContent>
+                        <Select
+                          value={searchInput.searchDepth}
+                          onValueChange={(value) =>
+                            setSearchInput((current) => ({
+                              ...current,
+                              searchDepth:
+                                value as WebSearchInput["searchDepth"],
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectItem value="basic">Basic</SelectItem>
+                              <SelectItem value="advanced">Advanced</SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
                         </Select>
                       </Field>
                     </div>
-                    <Button type="button" onClick={() => void runSearch()} disabled={searchBusy || !searchInput.query.trim()}>
-                      {searchBusy ? <Spinner /> : <Search data-icon="inline-start" />}检索
+                    <Button
+                      type="button"
+                      onClick={() => void runSearch()}
+                      disabled={searchBusy || !searchInput.query.trim()}
+                    >
+                      {searchBusy ? (
+                        <Spinner />
+                      ) : (
+                        <Search data-icon="inline-start" />
+                      )}
+                      检索
                     </Button>
                   </FieldGroup>
                 </CardContent>
               </Card>
               <Card className="min-w-0">
                 <CardHeader>
-                  <div className="flex items-center justify-between gap-3"><CardTitle>搜索结果</CardTitle>{searchResult ? <Badge variant="secondary">{searchResult.results.length} 条</Badge> : null}</div>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle>搜索结果</CardTitle>
+                    {searchResult ? (
+                      <Badge variant="secondary">
+                        {searchResult.results.length} 条
+                      </Badge>
+                    ) : null}
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <ScrollArea className="h-[470px] pr-4">
-                    {searchResult ? <div className="flex flex-col gap-4">
-                      {searchResult.answer ? <Alert><Search /><AlertTitle>综合答案</AlertTitle><AlertDescription>{searchResult.answer}</AlertDescription></Alert> : null}
-                      {searchResult.results.map((item, index) => <Card key={`${item.url}-${index}`} size="sm"><CardHeader><CardTitle className="text-sm leading-snug"><a href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-start gap-1 hover:underline">{item.title || item.url}<ExternalLink /></a></CardTitle></CardHeader><CardContent><p className="text-sm leading-relaxed text-muted-foreground">{item.content}</p></CardContent></Card>)}
-                    </div> : <div className="flex h-[430px] flex-col items-center justify-center gap-2 text-center text-muted-foreground"><Search /><p>配置引擎并执行一次测试检索</p></div>}
+                    {searchResult ? (
+                      <div className="flex flex-col gap-4">
+                        {searchResult.answer ? (
+                          <Alert>
+                            <Search />
+                            <AlertTitle>综合答案</AlertTitle>
+                            <AlertDescription>
+                              {searchResult.answer}
+                            </AlertDescription>
+                          </Alert>
+                        ) : null}
+                        {searchResult.results.map((item, index) => (
+                          <Card key={`${item.url}-${index}`} size="sm">
+                            <CardHeader>
+                              <CardTitle className="text-sm leading-snug">
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-start gap-1 hover:underline"
+                                >
+                                  {item.title || item.url}
+                                  <ExternalLink />
+                                </a>
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <p className="text-sm leading-relaxed text-muted-foreground">
+                                {item.content}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex h-[430px] flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+                        <Search />
+                        <p>配置引擎并执行一次测试检索</p>
+                      </div>
+                    )}
                   </ScrollArea>
                 </CardContent>
               </Card>
@@ -473,7 +648,8 @@ export function SettingsPage({
                   <div>
                     <CardTitle>子 Issue 单次 Execution 预算</CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      每次重新执行都会获得新预算；Task 总时钟墙预算独立计算且不会重置
+                      每次重新执行都会获得新预算；Task
+                      总时钟墙预算独立计算且不会重置
                     </p>
                   </div>
                 </div>
@@ -498,7 +674,8 @@ export function SettingsPage({
                       }
                     />
                     <FieldDescription>
-                      默认 100 轮。达到上限后不再继续正常工作，立即切换到受限总结阶段。
+                      默认 100
+                      轮。达到上限后不再继续正常工作，立即切换到受限总结阶段。
                     </FieldDescription>
                   </Field>
                   <Field>
@@ -519,7 +696,8 @@ export function SettingsPage({
                       }
                     />
                     <FieldDescription>
-                      默认 20 分钟，只计算当前 Execution；新 Execution 从零开始。
+                      默认 20 分钟，只计算当前 Execution；新 Execution
+                      从零开始。
                     </FieldDescription>
                   </Field>
                   <Field>
@@ -540,7 +718,8 @@ export function SettingsPage({
                       }
                     />
                     <FieldDescription>
-                      默认最多 10 轮。总结阶段禁用委派、写入和正常交付等扩展型工具。
+                      默认最多 10
+                      轮。总结阶段禁用委派、写入和正常交付等扩展型工具。
                     </FieldDescription>
                   </Field>
                   <Field>
@@ -561,7 +740,8 @@ export function SettingsPage({
                       }
                     />
                     <FieldDescription>
-                      默认 3 分钟；与总结轮数任一先达到即结束，并把 Issue 标记为超出预算。
+                      默认 3 分钟；与总结轮数任一先达到即结束，并把 Issue
+                      标记为超出预算。
                     </FieldDescription>
                   </Field>
                 </FieldGroup>
@@ -626,16 +806,22 @@ export function SettingsPage({
               <CardContent>
                 <FieldGroup>
                   <Field>
-                    <FieldLabel htmlFor="settings-worker-concurrency">Worker 并发</FieldLabel>
+                    <FieldLabel htmlFor="settings-worker-concurrency">
+                      Worker 并发
+                    </FieldLabel>
                     <Input
                       id="settings-worker-concurrency"
                       type="number"
                       min={1}
                       max={100}
                       value={form.concurrency}
-                      onChange={(event) => update("concurrency", Number(event.target.value))}
+                      onChange={(event) =>
+                        update("concurrency", Number(event.target.value))
+                      }
                     />
-                    <FieldDescription>允许同时运行 1–100 个 Worker，保存后立即生效。</FieldDescription>
+                    <FieldDescription>
+                      允许同时运行 1–100 个 Worker，保存后立即生效。
+                    </FieldDescription>
                   </Field>
                   <Field>
                     <FieldLabel>工具调用审批</FieldLabel>
@@ -804,7 +990,8 @@ export function SettingsPage({
               <ShieldCheck />
               <AlertTitle>工具在任务容器中隔离</AlertTitle>
               <AlertDescription>
-                AgentCore 位于控制面；Shell、文件与浏览器工具进入任务专属 Docker 容器。仍请只配置可信目录并限制容器网络和资源。
+                AgentCore 位于控制面；Shell、文件与浏览器工具进入任务专属 Docker
+                容器。仍请只配置可信目录并限制容器网络和资源。
               </AlertDescription>
             </Alert>
           </div>

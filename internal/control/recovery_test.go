@@ -92,40 +92,6 @@ func TestStartupRepairsFailedPlanningParseAfterToolCreatedChildren(t *testing.T)
 	}
 }
 
-func TestStartupMigratesBlockedExecutionFailureToTerminalIssue(t *testing.T) {
-	store := configuredStore(t)
-	dataDir := store.DataDir()
-	issue, err := store.CreateIssue(CreateIssueInput{Title: "Legacy blocked failure", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	execution, err := store.createExecution(issue, "backend-engineer", "work")
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	if err = store.updateExecution(execution.ID, map[string]any{"status": "failed", "error": "runtime failed", "finished_at": now}); err != nil {
-		t.Fatal(err)
-	}
-	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
-		"status": "blocked", "execution_phase": "blocked", "current_execution_id": execution.ID,
-		"checkout_execution_id": execution.ID, "error": "runtime failed", "updated_at": now,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := NewStore(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := reopened.GetIssue(issue.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if migrated.Status != "done" || !hasIssueLabel(migrated, issueLabelFailed) || migrated.ExecutionPhase != "completed" || migrated.CompletedAt == nil || migrated.CheckoutExecutionID != "" {
-		t.Fatalf("legacy blocked execution failure was not migrated: %+v", migrated)
-	}
-}
-
 func createPlanningToolResult(t *testing.T, store *Store) (Issue, Execution, IssueDecomposition) {
 	t.Helper()
 	parent, err := store.CreateIssue(CreateIssueInput{
@@ -151,7 +117,7 @@ func createPlanningToolResult(t *testing.T, store *Store) (Issue, Execution, Iss
 		RequestKey: "initial-plan", Summary: "Split backend and frontend work.",
 		Children: []SubIssueSpec{
 			{Title: "Implement backend", Objective: "Backend tests pass.", Priority: "high", AgentID: "backend-engineer"},
-			{Title: "Implement frontend", Objective: "Frontend build passes.", Priority: "medium", AgentID: "frontend-engineer", DependsOn: []int{}},
+			{Title: "Implement frontend", Objective: "Frontend build passes.", Priority: "middle", AgentID: "frontend-engineer", DependsOn: []int{}},
 		},
 	})
 	if err != nil {
@@ -163,7 +129,7 @@ func createPlanningToolResult(t *testing.T, store *Store) (Issue, Execution, Iss
 func TestRuntimeRecordsToolCheckpointsForRecovery(t *testing.T) {
 	store := configuredStore(t)
 	issue, _ := store.CreateIssue(CreateIssueInput{
-		Title: "Checkpoint tools", Objective: "Record progress.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Checkpoint tools", Objective: "Record progress.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	execution, _ := store.createExecution(issue, "backend-engineer", "work")
 	manager := &Manager{store: store, sessions: map[string]*PiSession{}}

@@ -12,7 +12,7 @@ import (
 func TestIssueCompletionGuardContinuesSameSessionForUnfinishedChildren(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Still running", Objective: "Finish evidence", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Still running", Objective: "Finish evidence", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	execution, _ := store.createExecution(parent, "backend-engineer", "continuation")
 	parent, _ = store.CheckoutIssue(parent.ID, CheckoutIssueInput{AgentID: "backend-engineer", ExecutionID: execution.ID, ExpectedStatuses: []string{"todo"}})
 	var input bytes.Buffer
@@ -43,8 +43,8 @@ func TestIssueCompletionGuardContinuesSameSessionForUnfinishedChildren(t *testin
 func TestFailedChildIsTerminalForCompletionAndDependencies(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	failedChild, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Failed prerequisite", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
-	dependent, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Dependent work", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	failedChild, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Failed prerequisite", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	dependent, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Dependent work", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	now := time.Now()
 	if err := store.db.Create(&IssueRelation{ID: nextID("relation"), IssueID: failedChild.ID, RelatedIssueID: dependent.ID, Type: "blocks", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestExecutionFailureMarksIssueTerminal(t *testing.T) {
 func TestAgentCanSummarizeBeforeCancellingDirectChild(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Partial child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Partial child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	parentExecution, _ := store.createExecution(parent, "backend-engineer", "continuation")
 	childExecution, _ := store.createExecution(child, "frontend-engineer", "work")
 	_, _ = store.CheckoutIssue(child.ID, CheckoutIssueInput{AgentID: "frontend-engineer", ExecutionID: childExecution.ID, ExpectedStatuses: []string{"todo"}})
@@ -124,7 +124,7 @@ func (nopWriteCloser) Close() error { return nil }
 func TestAgentCanCancelOnlyDirectChildAndItsSubtree(t *testing.T) {
 	store := configuredStore(t)
 	parent, _ := store.CreateIssue(CreateIssueInput{Title: "Parent", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
-	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Obsolete child", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	child, _ := store.CreateIssue(CreateIssueInput{ParentID: parent.ID, Title: "Obsolete child", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	grandchild, _ := store.CreateIssue(CreateIssueInput{ParentID: child.ID, Title: "Nested work", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	other, _ := store.CreateIssue(CreateIssueInput{Title: "Other task", Priority: "low", WorkMode: "autonomous"})
 	parentExecution, _ := store.createExecution(parent, "backend-engineer", "continuation")

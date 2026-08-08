@@ -91,6 +91,10 @@ export interface Task {
   createdAt: string
   updatedAt: string
 }
+export interface TaskDetail {
+  task: Task
+  inputAttachments: InputAttachment[]
+}
 export interface TaskAudit {
   id: string
   taskId?: string
@@ -226,11 +230,7 @@ export interface ContainerProfileDeleteResult {
   deletedExecutions: number
 }
 export type IssueStatus =
-  | "todo"
-  | "in_progress"
-  | "in_review"
-  | "done"
-  | "cancelled"
+  "todo" | "in_progress" | "in_review" | "done" | "cancelled"
 // Operational outcomes ride as labels alongside the five workflow statuses.
 export type IssueLabel = "blocked" | "failed" | "budget_exceeded"
 export type IssueExecutionPhase =
@@ -577,7 +577,7 @@ export interface CursorPage<T> {
   page: PageInfo
 }
 export interface TaskCancellationResult {
-  task: Issue
+  task: Task
   totalIssues: number
   cancelledIssues: number
   cancelledExecutions: number
@@ -625,7 +625,7 @@ export interface TaskTimelineEvent {
   createdAt: string
 }
 export interface TaskTimeline {
-  task: Issue
+  task: Task
   issueCount: number
   events: TaskTimelineEvent[]
 }
@@ -838,6 +838,7 @@ export interface SaveConfigInput {
 export interface CreateIssueInput {
   projectId?: string
   parentId?: string
+  taskSourceId?: string
   title: string
   description: string
   objective: string

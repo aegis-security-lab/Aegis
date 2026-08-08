@@ -16,15 +16,9 @@ export const workflowStatusLabels: Record<IssueStatus, string> = {
   cancelled: "已取消",
 }
 
-// Workflow status is the five-state business projection. Older data may still
-// carry legacy statuses until the backend startup migration rewrites them, so
-// map them defensively onto the five-state vocabulary.
-export function issueWorkflowStatus(status: IssueStatus | string): IssueStatus {
-  if (status === "backlog") return "todo"
-  if (status === "blocked") return "in_progress"
-  if (status === "failed" || status === "budget_exceeded") return "done"
-  if (!workflowStatuses.includes(status as IssueStatus)) return "todo"
-  return status as IssueStatus
+export function issueWorkflowStatus(status: IssueStatus): IssueStatus {
+  if (!workflowStatuses.includes(status)) return "todo"
+  return status
 }
 
 export const issueLabelMeta: Record<

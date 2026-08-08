@@ -80,6 +80,46 @@ func TestBoardAutonomyDelegationAlwaysCreatesChildIssues(t *testing.T) {
 	}
 }
 
+func TestBoardAutonomyRootCompletionDoesNotNotifySyntheticParent(t *testing.T) {
+	payload, _ := json.Marshal(coordination.Completion{Result: "done", Success: true})
+	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
+		ID: "root-completed", Type: coordination.EventIssueCompleted, CoordinationID: "root", IssueID: "root",
+		AgentID: "worker", ParentAgentID: "operator", OccurredAt: time.Now(), Payload: payload,
+	}, coordination.Binding{}, coordination.Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 0 {
+		t.Fatalf("root completion created invalid parent notifications: %+v", effects)
+	}
+}
+
+func TestBoardAutonomyChildCompletionTargetsRealParent(t *testing.T) {
+	payload, _ := json.Marshal(coordination.Completion{Result: "verified", Success: true, ChildID: "child"})
+	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
+		ID: "child-completed", Type: coordination.EventIssueCompleted, CoordinationID: "root",
+		IssueID: "child", ParentIssueID: "parent", AgentID: "worker", TaskAgentID: "task-child",
+		ParentAgentID: "lead", ParentTaskAgentID: "task-parent", OccurredAt: time.Now(), Payload: payload,
+	}, coordination.Binding{}, coordination.Snapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 2 || effects[0].Type != coordination.EffectSendRelay || effects[1].Type != coordination.EffectDeliverMessage {
+		t.Fatalf("effects=%+v", effects)
+	}
+	var relay coordination.RelayCommand
+	if err = json.Unmarshal(effects[0].Payload, &relay); err != nil {
+		t.Fatal(err)
+	}
+	var delivery coordination.AgentCommand
+	if err = json.Unmarshal(effects[1].Payload, &delivery); err != nil {
+		t.Fatal(err)
+	}
+	if relay.RecipientID != "lead" || relay.RecipientTaskAgentID != "task-parent" || delivery.AgentID != "lead" || delivery.IssueID != "parent" || delivery.Message == "" {
+		t.Fatalf("relay=%+v delivery=%+v", relay, delivery)
+	}
+}
+
 func TestBoardAutonomyHeartbeatDoesNotSteerActiveModelLoop(t *testing.T) {
 	base := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	payload, _ := json.Marshal(coordination.WakeupPayload{Kind: "heartbeat", RequestedAt: base.Add(-time.Minute), WakeAfterSeconds: 60})

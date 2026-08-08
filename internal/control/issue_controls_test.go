@@ -15,7 +15,7 @@ func TestManualAbandonSteersOwnerToSummarizeThenSkipsValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	child, err := store.CreateIssue(CreateIssueInput{
-		ParentID: parent.ID, Title: "Child", Objective: "Complete the child.", Priority: "medium",
+		ParentID: parent.ID, Title: "Child", Objective: "Complete the child.", Priority: "middle",
 		WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
@@ -179,7 +179,7 @@ func TestDisableValidationStopsCurrentValidatorAndCompletesCandidate(t *testing.
 func TestDisabledValidationPersistsAcrossWorkerCompletion(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Permanently skip validation", Objective: "Complete without validator.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Permanently skip validation", Objective: "Complete without validator.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func TestDisableValidationAdoptsCandidateBlockedAtValidationLimit(t *testing.T) 
 func TestRestartFinalizesPendingAbandonmentWithoutReexecutingWork(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Cancellation summary interrupted", Objective: "Stop this objective.", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+		Title: "Cancellation summary interrupted", Objective: "Stop this objective.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
 		t.Fatal(err)

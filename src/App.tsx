@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { AppShell } from "@/components/app-shell"
 import { ErrorBoundary } from "@/components/error-boundary"
+import { PageSkeleton } from "@/components/page-skeleton"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -10,7 +11,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Spinner } from "@/components/ui/spinner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useAppState } from "@/lib/state"
 const AgentsPage = React.lazy(() =>
   import("@/pages/agents").then((module) => ({ default: module.AgentsPage }))
@@ -120,24 +121,12 @@ export function App() {
   const { state, loading, error, refresh } = useAppState()
   const location = useLocation()
   if (loading || !state) {
-    return (
-      <div className="flex min-h-svh items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
-          <Spinner className="size-5" />
-          <span>{error ?? "正在连接 Aegis Control Plane…"}</span>
-          {error ? (
-            <Button variant="outline" size="sm" onClick={() => void refresh()}>
-              重试
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    )
+    return <AppBootState error={error} onRetry={() => void refresh()} />
   }
   if (!state.configured) {
     return (
       <ErrorBoundary resetKey={location.pathname}>
-        <React.Suspense fallback={<PageLoader />}>
+        <React.Suspense fallback={<PageSkeleton />}>
           <Routes>
             <Route path="/setup" element={<SetupPage />} />
             <Route path="*" element={<Navigate to="/setup" replace />} />
@@ -148,7 +137,7 @@ export function App() {
   }
   return (
     <ErrorBoundary resetKey={location.pathname}>
-      <React.Suspense fallback={<PageLoader />}>
+      <React.Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/setup" element={<Navigate to="/" replace />} />
           <Route element={<AppShell />}>
@@ -160,9 +149,9 @@ export function App() {
             />
             <Route path="tasks" element={<TasksPage />} />
             <Route path="tasks/new" element={<TaskNewPage />} />
-            <Route path="tasks/:issueId/issues" element={<IssuesPage />} />
-            <Route path="tasks/:issueId/board" element={<TaskBoardPage />} />
-            <Route path="tasks/:issueId" element={<TaskDetailPage />} />
+            <Route path="tasks/:taskId/issues" element={<IssuesPage />} />
+            <Route path="tasks/:taskId/board" element={<TaskBoardPage />} />
+            <Route path="tasks/:taskId" element={<TaskDetailPage />} />
             <Route path="timeline" element={<TimelinePage />} />
             <Route path="issues" element={<IssuesPage />} />
             <Route path="issues/:issueId" element={<IssueDetailPage />} />
@@ -175,7 +164,10 @@ export function App() {
               element={<KnowledgeBaseDetailPage />}
             />
             <Route path="sessions" element={<SessionsPage />} />
-            <Route path="sessions/:executionId" element={<SessionDetailPage />} />
+            <Route
+              path="sessions/:executionId"
+              element={<SessionDetailPage />}
+            />
             <Route path="approvals" element={<ApprovalsPage />} />
             <Route path="containers" element={<ContainersPage />} />
             <Route path="security/findings" element={<FindingsPage />} />
@@ -190,10 +182,54 @@ export function App() {
   )
 }
 
-function PageLoader() {
+function AppBootState({
+  error,
+  onRetry,
+}: {
+  error: string | null
+  onRetry: () => void
+}) {
   return (
-    <div className="flex min-h-64 items-center justify-center">
-      <Spinner className="size-5 text-muted-foreground" />
+    <div className="grid min-h-svh grid-cols-[4.5rem_minmax(0,1fr)] bg-background sm:grid-cols-[15rem_minmax(0,1fr)]">
+      <aside className="border-r border-border/70 p-3" aria-hidden="true">
+        <Skeleton className="size-8" />
+        <div className="mt-8 flex flex-col gap-3">
+          <Skeleton className="h-7 w-full" />
+          <Skeleton className="h-7 w-4/5" />
+          <Skeleton className="h-7 w-11/12" />
+        </div>
+      </aside>
+      <main className="min-w-0 p-2">
+        <Skeleton className="h-9 w-56 rounded-full" />
+        <div className="mt-2 min-h-[calc(100svh-3.5rem)] rounded-2xl bg-card p-5 ring-1 ring-foreground/5">
+          <div className="mx-auto flex max-w-5xl flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-2.5 w-28" />
+              <Skeleton className="h-8 w-48" />
+            </div>
+            {error ? (
+              <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-6 text-center">
+                <p className="text-sm font-medium">无法连接控制平面</p>
+                <p className="max-w-md text-xs text-muted-foreground">
+                  {error}
+                </p>
+                <Button variant="outline" size="sm" onClick={onRetry}>
+                  重试
+                </Button>
+              </div>
+            ) : (
+              <div
+                className="grid gap-4 lg:grid-cols-2"
+                aria-label="正在连接 Aegis Control Plane"
+              >
+                <Skeleton className="h-52 w-full rounded-xl" />
+                <Skeleton className="h-52 w-full rounded-xl" />
+                <span className="sr-only">正在连接 Aegis Control Plane…</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
     </div>
   )
 }

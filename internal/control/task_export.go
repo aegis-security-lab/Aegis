@@ -442,27 +442,14 @@ func (m *Manager) collectTaskEvidence(ctx context.Context, requestedID string) (
 
 func resolveTaskExportScope(tx *gorm.DB, requestedID string) (TaskEvidenceScope, error) {
 	var task Task
-	if err := tx.First(&task, "id = ?", requestedID).Error; err == nil {
-		var roots []Issue
-		if err := tx.Where("task_source_id = ? AND parent_id = ?", task.ID, "").Order("created_at asc, number asc").Find(&roots).Error; err != nil {
-			return TaskEvidenceScope{}, err
-		}
-		return TaskEvidenceScope{Task: &task, RootIssues: roots}, nil
-	}
-	var issue Issue
-	if err := tx.First(&issue, "id = ?", requestedID).Error; err != nil {
+	if err := tx.First(&task, "id = ?", requestedID).Error; err != nil {
 		return TaskEvidenceScope{}, ErrTaskEvidenceNotFound
 	}
-	for issue.ParentID != "" {
-		if err := tx.First(&issue, "id = ?", issue.ParentID).Error; err != nil {
-			return TaskEvidenceScope{}, err
-		}
+	var roots []Issue
+	if err := tx.Where("task_source_id = ? AND parent_id = ?", task.ID, "").Order("created_at asc, number asc").Find(&roots).Error; err != nil {
+		return TaskEvidenceScope{}, err
 	}
-	scope := TaskEvidenceScope{RootIssues: []Issue{issue}}
-	if issue.TaskSourceID != "" && tx.First(&task, "id = ?", issue.TaskSourceID).Error == nil {
-		scope.Task = &task
-	}
-	return scope, nil
+	return TaskEvidenceScope{Task: &task, RootIssues: roots}, nil
 }
 
 func taskTreeIssues(tx *gorm.DB, roots []Issue) ([]Issue, error) {
