@@ -298,6 +298,21 @@ export const createTask = (input: CreateIssueInput) =>
     method: "POST",
     body: JSON.stringify(input),
   })
+export const fetchTaskTemplates = () =>
+  request<{ templates: import("@/types").TaskTemplate[] }>(
+    "/api/task-templates"
+  )
+export const saveTaskTemplate = (
+  input: Omit<import("@/types").TaskTemplate, "id" | "createdAt" | "updatedAt">
+) =>
+  request<import("@/types").TaskTemplate>("/api/task-templates", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })
+export const deleteTaskTemplate = (id: string) =>
+  request<void>(`/api/task-templates/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
 export const fetchTask = (id: string) =>
   request<TaskDetail>(`/api/tasks/${encodeURIComponent(id)}`)
 export const updateIssue = (id: string, input: Partial<Issue>) =>

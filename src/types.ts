@@ -90,6 +90,18 @@ export interface Task {
   createdAt: string
   updatedAt: string
 }
+export interface TaskTemplate {
+  id: string
+  title: string
+  description: string
+  objective: string
+  priority: "high" | "middle" | "low"
+  assigneeAgentId?: string
+  timeBudgetMinutes?: number
+  humanValidationFallback: boolean
+  createdAt: string
+  updatedAt: string
+}
 export interface TaskDetail {
   task: Task
   inputAttachments: InputAttachment[]

@@ -2,6 +2,8 @@ import * as React from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   Bot,
   CheckCircle2,
   ClipboardCheck,
@@ -15,7 +17,7 @@ import { toast } from "sonner"
 
 import { MarkdownContent } from "@/components/markdown-content"
 import { StatusBadge } from "@/components/status-badge"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Empty,
   EmptyDescription,
@@ -173,36 +175,71 @@ function VirtualTimeline({
   })
   const virtualItems = virtualizer.getVirtualItems()
 
+  const jump = (direction: -1 | 1) => {
+    const visible = virtualizer.getVirtualItems()
+    const current = visible.find(
+      (item) => item.end > (virtualizer.scrollOffset ?? 0) + 8
+    )
+    const index = Math.min(
+      events.length - 1,
+      Math.max(0, (current?.index ?? 0) + direction)
+    )
+    virtualizer.scrollToIndex(index, { align: "start", behavior: "smooth" })
+  }
+
   return (
-    <ScrollArea
-      viewportRef={viewportRef}
-      className={className ?? "min-h-0 flex-1"}
-    >
-      <section
-        aria-label="任务关键事件"
-        className="relative px-4 pt-4 pr-6"
-        style={{ height: virtualizer.getTotalSize() + 16 }}
-      >
-        {virtualItems.map((virtualItem) => {
-          const event = events[virtualItem.index]
-          if (!event) return null
-          return (
-            <div
-              key={event.id}
-              ref={virtualizer.measureElement}
-              data-index={virtualItem.index}
-              className="absolute top-4 left-4 w-[calc(100%-2.5rem)]"
-              style={{ transform: `translateY(${virtualItem.start}px)` }}
-            >
-              <TimelineItem
-                event={event}
-                last={virtualItem.index === events.length - 1}
-              />
-            </div>
-          )
-        })}
-      </section>
-    </ScrollArea>
+    <div className={cn("relative min-h-0", className ?? "flex-1")}>
+      <ScrollArea viewportRef={viewportRef} className="size-full">
+        <section
+          aria-label="任务关键事件"
+          className="relative px-3 pt-2 pr-5"
+          style={{ height: virtualizer.getTotalSize() + 8 }}
+        >
+          {virtualItems.map((virtualItem) => {
+            const event = events[virtualItem.index]
+            if (!event) return null
+            return (
+              <div
+                key={event.id}
+                ref={virtualizer.measureElement}
+                data-index={virtualItem.index}
+                className="absolute top-2 left-3 w-[calc(100%-2rem)]"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+                <TimelineItem
+                  event={event}
+                  last={virtualItem.index === events.length - 1}
+                />
+              </div>
+            )
+          })}
+        </section>
+      </ScrollArea>
+      <div className="absolute right-4 bottom-4 z-10 flex flex-col gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          className="rounded-full bg-background/90 shadow-md backdrop-blur"
+          aria-label="上一个时间节点"
+          title="上一个时间节点"
+          onClick={() => jump(-1)}
+        >
+          <ArrowUp />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          className="rounded-full bg-background/90 shadow-md backdrop-blur"
+          aria-label="下一个时间节点"
+          title="下一个时间节点"
+          onClick={() => jump(1)}
+        >
+          <ArrowDown />
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -219,26 +256,32 @@ function TimelineItem({
   const content = showDetail ? detail : summary
 
   return (
-    <article className="grid grid-cols-[92px_minmax(0,1fr)] gap-3 pb-4">
-      <div className="relative flex items-start gap-2">
-        {!last ? (
-          <span className="absolute top-8 bottom-0 left-4 w-px bg-border" />
-        ) : null}
-        <span className="relative flex size-8 items-center justify-center rounded-full border bg-background text-muted-foreground">
-          <EventIcon kind={event.kind} />
-        </span>
-        <time className="pt-1 text-[11px] leading-4 text-muted-foreground">
-          {formatTime(event.createdAt)}
-        </time>
-      </div>
-      <div className="min-w-0 rounded-lg py-4 transition-colors hover:bg-muted/40">
-        <div className="flex min-w-0 flex-col gap-1 px-4">
+    <article className="group relative min-w-0 pl-10">
+      {!last ? (
+        <span className="absolute top-8 bottom-0 left-4 w-px bg-border" />
+      ) : null}
+      <span className="absolute top-0 left-0 flex size-8 items-center justify-center rounded-full border bg-background text-muted-foreground">
+        <EventIcon kind={event.kind} />
+      </span>
+      <div
+        className={cn(
+          "min-w-0 border-b border-border/60 pb-5",
+          last && "border-b-0"
+        )}
+      >
+        <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-start gap-2">
             <p className="min-w-0 flex-1 text-sm leading-5 font-medium">
               {event.title}
             </p>
-            <span className="flex shrink-0 items-center gap-2">
+            <span className="flex shrink-0 items-center gap-1.5">
               {event.status ? <StatusBadge status={event.status} /> : null}
+              <time
+                className="max-w-0 overflow-hidden text-[10px] leading-5 whitespace-nowrap text-muted-foreground opacity-0 transition-[max-width,opacity] group-hover:max-w-24 group-hover:opacity-100"
+                title={formatTime(event.createdAt)}
+              >
+                {formatTime(event.createdAt)}
+              </time>
             </span>
           </div>
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -253,22 +296,16 @@ function TimelineItem({
             <span>{event.issueIdentifier}</span>
           </p>
         </div>
-        <div className="flex flex-col gap-3 px-4 pt-2">
+        <div className="flex min-w-0 flex-col gap-3 pt-2">
           {summary ? (
-            <p className="text-sm font-medium break-words">{summary}</p>
+            <MarkdownContent className="text-sm font-medium break-words">
+              {summary}
+            </MarkdownContent>
           ) : null}
           {content && content !== summary ? (
-            content.length > 500 ? (
-              <ScrollArea className="h-36 rounded-lg border bg-muted/20 p-3">
-                <MarkdownContent className="pr-3 text-sm">
-                  {content}
-                </MarkdownContent>
-              </ScrollArea>
-            ) : (
-              <MarkdownContent className="text-sm text-muted-foreground">
-                {content}
-              </MarkdownContent>
-            )
+            <MarkdownContent className="min-w-0 text-sm text-muted-foreground">
+              {content}
+            </MarkdownContent>
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Link

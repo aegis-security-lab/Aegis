@@ -10,6 +10,7 @@ import {
   TimeBudgetControl,
 } from "@/components/issue-option-controls"
 import { useInputAttachments } from "@/hooks/use-input-attachments"
+import { TaskTemplateControls } from "@/components/task-template-controls"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -208,7 +209,25 @@ export function TaskNewPage() {
               </>
             }
           />
-          <DialogFooter className="mt-5">
+          <DialogFooter className="mt-5 gap-3 sm:justify-between">
+            <TaskTemplateControls
+              form={form}
+              selectedAgentId={selectedAgentId}
+              objectiveEnabled={objectiveEnabled}
+              onApply={(template) => {
+                setForm((current) => ({
+                  ...current,
+                  title: template.title,
+                  description: template.description,
+                  objective: template.objective,
+                  priority: template.priority,
+                  assigneeAgentId: template.assigneeAgentId,
+                  timeBudgetMinutes: template.timeBudgetMinutes,
+                  humanValidationFallback: template.humanValidationFallback,
+                }))
+                setObjectiveEnabled(Boolean(template.objective))
+              }}
+            />
             <Button
               type="submit"
               size="lg"

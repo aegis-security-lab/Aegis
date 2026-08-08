@@ -758,6 +758,33 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusCreated, gin.H{"task": task, "issue": issue})
 	})
+	api.GET("/task-templates", func(c *gin.Context) {
+		templates, err := store.TaskTemplates()
+		if err != nil {
+			writeError(c, http.StatusInternalServerError, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"templates": templates})
+	})
+	api.PUT("/task-templates", func(c *gin.Context) {
+		var in control.TaskTemplate
+		if !bindJSON(c, &in) {
+			return
+		}
+		template, err := store.SaveTaskTemplate(in)
+		if err != nil {
+			writeError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		c.JSON(http.StatusOK, template)
+	})
+	api.DELETE("/task-templates/:id", func(c *gin.Context) {
+		if err := store.DeleteTaskTemplate(c.Param("id")); err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 	api.POST("/tasks/attachments", func(c *gin.Context) {
 		receiveInputAttachment(c, store, "task", "")
 	})

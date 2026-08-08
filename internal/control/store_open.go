@@ -33,6 +33,9 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := ensureDefaultContainerProfile(db, time.Now()); err != nil {
 		return nil, err
 	}
+	if err := ensureDefaultTaskTemplates(db, time.Now()); err != nil {
+		return nil, err
+	}
 	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), updatedAt: time.Now()}
 	if err := s.loadConfig(); err != nil {
 		return nil, err
@@ -118,7 +121,7 @@ func initializeStoreSchema(db *gorm.DB) error {
 	models := []any{
 		&configRecord{}, &agentRecord{}, &skillRecord{}, &uncoverProviderRecord{},
 		&KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{},
-		&Task{}, &TaskReport{}, &TaskAudit{}, &TaskAuditEvent{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{},
+		&Task{}, &TaskTemplate{}, &taskTemplateSeedRecord{}, &TaskReport{}, &TaskAudit{}, &TaskAuditEvent{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{},
 		&IssueRelation{}, &Execution{}, &IssueObjective{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{},
 		&Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{},
 		&IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{},

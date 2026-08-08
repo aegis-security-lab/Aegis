@@ -113,9 +113,9 @@ export function IssueBriefComposer({
               value={objective ?? ""}
               onValueChange={onObjectiveChange}
               issues={mentionIssues}
-              placeholder="补充独立的验收目标…"
-              aria-label="目标"
-              className="min-h-20 resize-none rounded-none border-0 bg-transparent px-1 py-2 text-sm leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
+              placeholder="描述可验证的完成标准、结果和质量要求…"
+              aria-label="验收目标"
+              className="min-h-16 resize-none rounded-none border-0 bg-transparent px-1 py-2 text-[13px] leading-5.5 font-medium tracking-[0.01em] text-foreground/80 shadow-none placeholder:font-normal placeholder:tracking-normal placeholder:text-muted-foreground focus-visible:ring-0 dark:bg-transparent"
             />
           ) : null
         }

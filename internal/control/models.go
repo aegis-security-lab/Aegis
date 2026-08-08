@@ -216,6 +216,20 @@ type Task struct {
 	UpdatedAt               time.Time `json:"updatedAt"`
 }
 
+// TaskTemplate is a reusable task-creation form keyed by its title.
+type TaskTemplate struct {
+	ID                      string    `json:"id" gorm:"primaryKey"`
+	Title                   string    `json:"title" gorm:"uniqueIndex"`
+	Description             string    `json:"description" gorm:"type:text"`
+	Objective               string    `json:"objective" gorm:"type:text"`
+	Priority                string    `json:"priority"`
+	AssigneeAgentID         string    `json:"assigneeAgentId,omitempty"`
+	TimeBudgetMinutes       *int      `json:"timeBudgetMinutes,omitempty"`
+	HumanValidationFallback bool      `json:"humanValidationFallback"`
+	CreatedAt               time.Time `json:"createdAt"`
+	UpdatedAt               time.Time `json:"updatedAt"`
+}
+
 // TaskDetail contains Task-owned data only. Issue executions and their
 // histories remain available through the Task timeline and Issue pages.
 type TaskDetail struct {
