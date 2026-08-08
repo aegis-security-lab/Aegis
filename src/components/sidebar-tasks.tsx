@@ -44,9 +44,6 @@ export function SidebarTaskGroup() {
         (issue) => issue.id === routeIssueId && !issue.parentId
       )?.taskSourceId ?? null)
     : null
-  const [expandedTaskId, setExpandedTaskId] = React.useState<string | null>(
-    () => activeTaskId
-  )
 
   return (
     <div className="mt-2 pt-2 group-data-[collapsible=icon]:hidden">
@@ -74,34 +71,92 @@ export function SidebarTaskGroup() {
             <span>全部任务</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        {tasks.map((task) => (
-          <TaskSidebarItem
-            key={task.id}
-            task={task}
-            latest={latestRunByTask.get(task.id)}
-            expanded={expandedTaskId === task.id}
-            onToggle={() =>
-              setExpandedTaskId((current) =>
-                current === task.id ? null : task.id
-              )
-            }
-          />
-        ))}
+        <TaskList
+          key={activeTaskId ?? "no-task"}
+          tasks={tasks}
+          latestRunByTask={latestRunByTask}
+          activeTaskId={activeTaskId}
+          locationPathname={location.pathname}
+        />
       </SidebarMenu>
     </div>
+  )
+}
+
+function TaskList({
+  tasks,
+  latestRunByTask,
+  activeTaskId,
+  locationPathname,
+}: {
+  tasks: Task[]
+  latestRunByTask: Map<string, Issue>
+  activeTaskId: string | null
+  locationPathname: string
+}) {
+  const [expandedTaskId, setExpandedTaskId] = React.useState<string | null>(
+    () => activeTaskId
+  )
+  const taskRowRefs = React.useRef(new Map<string, HTMLDivElement>())
+
+  // Keep the active task visible: scroll it to the middle of the sidebar.
+  React.useEffect(() => {
+    if (!activeTaskId) return
+    const frame = window.requestAnimationFrame(() => {
+      const container = document.querySelector(
+        '[data-slot="sidebar-content"]'
+      )
+      const row = taskRowRefs.current.get(activeTaskId)
+      if (!container || !row) return
+      const containerRect = container.getBoundingClientRect()
+      const rowRect = row.getBoundingClientRect()
+      const target =
+        container.scrollTop +
+        (rowRect.top - containerRect.top) -
+        (containerRect.height - rowRect.height) / 2
+      container.scrollTo({ top: target, behavior: "smooth" })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeTaskId, expandedTaskId, locationPathname])
+
+  return (
+    <>
+      {tasks.map((task) => (
+        <TaskSidebarItem
+          key={task.id}
+          task={task}
+          latest={latestRunByTask.get(task.id)}
+          active={task.id === activeTaskId}
+          expanded={expandedTaskId === task.id}
+          onToggle={() =>
+            setExpandedTaskId((current) =>
+              current === task.id ? null : task.id
+            )
+          }
+          rowRef={(element) => {
+            if (element) taskRowRefs.current.set(task.id, element)
+            else taskRowRefs.current.delete(task.id)
+          }}
+        />
+      ))}
+    </>
   )
 }
 
 function TaskSidebarItem({
   task,
   latest,
+  active,
   expanded,
   onToggle,
+  rowRef,
 }: {
   task: Task
   latest?: Issue
+  active: boolean
   expanded: boolean
   onToggle: () => void
+  rowRef: (element: HTMLDivElement | null) => void
 }) {
   const location = useLocation()
   const homeTo = latest ? `/tasks/${latest.id}` : "/tasks"
@@ -112,7 +167,13 @@ function TaskSidebarItem({
   return (
     <SidebarMenuItem>
       <div
-        className="flex h-7 min-w-0 items-center gap-0.5 rounded-md pr-8 text-[0.8rem] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        ref={rowRef}
+        className={cn(
+          "flex h-7 min-w-0 items-center gap-0.5 rounded-md pr-8 text-[0.8rem] text-sidebar-foreground transition-colors",
+          active
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
       >
         <button
           type="button"
@@ -190,6 +251,8 @@ function TaskSidebarItem({
 function matchIssueId(pathname: string) {
   const boardMatch = pathname.match(/^\/tasks\/([^/]+)\/board$/)
   if (boardMatch) return boardMatch[1]
+  const issuesMatch = pathname.match(/^\/tasks\/([^/]+)\/issues$/)
+  if (issuesMatch) return issuesMatch[1]
   const taskMatch = pathname.match(/^\/tasks\/([^/]+)$/)
   if (taskMatch) return taskMatch[1]
   const issueMatch = pathname.match(/^\/issues\/([^/]+)$/)

@@ -113,6 +113,9 @@ export function AppShell() {
   React.useEffect(() => {
     if (bootedRef.current) return
     bootedRef.current = true
+    // Restore the last active tab only on a fresh app open; an explicit
+    // deep link (refresh or shared URL) must not be hijacked.
+    if (location.pathname !== "/") return
     const active = tabs.find((tab) => tab.id === activeTabId)
     if (active && active.path !== location.pathname) navigate(active.path)
   }, [activeTabId, location.pathname, navigate, tabs])
