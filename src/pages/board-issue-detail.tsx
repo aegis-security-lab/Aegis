@@ -439,7 +439,6 @@ export function BoardIssueDetailPage() {
             sending={busy}
             placeholder="在 Board 上发表评论…"
             ariaLabel="发表评论"
-            sendLabel="发表评论"
             hint=""
           />
         </div>

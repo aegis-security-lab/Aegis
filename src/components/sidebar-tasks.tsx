@@ -137,6 +137,7 @@ function TaskList({
           key={task.id}
           task={task}
           latest={latestRunByTask.get(task.id)}
+          routeTaskId={activeTaskId}
           expanded={expandedTaskId === task.id}
           onToggle={() =>
             setExpandedTaskId((current) =>
@@ -156,12 +157,14 @@ function TaskList({
 function TaskSidebarItem({
   task,
   latest,
+  routeTaskId,
   expanded,
   onToggle,
   rowRef,
 }: {
   task: Task
   latest?: Issue
+  routeTaskId: string | null
   expanded: boolean
   onToggle: () => void
   rowRef: (element: HTMLDivElement | null) => void
@@ -171,6 +174,11 @@ function TaskSidebarItem({
   const issuesTo = latest ? `/tasks/${latest.id}/issues` : "/issues"
   const boardTo = latest ? `/tasks/${latest.id}/board` : undefined
   const label = task.title
+  const boardView = new URLSearchParams(location.search).get("view") === "board"
+  // Any issue detail page of this task (root or child) counts as its
+  // Issues entry; board view counts as its Board entry.
+  const routeIssueInTask =
+    routeTaskId === task.id && /^\/issues\/[^/]+$/.test(location.pathname)
 
   return (
     <SidebarMenuItem>
@@ -220,9 +228,7 @@ function TaskSidebarItem({
               isActive={
                 latest
                   ? location.pathname === `/tasks/${latest.id}/issues` ||
-                    (location.pathname === `/issues/${latest.id}` &&
-                      new URLSearchParams(location.search).get("view") !==
-                        "board")
+                    (routeIssueInTask && !boardView)
                   : false
               }
               render={<NavLink to={issuesTo ?? "/tasks"} end />}
@@ -236,9 +242,7 @@ function TaskSidebarItem({
               isActive={
                 latest
                   ? location.pathname === `/tasks/${latest.id}/board` ||
-                    (location.pathname === `/issues/${latest.id}` &&
-                      new URLSearchParams(location.search).get("view") ===
-                        "board")
+                    (routeIssueInTask && boardView)
                   : false
               }
               render={<NavLink to={boardTo ?? "/tasks"} end />}
