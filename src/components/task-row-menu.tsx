@@ -6,7 +6,7 @@ import {
   FileSearch,
   MoreHorizontal,
 } from "lucide-react"
-import { useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 
 import { CancelTaskDialog } from "@/components/cancel-task-dialog"
 import { TaskAuditDrawer } from "@/components/task-audit-drawer"
@@ -37,6 +37,7 @@ export function TaskRowMenu({
 }: TaskRowMenuProps) {
   const { state, refresh } = useAppState()
   const navigate = useNavigate()
+  const location = useLocation()
   const [auditOpen, setAuditOpen] = React.useState(false)
   const [cancelTarget, setCancelTarget] = React.useState<{
     taskId: string
@@ -74,6 +75,7 @@ export function TaskRowMenu({
   const clone = () => {
     navigate("/tasks/new", {
       state: {
+        backgroundLocation: location,
         clone: {
           projectId: task.projectId,
           title: task.title,

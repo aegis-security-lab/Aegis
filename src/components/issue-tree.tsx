@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { Link } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import {
   ChevronDown,
   CircleDotDashed,
@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { CopyIssueIdentifier } from "@/components/copy-issue-identifier"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -287,6 +288,7 @@ function TreeNode({
   open,
   onToggle,
 }: TreeNodeProps) {
+  const navigate = useNavigate()
   const branches = branchMap.get(issue.id) ?? []
   const hierarchyChildren = hierarchyChildrenMap.get(issue.id) ?? []
   const completed = hierarchyChildren.filter((child) =>
@@ -307,8 +309,22 @@ function TreeNode({
 
   return (
     <div
+      role="link"
+      tabIndex={0}
+      aria-label={`打开 ${issue.identifier} ${issue.title}`}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='menuitem']")) return
+        navigate(`/issues/${issue.id}`)
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          navigate(`/issues/${issue.id}`)
+        }
+      }}
       className={cn(
-        "group flex min-w-0 items-start gap-1.5 px-4 py-1 transition-colors hover:bg-muted/35",
+        "group flex min-w-0 cursor-pointer items-start gap-1.5 px-4 py-1 outline-none transition-colors hover:bg-muted/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60",
         depth > 0 && "border-l border-border/70"
       )}
       style={{ paddingLeft: 16 + Math.min(depth, 4) * 20 }}
@@ -335,13 +351,12 @@ function TreeNode({
 
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <Link
-            to={`/issues/${issue.id}`}
-            className="min-w-0 flex-1 basis-48 truncate text-sm font-medium hover:underline"
+          <span
+            className="min-w-0 flex-1 basis-48 truncate text-sm font-medium"
             title={issue.title}
           >
             {issue.title}
-          </Link>
+          </span>
           <IssueRuntimeBadge runtime={runtime} />
           {editableStatus ? (
             <IssueStatusSelect issue={issue} />
@@ -366,7 +381,7 @@ function TreeNode({
         </div>
 
         <div className="mt-1 flex min-w-0 flex-nowrap items-center gap-x-3 overflow-hidden text-xs text-muted-foreground [&>span]:shrink-0">
-          <span className="font-mono text-[11px]">{issue.identifier}</span>
+          <CopyIssueIdentifier identifier={issue.identifier} />
           <span>
             {taskAgentMap.get(issue.assigneeTaskAgentId ?? "") ??
               agentMap.get(issue.assigneeAgentId ?? "") ??

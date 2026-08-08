@@ -101,10 +101,15 @@ func openStoreDatabase(dataDir string) (*gorm.DB, error) {
 }
 
 func initializeStoreSchema(db *gorm.DB) error {
+	if db.Migrator().HasIndex(&TaskAgent{}, "idx_task_agent_name") {
+		if err := db.Migrator().DropIndex(&TaskAgent{}, "idx_task_agent_name"); err != nil {
+			return fmt.Errorf("remove retired task Agent alias index: %w", err)
+		}
+	}
 	models := []any{
 		&configRecord{}, &agentRecord{}, &skillRecord{}, &uncoverProviderRecord{},
 		&KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{},
-		&Task{}, &TaskAudit{}, &TaskAuditEvent{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{},
+		&Task{}, &TaskReport{}, &TaskAudit{}, &TaskAuditEvent{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{},
 		&IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{},
 		&Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{},
 		&IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{},

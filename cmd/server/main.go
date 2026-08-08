@@ -630,9 +630,6 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		c.JSON(http.StatusOK, gin.H{"agents": items})
 	})
-	api.GET("/agent-names", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"names": control.TaskAgentNameCatalog()})
-	})
 	api.GET("/tasks/:id/export", func(c *gin.Context) {
 		includeArtifacts, err := parseBoolQuery(c.Query("includeArtifacts"), true)
 		if err != nil {
@@ -1220,6 +1217,24 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 		}
 		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name})
 		c.DataFromReader(http.StatusOK, info.Size(), attachment.MimeType, file, map[string]string{
+			"Content-Disposition":    disposition,
+			"X-Content-Type-Options": "nosniff",
+		})
+	})
+	api.GET("/task-reports/:id", func(c *gin.Context) {
+		report, file, err := store.TaskReportFile(c.Param("id"))
+		if err != nil {
+			writeError(c, http.StatusNotFound, err)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil || info.Size() != report.Size {
+			writeError(c, http.StatusNotFound, errors.New("任务报告文件不存在或不完整"))
+			return
+		}
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": report.Name})
+		c.DataFromReader(http.StatusOK, info.Size(), report.MimeType, file, map[string]string{
 			"Content-Disposition":    disposition,
 			"X-Content-Type-Options": "nosniff",
 		})

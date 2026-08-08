@@ -94,6 +94,27 @@ export interface Task {
 export interface TaskDetail {
   task: Task
   inputAttachments: InputAttachment[]
+  rootReports: TaskRootReport[]
+}
+export interface TaskRootReport {
+  issueId: string
+  identifier: string
+  title: string
+  status: string
+  completedAt?: string
+  report?: TaskReport
+}
+export interface TaskReport {
+  id: string
+  taskId: string
+  rootIssueId: string
+  sourceExecutionId: string
+  name: string
+  mimeType: string
+  size: number
+  attachmentCount: number
+  createdAt: string
+  updatedAt: string
 }
 export interface TaskAudit {
   id: string

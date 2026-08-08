@@ -405,6 +405,7 @@ func (s *Store) changedLocked() {
 func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 	requestedWorkspace := strings.TrimSpace(input.Workspace)
 	parentWorkspace := ""
+	assigneeAgentName := ""
 	// Every visible root Issue belongs to a reusable Task. Creating an unsourced
 	// root therefore creates the Task aggregate instead of a task-less Issue.
 	if strings.TrimSpace(input.ParentID) == "" && strings.TrimSpace(input.TaskSourceID) == "" {
@@ -435,9 +436,11 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		return Issue{}, errors.New("invalid work mode")
 	}
 	if input.AssigneeAgentID != "" {
-		if _, err := s.assignableAgentType(input.AssigneeAgentID); err != nil {
+		agent, err := s.assignableAgentType(input.AssigneeAgentID)
+		if err != nil {
 			return Issue{}, err
 		}
+		assigneeAgentName = agent.Name
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -582,7 +585,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 				}
 				taskID = root.ID
 			}
-			identity, identityErr := claimTaskAgentTx(tx, taskID, issue.AssigneeAgentID, input.AssigneeTaskAgentID)
+			identity, identityErr := claimTaskAgentTx(tx, taskID, issue.AssigneeAgentID, assigneeAgentName, input.AssigneeTaskAgentID)
 			if identityErr != nil {
 				return identityErr
 			}
@@ -684,7 +687,28 @@ func (s *Store) GetTaskDetail(id string) (TaskDetail, error) {
 	if err = s.db.Where("task_id = ?", task.ID).Order("created_at asc, id asc").Find(&attachments).Error; err != nil {
 		return TaskDetail{}, err
 	}
-	return TaskDetail{Task: task, InputAttachments: attachments}, nil
+	var roots []Issue
+	if err = s.db.Where("task_source_id = ? AND parent_id = '' AND hidden = ?", task.ID, false).Order("number asc, id asc").Find(&roots).Error; err != nil {
+		return TaskDetail{}, err
+	}
+	var reports []TaskReport
+	if err = s.db.Where("task_id = ?", task.ID).Find(&reports).Error; err != nil {
+		return TaskDetail{}, err
+	}
+	reportByRoot := make(map[string]TaskReport, len(reports))
+	for _, report := range reports {
+		reportByRoot[report.RootIssueID] = report
+	}
+	rootReports := make([]TaskRootReport, 0, len(roots))
+	for _, root := range roots {
+		item := TaskRootReport{IssueID: root.ID, Identifier: root.Identifier, Title: root.Title, Status: root.Status, CompletedAt: root.CompletedAt}
+		if report, ok := reportByRoot[root.ID]; ok {
+			copy := report
+			item.Report = &copy
+		}
+		rootReports = append(rootReports, item)
+	}
+	return TaskDetail{Task: task, InputAttachments: attachments, RootReports: rootReports}, nil
 }
 
 func (s *Store) UpdateTaskBudget(id string, minutes *int) (Task, error) {
@@ -812,10 +836,13 @@ func (s *Store) GetExecutionEvent(id string) (ExecutionEvent, error) {
 }
 
 func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
+	assigneeAgentName := ""
 	if input.AssigneeAgentID != nil && *input.AssigneeAgentID != "" {
-		if _, e := s.assignableAgentType(*input.AssigneeAgentID); e != nil {
+		agent, e := s.assignableAgentType(*input.AssigneeAgentID)
+		if e != nil {
 			return Issue{}, e
 		}
+		assigneeAgentName = agent.Name
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -886,7 +913,7 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 			if rootErr != nil {
 				return Issue{}, rootErr
 			}
-			identity, identityErr := claimTaskAgentTx(s.db, root.ID, *input.AssigneeAgentID, "")
+			identity, identityErr := claimTaskAgentTx(s.db, root.ID, *input.AssigneeAgentID, assigneeAgentName, "")
 			if identityErr != nil {
 				return Issue{}, identityErr
 			}

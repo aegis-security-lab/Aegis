@@ -18,9 +18,9 @@ Use the system-provided Agent type roster to select the best role for each child
 Create only the next small, useful wave by calling the Phone Board shortcut phone_board_delegate exactly once with 2-%d independently verifiable Issues. Do not dispatch the entire project up front. The configured hierarchy permits depth %d and at most %d direct children per Issue. Every child scope must be realistically completable and verifiable within one Execution budget of %d model turns and %d active minutes. Split large repositories, modules, or audit surfaces into smaller outcome-based slices instead of assigning one Agent an exhaustive review of tens of thousands of lines. Every objective must state the concrete outcome and acceptance evidence. Continue useful parent work after dispatch; use phone_board_sleep only when no valuable action remains. Board heartbeats wake released waiting loops and do not interrupt active work; Phone messages may still steer when useful.`, i.Objective, i.Constraints, i.Workspace, maxPerRequest, maxDepth, maxDirect, budget.MaxTurns, budget.ActiveTimeMinutes)
 }
 func workerPrompt(i Issue, maxDepth, maxPerRequest, maxDirect int, budget IssueBudgetConfig) string {
-	completionInstruction := "Before ending the turn, you MUST call aegis_submit_final_result with a standalone result directly addressing the Issue objective. That explicit Agent action immediately publishes a delivery comment to Board and starts acceptance; the runtime will never copy your final prose into Board for you."
+	completionInstruction := "Before ending the turn, publish a complete standalone final report and every required supporting deliverable with aegis_publish_attachment, then call aegis_submit_final_result. The user-facing package contains only the attachments from this latest submission; neither your submission body nor your final chat prose is included. The report must let the user understand, verify, and reproduce the completed work without reading comments or earlier submissions. That explicit Agent action immediately starts acceptance."
 	if strings.TrimSpace(i.Objective) == "" {
-		completionInstruction = "Before ending the turn, you MUST call aegis_submit_final_result with a concise evidence-based result directly addressing the Issue. You may provide a deliverable file or directory; Aegis will complete the Issue after this explicit submission."
+		completionInstruction = "Before ending the turn, publish a complete standalone final report and every required supporting deliverable with aegis_publish_attachment, then call aegis_submit_final_result with a concise evidence-based result. Only the latest submission's attachments are user-facing, so they must be independently usable without your final prose or earlier submissions."
 	}
 	return fmt.Sprintf(`Complete this Issue in the real workspace.
 Issue %s: %s
@@ -29,7 +29,7 @@ Objective: %s
 Constraints: %s
 Workspace: %s
 Use tools to inspect and modify the project, run relevant validation, fix in-scope failures, and finish with a concise evidence-based report.
-For every user-facing deliverable file you generate (reports, archives, images, documents, or datasets), call aegis_publish_attachment before ending the turn so the tool uploads it directly to Aegis and mounts it on your completion comment. Source-code edits are collected separately and should not be published merely as attachments.
+For every user-facing deliverable file you generate (reports, archives, images, documents, or datasets), call aegis_publish_attachment before ending the turn so the tool uploads it directly to Aegis. Treat each final submission as a full replacement, never an incremental patch: if validation previously failed, publish a newly consolidated report/package containing all still-valid material and every correction. Source-code edits are collected separately, but the user-facing report must still document the completed work and reproducible verification evidence.
 
 This child Execution has a work budget of %d model turns and %d active minutes, followed only by a restricted summary window. If this Issue cannot be completed and verified inside that budget, call the Phone Board shortcut phone_board_delegate once with only the next small wave of 2-%d independently verifiable child Issues before doing broad exploration. Large modules, repositories, and audit surfaces must be split into smaller outcome-based slices; do not accept an exhaustive tens-of-thousands-of-lines scope as one Execution. Reusing the same Agent type is allowed because each Issue receives a unique task-local identity, Session and Phone. Continue useful work after dispatch. Use phone_board_sleep only when there is no valuable action left; heartbeats wake released waiting loops rather than interrupting active work, while child completion, comments or Phone Relay may still steer or wake this session.
 
@@ -134,7 +134,7 @@ func wakeupPrompt(i Issue, w AgentWakeup, db *gorm.DB) (string, error) {
 	if w.Reason == "issue_comment_mentioned" {
 		trigger = "You were explicitly mentioned in an Issue comment."
 	} else if w.Reason == "validation_feedback" {
-		trigger = "The acceptance Agent posted structured validation feedback. Continue the same Issue and respond through a new delivery comment when the work is ready for validation again."
+		trigger = "The acceptance Agent posted structured validation feedback. Continue the same Issue and submit a complete replacement delivery when the work is ready for validation again. The next user-facing package contains only that latest submission's attachments: consolidate the full final report and all required support files instead of publishing an addendum or delta."
 	}
 	validationInstruction := "If you perform new work without splitting, the Issue's objective and validation settings remain authoritative."
 	if strings.TrimSpace(i.Objective) == "" {

@@ -1,17 +1,20 @@
 import * as React from "react"
 import { toast } from "sonner"
 
+import { IssueBriefComposer } from "@/components/issue-brief-composer"
+import {
+  HumanValidationToggle,
+  ObjectiveToggle,
+  TimeBudgetControl,
+} from "@/components/issue-option-controls"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -21,8 +24,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
-import { Textarea } from "@/components/ui/textarea"
+import { useInputAttachments } from "@/hooks/use-input-attachments"
 import { createIssue } from "@/lib/api"
+import { limitIssueTitle } from "@/lib/issue-title"
+import { issuesForTask } from "@/lib/collections"
 import { workflowStatuses, workflowStatusLabels } from "@/lib/issue-workflow"
 import { useAppState } from "@/lib/state"
 import type { CreateIssueInput, Issue, IssueStatus } from "@/types"
@@ -40,6 +45,8 @@ type CreateIssueForm = {
   priority: CreateIssueInput["priority"]
   status: IssueStatus
   assigneeAgentId: string
+  timeBudgetMinutes?: number
+  humanValidationFallback: boolean
 }
 
 export function CreateIssueDialog({
@@ -49,7 +56,6 @@ export function CreateIssueDialog({
   workspace,
   taskSourceId,
   title = "新建 Issue",
-  description = "在当前任务下创建新的根 Issue，创建后立即加入看板。",
   onCreated,
 }: {
   open: boolean
@@ -63,32 +69,56 @@ export function CreateIssueDialog({
 }) {
   const { state, refresh } = useAppState()
   const [busy, setBusy] = React.useState(false)
+  const [objectiveEnabled, setObjectiveEnabled] = React.useState(false)
+  const attachments = useInputAttachments({
+    scopeKey: `create-issue:${taskSourceId}`,
+  })
   const [form, setForm] = React.useState<CreateIssueForm>(() =>
     emptyForm(defaultStatus)
   )
 
+  const enabledAgentTypes = (state?.agents ?? []).filter(
+    (agent) =>
+      agent.enabled && !agent.internal && agent.category !== "concierge"
+  )
+  const taskIssues = issuesForTask(taskSourceId, state?.issues ?? [])
+
   const handleOpenChange = (next: boolean) => {
-    if (next) setForm(emptyForm(defaultStatus))
+    if (next) {
+      setForm(emptyForm(defaultStatus))
+      setObjectiveEnabled(false)
+    } else attachments.discard()
     onOpenChange(next)
   }
 
   const submit = async () => {
-    const issueTitle = form.title.trim()
-    if (!issueTitle || busy) return
+    const issueDescription = form.description.trim()
+    if (
+      !issueDescription ||
+      busy ||
+      attachments.uploading ||
+      attachments.hasErrors
+    )
+      return
     setBusy(true)
     try {
+      const issueTitle = form.title.trim() || limitIssueTitle(issueDescription)
       const issue = await createIssue({
         taskSourceId,
         title: issueTitle,
-        objective: form.objective,
-        description: form.description,
+        objective: objectiveEnabled ? form.objective : "",
+        description: issueDescription,
         priority: form.priority,
         status: form.status,
         assigneeAgentId: form.assigneeAgentId || undefined,
         workspace: workspace ?? state?.config.workspace ?? "",
         workMode: "autonomous",
         constraints: "",
+        attachmentIds: attachments.attachmentIds,
+        timeBudgetMinutes: form.timeBudgetMinutes,
+        humanValidationFallback: form.humanValidationFallback,
       })
+      attachments.clearBound()
       toast.success(`已创建 ${issue.identifier}`)
       onCreated?.(issue)
       onOpenChange(false)
@@ -102,155 +132,120 @@ export function CreateIssueDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="create-issue-title">标题</Label>
-            <Input
-              id="create-issue-title"
-              autoFocus
-              value={form.title}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  title: event.target.value,
-                }))
-              }
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault()
-                  void submit()
-                }
-              }}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="create-issue-objective">目标（可选）</Label>
-            <Textarea
-              id="create-issue-objective"
-              rows={3}
-              value={form.objective}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  objective: event.target.value,
-                }))
-              }
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="create-issue-description">描述（可选）</Label>
-            <Textarea
-              id="create-issue-description"
-              rows={3}
-              value={form.description}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  description: event.target.value,
-                }))
-              }
-            />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="grid gap-2">
-              <Label>状态</Label>
-              <Select
-                value={form.status}
-                onValueChange={(value) =>
-                  value &&
-                  setForm((current) => ({
-                    ...current,
-                    status: value as IssueStatus,
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {statuses.map((status) => (
-                      <SelectItem key={status} value={status}>
-                        {statusLabels[status]}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>优先级</Label>
-              <Select
-                value={form.priority}
-                onValueChange={(value) =>
-                  value &&
-                  setForm((current) => ({
-                    ...current,
-                    priority: value as CreateIssueInput["priority"],
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {priorities.map((priority) => (
-                      <SelectItem key={priority} value={priority}>
-                        {priority}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>负责人（可选）</Label>
-              <Select
-                value={form.assigneeAgentId || "unassigned"}
-                onValueChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    assigneeAgentId:
-                      !value || value === "unassigned" ? "" : value,
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="unassigned">未委派</SelectItem>
-                    {(state?.agents ?? [])
-                      .filter(
-                        (agent) =>
-                          agent.enabled &&
-                          !agent.internal &&
-                          agent.category !== "concierge"
-                      )
-                      .map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>
-                          {agent.name} · {agent.category}
+        <div className="py-2">
+          <IssueBriefComposer
+            idPrefix="create-issue"
+            title={form.title}
+            description={form.description}
+            onTitleChange={(value) =>
+              setForm((current) => ({ ...current, title: value }))
+            }
+            onDescriptionChange={(value) =>
+              setForm((current) => ({ ...current, description: value }))
+            }
+            agents={enabledAgentTypes}
+            selectedAgentId={form.assigneeAgentId}
+            onAgentChange={(value) =>
+              setForm((current) => ({ ...current, assigneeAgentId: value }))
+            }
+            attachments={attachments}
+            allowUnassigned
+            autoFocus
+            mentionIssues={taskIssues}
+            objective={form.objective}
+            objectiveEnabled={objectiveEnabled}
+            onObjectiveChange={(value) =>
+              setForm((current) => ({ ...current, objective: value }))
+            }
+            footerControls={
+              <>
+                <Select
+                  value={form.status}
+                  onValueChange={(value) =>
+                    value &&
+                    setForm((current) => ({
+                      ...current,
+                      status: value as IssueStatus,
+                    }))
+                  }
+                >
+                  <SelectTrigger size="sm" className="w-auto min-w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {statuses.map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {statusLabels[status]}
                         </SelectItem>
                       ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={form.priority}
+                  onValueChange={(value) =>
+                    value &&
+                    setForm((current) => ({
+                      ...current,
+                      priority: value as CreateIssueInput["priority"],
+                    }))
+                  }
+                >
+                  <SelectTrigger size="sm" className="w-auto min-w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {priorities.map((priority) => (
+                        <SelectItem key={priority} value={priority}>
+                          {priority}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <ObjectiveToggle
+                  checked={objectiveEnabled}
+                  onCheckedChange={setObjectiveEnabled}
+                />
+                <TimeBudgetControl
+                  value={form.timeBudgetMinutes}
+                  onValueChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      timeBudgetMinutes: value,
+                    }))
+                  }
+                />
+                <HumanValidationToggle
+                  checked={form.humanValidationFallback}
+                  onCheckedChange={(checked) =>
+                    setForm((current) => ({
+                      ...current,
+                      humanValidationFallback: checked,
+                    }))
+                  }
+                />
+              </>
+            }
+          />
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>
             取消
           </Button>
           <Button
-            disabled={busy || !form.title.trim()}
+            disabled={
+              busy ||
+              attachments.uploading ||
+              attachments.hasErrors ||
+              !form.description.trim()
+            }
             onClick={() => void submit()}
           >
             {busy ? <Spinner /> : null}
@@ -270,5 +265,7 @@ function emptyForm(defaultStatus: IssueStatus): CreateIssueForm {
     priority: "middle",
     status: defaultStatus,
     assigneeAgentId: "",
+    timeBudgetMinutes: undefined,
+    humanValidationFallback: false,
   }
 }

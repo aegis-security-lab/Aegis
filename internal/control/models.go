@@ -222,6 +222,35 @@ type Task struct {
 type TaskDetail struct {
 	Task             Task              `json:"task"`
 	InputAttachments []InputAttachment `json:"inputAttachments"`
+	RootReports      []TaskRootReport  `json:"rootReports"`
+}
+
+// TaskRootReport is the Task Home projection for one root Issue and its latest
+// accepted (or validation-skipped) user-facing delivery bundle.
+type TaskRootReport struct {
+	IssueID     string      `json:"issueId"`
+	Identifier  string      `json:"identifier"`
+	Title       string      `json:"title"`
+	Status      string      `json:"status"`
+	CompletedAt *time.Time  `json:"completedAt,omitempty"`
+	Report      *TaskReport `json:"report,omitempty"`
+}
+
+// TaskReport is the single replaceable ZIP delivery mounted on Task Home for
+// a root Issue. Its bytes contain only the latest successful Worker
+// submission's published attachments plus a machine-readable manifest.
+type TaskReport struct {
+	ID                string    `json:"id" gorm:"primaryKey"`
+	TaskID            string    `json:"taskId" gorm:"index"`
+	RootIssueID       string    `json:"rootIssueId" gorm:"uniqueIndex"`
+	SourceExecutionID string    `json:"sourceExecutionId" gorm:"index"`
+	Name              string    `json:"name"`
+	StoragePath       string    `json:"-"`
+	MimeType          string    `json:"mimeType"`
+	Size              int64     `json:"size"`
+	AttachmentCount   int       `json:"attachmentCount"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 // TaskAudit is one immutable evaluation attempt over a point-in-time Task
@@ -432,14 +461,14 @@ type Execution struct {
 	FinishedAt           *time.Time            `json:"finishedAt,omitempty"`
 }
 
-// TaskAgent is one task-scoped identity leased from an Agent definition. The
-// same Agent type may have many TaskAgents in one task; each gets a unique
-// human-readable alias, conversation, Phone, and audit trail.
+// TaskAgent is one task-scoped runtime identity leased from an Agent
+// definition. Name mirrors the Agent type name; ID provides Session, Phone and
+// Relay isolation when the same Agent type runs more than one Issue.
 type TaskAgent struct {
 	ID        string    `json:"id" gorm:"primaryKey"`
-	TaskID    string    `json:"taskId" gorm:"uniqueIndex:idx_task_agent_name;index"`
+	TaskID    string    `json:"taskId" gorm:"index"`
 	AgentID   string    `json:"agentId" gorm:"index"`
-	Name      string    `json:"name" gorm:"uniqueIndex:idx_task_agent_name"`
+	Name      string    `json:"name"`
 	Status    string    `json:"status" gorm:"index"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

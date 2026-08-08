@@ -94,6 +94,15 @@ func (m *Manager) SubmitFinalResult(executionID, token string, input SubmitFinal
 	if unfinishedChildren > 0 {
 		return Execution{}, fmt.Errorf("仍有 %d 个直属子 Issue 未结束，不能提交最终结果", unfinishedChildren)
 	}
+	if issue.ParentID == "" && strings.TrimSpace(issue.TaskSourceID) != "" {
+		var attachmentCount int64
+		if err := m.store.db.Model(&IssueAttachment{}).Where("issue_id = ? AND execution_id = ?", issue.ID, executionID).Count(&attachmentCount).Error; err != nil {
+			return Execution{}, err
+		}
+		if attachmentCount == 0 {
+			return Execution{}, errors.New("根 Issue 必须先发布本轮完整最终报告附件，才能提交最终结果")
+		}
+	}
 	if err := m.store.db.Model(&Execution{}).Where("id = ?", executionID).Updates(map[string]any{"final_result": input.Body, "final_result_submitted": true, "result": input.Body}).Error; err != nil {
 		return Execution{}, err
 	}

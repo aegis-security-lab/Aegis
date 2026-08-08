@@ -84,6 +84,13 @@ func (s *Store) DeleteIssueTree(issueID string) (DeleteIssueResult, error) {
 	for _, attachment := range outputAttachments {
 		storagePaths = append(storagePaths, attachment.StoragePath)
 	}
+	var taskReports []TaskReport
+	if err := s.db.Where("root_issue_id IN ?", issueIDs).Find(&taskReports).Error; err != nil {
+		return DeleteIssueResult{}, err
+	}
+	for _, report := range taskReports {
+		storagePaths = append(storagePaths, report.StoragePath)
+	}
 	var inputAttachments []InputAttachment
 	inputQuery := s.db.Where("issue_id IN ? AND task_id = ''", issueIDs)
 	if len(executionIDs) > 0 {
@@ -103,6 +110,9 @@ func (s *Store) DeleteIssueTree(issueID string) (DeleteIssueResult, error) {
 
 	result := DeleteIssueResult{IssueID: root.ID}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("root_issue_id IN ?", issueIDs).Delete(&TaskReport{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("issue_id IN ? OR related_issue_id IN ?", issueIDs, issueIDs).Delete(&IssueRelation{}).Error; err != nil {
 			return err
 		}

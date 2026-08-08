@@ -3,25 +3,21 @@ import { Copy, Send } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
-import { ChatComposer } from "@/components/chat-composer"
+import { IssueBriefComposer } from "@/components/issue-brief-composer"
+import {
+  HumanValidationToggle,
+  ObjectiveToggle,
+  TimeBudgetControl,
+} from "@/components/issue-option-controls"
 import { useInputAttachments } from "@/hooks/use-input-attachments"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Field,
-  FieldContent,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Checkbox } from "@/components/ui/checkbox"
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Select,
   SelectContent,
@@ -31,26 +27,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
-import { Textarea } from "@/components/ui/textarea"
 import { createTask } from "@/lib/api"
-import {
-  ISSUE_TITLE_MAX_LENGTH,
-  issueTitleLength,
-  limitIssueTitle,
-} from "@/lib/issue-title"
+import { limitIssueTitle } from "@/lib/issue-title"
 import { useAppState } from "@/lib/state"
 import type { CreateIssueInput } from "@/types"
 
 const priorities: CreateIssueInput["priority"][] = ["high", "middle", "low"]
-
-const categoryLabels: Record<string, string> = {
-  orchestrator: "调度",
-  backend: "后端",
-  frontend: "前端",
-  design: "设计",
-  security: "安全",
-  general: "通用",
-}
 
 export function TaskNewPage() {
   const { state } = useAppState()
@@ -58,7 +40,14 @@ export function TaskNewPage() {
   const location = useLocation()
   const clone = (location.state as { clone?: Partial<CreateIssueInput> } | null)
     ?.clone
+  const hasBackground = Boolean(
+    (location.state as { backgroundLocation?: unknown } | null)
+      ?.backgroundLocation
+  )
   const [busy, setBusy] = React.useState(false)
+  const [objectiveEnabled, setObjectiveEnabled] = React.useState(
+    Boolean(clone?.objective)
+  )
   const attachments = useInputAttachments()
   const [form, setForm] = React.useState<CreateIssueInput>({
     projectId: clone?.projectId ?? state?.projects[0]?.id,
@@ -70,7 +59,7 @@ export function TaskNewPage() {
     containerProfileId: clone?.containerProfileId,
     workMode: "autonomous",
     workspace: state?.config.workspace ?? "",
-    constraints: clone?.constraints ?? "",
+    constraints: "",
     timeBudgetMinutes: clone?.timeBudgetMinutes,
     humanValidationFallback: clone?.humanValidationFallback,
   })
@@ -93,10 +82,6 @@ export function TaskNewPage() {
   const selectedAgent = enabledAgentTypes.find(
     (agent) => agent.id === selectedAgentId
   )
-  const agentItems = enabledAgentTypes.map((agent) => ({
-    label: `${agent.name} · ${categoryLabels[agent.category] ?? agent.category}`,
-    value: agent.id,
-  }))
   const priorityItems = priorities.map((priority) => ({
     label: priority,
     value: priority,
@@ -129,6 +114,8 @@ export function TaskNewPage() {
         ...form,
         title,
         description,
+        objective: objectiveEnabled ? form.objective : "",
+        constraints: "",
         assigneeAgentId: selectedAgentId,
         containerProfileId: defaultContainerProfile.id,
         attachmentIds: attachments.attachmentIds,
@@ -146,116 +133,84 @@ export function TaskNewPage() {
   }
 
   return (
-    <div className="flex flex-col gap-7">
-      {clone ? (
-        <Alert>
-          <Copy />
-          <AlertTitle>已复制旧任务配置</AlertTitle>
-          <AlertDescription>
-            标题、目标和负责人等信息已带入；修改后发布会创建一个全新的 Docker
-            任务，不会影响原任务。
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      <form
-        onSubmit={submit}
-        className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]"
-      >
-        <Card>
-          <CardHeader>
-            <CardTitle>任务定义</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="description">任务说明</FieldLabel>
-                <ChatComposer
-                  value={form.description}
-                  onValueChange={(value) => update("description", value)}
-                  onSend={() => {}}
-                  sending={false}
-                  showSend={false}
-                  hint=""
-                  placeholder="描述交付范围、业务规则和其他执行说明…"
-                  ariaLabel="任务说明"
-                  attachments={attachments}
-                  extra={
-                    <Select
-                      items={agentItems}
-                      value={selectedAgentId}
-                      onValueChange={(value) =>
-                        update("assigneeAgentId", value || undefined)
-                      }
-                    >
-                      <SelectTrigger
-                        id="task-agent"
-                        size="sm"
-                        className="w-44"
-                        aria-invalid={
-                          enabledAgentTypes.length === 0 || undefined
-                        }
-                      >
-                        <SelectValue placeholder="选择 Agent 类型" />
-                      </SelectTrigger>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          {enabledAgentTypes.map((agent) => (
-                            <SelectItem key={agent.id} value={agent.id}>
-                              {agent.name} ·{" "}
-                              {categoryLabels[agent.category] ?? agent.category}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          if (hasBackground) navigate(-1)
+          else navigate("/tasks", { replace: true })
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>
+            {clone ? (
+              <span className="flex items-center gap-2">
+                <Copy className="size-4" />
+                复制为新任务
+              </span>
+            ) : (
+              "新建任务"
+            )}
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit}>
+          <IssueBriefComposer
+            idPrefix="task"
+            title={form.title}
+            description={form.description}
+            onTitleChange={(value) => update("title", value)}
+            onDescriptionChange={(value) => update("description", value)}
+            agents={enabledAgentTypes}
+            selectedAgentId={selectedAgentId}
+            onAgentChange={(value) =>
+              update("assigneeAgentId", value || undefined)
+            }
+            attachments={attachments}
+            objective={form.objective}
+            objectiveEnabled={objectiveEnabled}
+            onObjectiveChange={(value) => update("objective", value)}
+            footerControls={
+              <>
+                <Select
+                  items={priorityItems}
+                  value={form.priority}
+                  onValueChange={(value) =>
+                    update("priority", value as CreateIssueInput["priority"])
+                  }
+                >
+                  <SelectTrigger size="sm" className="w-auto min-w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {priorities.map((priority) => (
+                        <SelectItem key={priority} value={priority}>
+                          {priority}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <ObjectiveToggle
+                  checked={objectiveEnabled}
+                  onCheckedChange={setObjectiveEnabled}
+                />
+                <TimeBudgetControl
+                  value={form.timeBudgetMinutes}
+                  onValueChange={(value) => update("timeBudgetMinutes", value)}
+                />
+                <HumanValidationToggle
+                  checked={form.humanValidationFallback ?? false}
+                  onCheckedChange={(checked) =>
+                    update("humanValidationFallback", checked)
                   }
                 />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="title">
-                  任务标题（可选，留空则取任务说明开头）
-                </FieldLabel>
-                <Input
-                  id="title"
-                  value={form.title}
-                  onChange={(event) =>
-                    update("title", limitIssueTitle(event.target.value))
-                  }
-                  placeholder="默认使用任务说明的前几个字符…"
-                />
-                <span className="text-right text-[11px] text-muted-foreground tabular-nums">
-                  {issueTitleLength(form.title) || "—"} /{" "}
-                  {ISSUE_TITLE_MAX_LENGTH}
-                </span>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="objective">目标（可选）</FieldLabel>
-                <Textarea
-                  id="objective"
-                  rows={3}
-                  value={form.objective}
-                  onChange={(event) => update("objective", event.target.value)}
-                  placeholder="描述最终需要达成的结果，以及可用于判断完成的证据…"
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="constraints">
-                  权限与执行边界（可选）
-                </FieldLabel>
-                <Textarea
-                  id="constraints"
-                  rows={3}
-                  value={form.constraints}
-                  onChange={(event) =>
-                    update("constraints", event.target.value)
-                  }
-                  placeholder="留空使用默认边界…"
-                />
-              </Field>
-            </FieldGroup>
-          </CardContent>
-          <CardFooter className="justify-end">
+              </>
+            }
+          />
+          <DialogFooter className="mt-5">
             <Button
               type="submit"
               size="lg"
@@ -275,80 +230,9 @@ export function TaskNewPage() {
               )}
               发布并执行
             </Button>
-          </CardFooter>
-        </Card>
-
-        <div className="flex flex-col gap-5 xl:sticky xl:top-20">
-          <Card>
-            <CardHeader>
-              <CardTitle>执行与协作</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="task-priority">优先级</FieldLabel>
-                  <Select
-                    items={priorityItems}
-                    value={form.priority}
-                    onValueChange={(value) =>
-                      update("priority", value as CreateIssueInput["priority"])
-                    }
-                  >
-                    <SelectTrigger id="task-priority" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {priorities.map((priority) => (
-                          <SelectItem key={priority} value={priority}>
-                            {priority}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="task-time-budget">
-                    时间预算（分钟）
-                  </FieldLabel>
-                  <Input
-                    id="task-time-budget"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={form.timeBudgetMinutes ?? ""}
-                    onChange={(event) => {
-                      const value = event.target.value
-                      update(
-                        "timeBudgetMinutes",
-                        value
-                          ? Math.max(1, Number.parseInt(value, 10))
-                          : undefined
-                      )
-                    }}
-                    placeholder="留空表示不限制"
-                  />
-                </Field>
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="task-human-validation"
-                    checked={form.humanValidationFallback ?? false}
-                    onCheckedChange={(checked) =>
-                      update("humanValidationFallback", checked === true)
-                    }
-                  />
-                  <FieldContent>
-                    <FieldLabel htmlFor="task-human-validation">
-                      启用人工兜底验收
-                    </FieldLabel>
-                  </FieldContent>
-                </Field>
-              </FieldGroup>
-            </CardContent>
-          </Card>
-        </div>
-      </form>
-    </div>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

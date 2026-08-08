@@ -89,7 +89,7 @@ func TestAcceptanceValidatorUsesWorkspaceEvidenceAndStructuredDecisions(t *testi
 	if !agent.Internal || !agent.Enabled || len(agent.Tools) != 0 || !agent.Permissions.AllowShell || agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite || agent.Permissions.WorkspaceScope != "run_workspace" {
 		t.Fatalf("acceptance validator does not have the expected workspace boundary: %+v", agent)
 	}
-	if !strings.Contains(agent.SystemPrompt, "ordinary read, search, and shell tools") || !strings.Contains(agent.SystemPrompt, "never require the Worker to duplicate") {
+	if !strings.Contains(agent.SystemPrompt, "ordinary read, search, and shell tools") || !strings.Contains(agent.SystemPrompt, "complete final delivery") || !strings.Contains(agent.SystemPrompt, "never pass by combining an earlier report") {
 		t.Fatalf("acceptance validator prompt does not explain attachment evidence: %s", agent.SystemPrompt)
 	}
 }
@@ -100,7 +100,7 @@ func TestValidationPromptProvidesAttachmentManifestWithoutInliningContent(t *tes
 		ID: "attachment-1", Name: "security-report.md", MimeType: "text/markdown", Size: 42000,
 		Description: "Complete report", Path: "/workspace/.aegis/validation-evidence/execution-1/attachment-1/security-report.md",
 	}}, "fixed", 3, false)
-	for _, expected := range []string{"## Submission message", "## Published attachments", "attachment-1", "security-report.md", "/workspace/.aegis/validation-evidence/execution-1/attachment-1/security-report.md", "ordinary read", "do not require the Worker to duplicate"} {
+	for _, expected := range []string{"## Submission message", "## Published attachments", "attachment-1", "security-report.md", "/workspace/.aegis/validation-evidence/execution-1/attachment-1/security-report.md", "ordinary read", "user-facing ZIP", "newly consolidated complete replacement package"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("validation prompt missing %q: %s", expected, prompt)
 		}
@@ -318,6 +318,10 @@ func TestAcceptanceAgentCloseToolCreatesPassedCommentAndClosesIssue(t *testing.T
 	store := configuredStore(t)
 	issue, _ := store.CreateIssue(CreateIssueInput{Title: "Validated", Objective: "All checks pass", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
 	source, _ := store.createExecution(issue, "backend-engineer", "work")
+	report := "# Final report\n\nAll checks pass.\n"
+	if _, err := store.captureUploadedAttachment(issue, source.ID, PublishAttachmentInput{Path: "final-report.md", Description: "Complete final report"}, strings.NewReader(report), int64(len(report))); err != nil {
+		t.Fatal(err)
+	}
 	validationExecution, _, _ := store.createInternalExecution(issue, "acceptance-validator", "validation")
 	_ = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "validating", "result": "Checks pass", "current_execution_id": validationExecution.ID}).Error
 	validation := IssueValidation{ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID, ValidationExecutionID: validationExecution.ID, Attempt: 1, Objective: issue.Objective, CandidateResult: "Checks pass", Status: "running", CreatedAt: time.Now()}
@@ -341,5 +345,28 @@ func TestAcceptanceAgentCloseToolCreatesPassedCommentAndClosesIssue(t *testing.T
 	}
 	if comment.AuthorID != "acceptance-validator" || !strings.Contains(comment.Body, "Objective and published evidence verified") {
 		t.Fatalf("unexpected passed comment: %+v", comment)
+	}
+}
+
+func TestAcceptanceAgentCannotPassLatestSubmissionWithoutAttachments(t *testing.T) {
+	store := configuredStore(t)
+	issue, _ := store.CreateIssue(CreateIssueInput{Title: "Missing package", Objective: "Deliver a complete report", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	source, _ := store.createExecution(issue, "backend-engineer", "work")
+	validationExecution, _, _ := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	validation := IssueValidation{ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID, ValidationExecutionID: validationExecution.ID, Attempt: 1, Objective: issue.Objective, CandidateResult: "The report is described only in text.", Status: "running", CreatedAt: time.Now()}
+	if err := store.db.Create(&validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	_, err := manager.closeValidatedIssue(validationExecution.ID, CloseValidatedIssueInput{Summary: "Pass without inspecting a package."})
+	if err == nil || !strings.Contains(err.Error(), "当前最新提交没有附件") {
+		t.Fatalf("expected latest-submission attachment gate, got %v", err)
+	}
+	var refreshed IssueValidation
+	if err = store.db.First(&refreshed, "id = ?", validation.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.DecisionJSON != "" || refreshed.Status != "running" {
+		t.Fatalf("rejected pass must leave validation open for retry: %+v", refreshed)
 	}
 }

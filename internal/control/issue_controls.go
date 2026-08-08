@@ -233,6 +233,9 @@ func (m *Manager) completeIssueWithoutValidation(issue Issue, sourceExecutionID,
 		title = "无需目标验收"
 		detail = "Issue 未设置目标，Worker 产出直接进入完成状态，未启动验收 Agent。"
 	}
+	if err := m.publishRootIssueTaskReport(issue, sourceExecutionID, now); err != nil {
+		m.store.addEvent(sourceExecutionID, issue.ID, "error", "生成任务最终报告失败", err.Error())
+	}
 	m.store.addEvent(sourceExecutionID, issue.ID, "validation", title, detail)
 	m.store.notify()
 	m.reconcileIssueID(issue.ID)

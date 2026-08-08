@@ -120,6 +120,9 @@ const WorkspaceChatPage = React.lazy(() =>
 export function App() {
   const { state, loading, error, refresh } = useAppState()
   const location = useLocation()
+  const backgroundLocation = (
+    location.state as { backgroundLocation?: typeof location } | null
+  )?.backgroundLocation
   if (loading || !state) {
     return <AppBootState error={error} onRetry={() => void refresh()} />
   }
@@ -138,7 +141,7 @@ export function App() {
   return (
     <ErrorBoundary resetKey={location.pathname}>
       <React.Suspense fallback={<PageSkeleton />}>
-        <Routes>
+        <Routes location={backgroundLocation ?? location}>
           <Route path="/setup" element={<Navigate to="/" replace />} />
           <Route element={<AppShell />}>
             <Route index element={<DashboardPage />} />
@@ -148,7 +151,7 @@ export function App() {
               element={<WorkspaceChatPage />}
             />
             <Route path="tasks" element={<TasksPage />} />
-            <Route path="tasks/new" element={<TaskNewPage />} />
+            <Route path="tasks/new" element={<TasksPage />} />
             <Route path="tasks/:taskId/issues" element={<IssuesPage />} />
             <Route path="tasks/:taskId/board" element={<TaskBoardPage />} />
             <Route path="tasks/:taskId" element={<TaskDetailPage />} />
@@ -177,6 +180,7 @@ export function App() {
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
+        {location.pathname === "/tasks/new" ? <TaskNewPage /> : null}
       </React.Suspense>
     </ErrorBoundary>
   )

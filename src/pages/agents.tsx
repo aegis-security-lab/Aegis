@@ -451,7 +451,7 @@ function AgentEditor({
                   <div className="rounded-md border bg-muted/25 p-4 text-sm">
                     <p className="font-medium">运行时基础能力</p>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      每个 TaskAgent 自动获得自己的 Phone；Issue
+                      每个 Issue 的 Agent 运行身份自动获得自己的 Phone；Issue
                       委派、继续和休眠均通过 Phone Board 及其快捷指令完成。Web
                       与外部 MCP 由能力控制台和任务策略决定。
                     </p>

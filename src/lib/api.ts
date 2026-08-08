@@ -355,8 +355,6 @@ export const fetchTaskAgents = (id: string) =>
     `/api/tasks/${encodeURIComponent(id)}/agents`
   )
 
-export const fetchAgentNames = () =>
-  request<{ names: string[] }>("/api/agent-names")
 export const fetchCapabilityCatalog = () =>
   request<{ enabled: boolean; capabilities: CapabilityDescriptor[] }>(
     "/api/coordination/capabilities"

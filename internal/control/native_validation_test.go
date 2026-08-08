@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,10 @@ func TestNativeValidationCapabilityIsNarrowAndPersistsDecisionWithoutPiSession(t
 		t.Fatal(err)
 	}
 	source, _ := store.createExecution(issue, issue.AssigneeAgentID, "work")
+	report := "# Final report\n\nThe published evidence satisfies every requirement.\n"
+	if _, err = store.captureUploadedAttachment(issue, source.ID, PublishAttachmentInput{Path: "final-report.md", Description: "Complete final report"}, strings.NewReader(report), int64(len(report))); err != nil {
+		t.Fatal(err)
+	}
 	validationExecution, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
 	if err != nil {
 		t.Fatal(err)

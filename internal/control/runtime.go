@@ -133,6 +133,7 @@ func NewManager(store *Store) (*Manager, error) {
 	controlURL := fallback(strings.TrimSpace(os.Getenv("AEGIS_CONTROL_URL")), "http://127.0.0.1:"+port)
 	m := &Manager{store: store, guardPath: path, controlURL: strings.TrimRight(controlURL, "/"), sessions: map[string]*PiSession{}, budgetStop: make(chan struct{}), budgetDone: make(chan struct{}), heartbeatStop: make(chan struct{}), heartbeatDone: make(chan struct{})}
 	m.knowledge = NewKnowledgeRetrievalService(store, NewKeywordAIRetriever(NewAgentCoreKnowledgeRanker(store)))
+	m.backfillRootIssueTaskReports()
 	go m.monitorIssueBudgets()
 	return m, nil
 }

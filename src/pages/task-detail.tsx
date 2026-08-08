@@ -1,10 +1,11 @@
 import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
-import { Download, Paperclip } from "lucide-react"
+import { Archive, Download, Paperclip } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import {
   Empty,
   EmptyDescription,
@@ -17,7 +18,6 @@ import { TimelinePanel } from "@/components/timeline-panel"
 import { fetchTask } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
 import { useAppState } from "@/lib/state"
-import { cn } from "@/lib/utils"
 import type { TaskDetail } from "@/types"
 
 export function TaskDetailPage() {
@@ -73,40 +73,38 @@ export function TaskDetailPage() {
     <div className="relative size-full min-h-0 overflow-hidden">
       <div className="size-full min-h-0 overflow-y-auto pr-1 lg:pr-[380px]">
         <div className="flex min-h-full flex-col gap-5">
+          <header className="flex min-w-0 flex-wrap items-center gap-2 px-1">
+            <ScrollingTitle value={task.title} />
+            <Badge variant="outline">{task.priority}</Badge>
+            <Badge variant="outline">
+              人工验收：{task.humanValidationFallback ? "开启" : "关闭"}
+            </Badge>
+            <Badge variant="outline">
+              预算：
+              {task.timeBudgetMinutes
+                ? `${task.timeBudgetMinutes} 分钟`
+                : "不限"}
+            </Badge>
+            <Badge variant="secondary">
+              {referenceName(
+                task.assigneeAgentId,
+                state?.agents.find(
+                  (candidate) => candidate.id === task.assigneeAgentId
+                )?.name
+              )}
+            </Badge>
+          </header>
+
           <Card>
-            <CardContent className="grid gap-x-8 gap-y-5 text-sm sm:grid-cols-2">
-              <TaskParameter label="标题" value={task.title} />
-              <TaskParameter
-                label="描述"
-                value={task.description || "未填写"}
-              />
-              <TaskParameter label="目标" value={task.objective || "未填写"} />
-              <TaskParameter
-                label="执行边界"
-                value={task.constraints || "未填写"}
-              />
-              <TaskParameter
-                label="负责 Agent"
-                value={referenceName(
-                  task.assigneeAgentId,
-                  state?.agents.find(
-                    (candidate) => candidate.id === task.assigneeAgentId
-                  )?.name
-                )}
-              />
-              <TaskParameter label="优先级" value={task.priority} />
-              <TaskParameter
-                label="时间预算（分钟）"
-                value={
-                  task.timeBudgetMinutes
-                    ? String(task.timeBudgetMinutes)
-                    : "不限制"
-                }
-              />
-              <TaskParameter
-                label="人工兜底验收"
-                value={task.humanValidationFallback ? "启用" : "关闭"}
-              />
+            <CardContent className="flex flex-col gap-5 py-5">
+              <p className="text-sm leading-7 whitespace-pre-wrap">
+                {task.description || "未填写任务描述"}
+              </p>
+              {task.objective ? (
+                <div className="rounded-lg bg-muted/45 px-4 py-3 text-sm leading-6 whitespace-pre-wrap text-muted-foreground">
+                  {task.objective}
+                </div>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -152,6 +150,72 @@ export function TaskDetailPage() {
               </CardContent>
             </Card>
           ) : null}
+
+          <Card>
+            <CardHeader className="gap-1">
+              <CardTitle>任务报告</CardTitle>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                每个根 Issue 只保留最后一次成功交付的完整附件包。
+              </p>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-1">
+              {detail.rootReports.length > 0 ? (
+                detail.rootReports.map((item) => (
+                  <div
+                    key={item.issueId}
+                    className="group flex min-w-0 items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted/45"
+                  >
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                      <Archive className="size-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-baseline gap-2">
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                          {item.identifier}
+                        </span>
+                        <p
+                          className="truncate text-sm font-medium"
+                          title={item.title}
+                        >
+                          {item.title}
+                        </p>
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {item.report
+                          ? `${item.report.name} · ${formatBytes(item.report.size)} · 包含 ${item.report.attachmentCount} 个附件`
+                          : taskReportPlaceholder(item.status)}
+                      </p>
+                    </div>
+                    {item.report ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0"
+                        render={
+                          <a
+                            href={`/api/task-reports/${encodeURIComponent(item.report.id)}`}
+                            download={item.report.name}
+                          />
+                        }
+                        nativeButton={false}
+                      >
+                        <Download />
+                        下载 ZIP
+                      </Button>
+                    ) : (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {taskReportStatus(item.status)}
+                      </span>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-lg bg-muted/35 px-4 py-6 text-center text-sm text-muted-foreground">
+                  当前任务还没有根 Issue。
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
       <aside className="absolute inset-y-0 right-2 hidden w-[360px] flex-col overflow-hidden rounded-xl bg-card lg:flex">
@@ -161,31 +225,56 @@ export function TaskDetailPage() {
   )
 }
 
+function taskReportPlaceholder(status: string) {
+  if (status === "done" || status === "in_review") {
+    return "交付已结束，最终报告尚未生成"
+  }
+  if (status === "cancelled") return "该根 Issue 已取消，不会生成最终报告"
+  return "根 Issue 完成后将在这里生成最终报告 ZIP"
+}
+
+function taskReportStatus(status: string) {
+  if (status === "done" || status === "in_review") return "待打包"
+  if (status === "cancelled") return "已取消"
+  return "执行中"
+}
+
 function referenceName(id?: string, name?: string) {
   if (!id) return "未指定"
   return name ? `${name} · ${id}` : id
 }
 
-function TaskParameter({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: string
-  mono?: boolean
-}) {
+function ScrollingTitle({ value }: { value: string }) {
+  const viewportRef = React.useRef<HTMLDivElement>(null)
+  const textRef = React.useRef<HTMLHeadingElement>(null)
+  const [offset, setOffset] = React.useState(0)
   return (
-    <div className="min-w-0">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p
-        className={cn(
-          "mt-1 leading-relaxed break-all whitespace-pre-wrap",
-          mono && "font-mono text-xs"
-        )}
+    <div
+      ref={viewportRef}
+      className="max-w-full min-w-48 flex-1 overflow-hidden"
+      onMouseEnter={() => {
+        const distance = Math.max(
+          0,
+          (textRef.current?.scrollWidth ?? 0) -
+            (viewportRef.current?.clientWidth ?? 0)
+        )
+        setOffset(distance)
+      }}
+      onMouseLeave={() => setOffset(0)}
+      title={value}
+    >
+      <h1
+        ref={textRef}
+        className="w-max max-w-none text-lg font-semibold tracking-tight transition-transform ease-linear"
+        style={{
+          transform: `translateX(-${offset}px)`,
+          transitionDuration: offset
+            ? `${Math.max(1.5, offset / 45)}s`
+            : "200ms",
+        }}
       >
         {value}
-      </p>
+      </h1>
     </div>
   )
 }

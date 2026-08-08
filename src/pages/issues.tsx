@@ -1,11 +1,11 @@
 import * as React from "react"
 import { ChevronRight, ChevronsDown, ChevronsUp, Plus } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 
+import { CopyIssueIdentifier } from "@/components/copy-issue-identifier"
 import { CreateIssueDialog } from "@/components/create-issue-dialog"
 import { IssueStatusSelect } from "@/components/issue-status-select"
 import { IssueTree } from "@/components/issue-tree"
-import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { SearchInput } from "@/components/ui/search-input"
@@ -19,6 +19,7 @@ import {
   workflowStatuses,
 } from "@/lib/issue-workflow"
 import { issuesForTask } from "@/lib/collections"
+import { formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import type { Issue, IssueRuntimeView, IssueStatus } from "@/types"
@@ -28,6 +29,30 @@ const statuses = workflowStatuses
 const statusLabels = workflowStatusLabels
 
 type ViewMode = "tree" | "list"
+
+const ISSUE_VIEW_MODE_STORAGE_KEY = "aegis:issues:view-mode"
+const issueFilterItemClassName =
+  "aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:shadow-sm aria-pressed:hover:bg-primary/90 data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm data-[state=on]:hover:bg-primary/90"
+
+function readIssueViewMode(): ViewMode {
+  if (typeof window === "undefined") return "tree"
+  try {
+    const stored = window.localStorage.getItem(ISSUE_VIEW_MODE_STORAGE_KEY)
+    return stored === "list" || stored === "tree" ? stored : "tree"
+  } catch {
+    return "tree"
+  }
+}
+
+function writeIssueViewMode(viewMode: ViewMode) {
+  try {
+    window.localStorage.setItem(ISSUE_VIEW_MODE_STORAGE_KEY, viewMode)
+  } catch {
+    // Storage can be unavailable in restricted browser contexts. The in-page
+    // selection still works for the current visit.
+  }
+}
+
 type IssueGroupKey = "running" | "waiting" | "failed" | "finished" | "todo"
 
 const groupOrder: IssueGroupKey[] = [
@@ -63,7 +88,7 @@ export function IssuesPage() {
     "roots"
   )
   const [expansionVersion, setExpansionVersion] = React.useState(0)
-  const [viewMode, setViewMode] = React.useState<ViewMode>("tree")
+  const [viewMode, setViewMode] = React.useState<ViewMode>(readIssueViewMode)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createStatus, setCreateStatus] = React.useState<IssueStatus>("todo")
   const [openGroups, setOpenGroups] = React.useState<
@@ -127,6 +152,31 @@ export function IssuesPage() {
     }
     return groups
   }, [matched, runtimeMap])
+  const issueById = React.useMemo(
+    () => new Map(scopedIssues.map((issue) => [issue.id, issue])),
+    [scopedIssues]
+  )
+  const childrenByParent = React.useMemo(() => {
+    const children = new Map<string, Issue[]>()
+    for (const issue of scopedIssues) {
+      if (!issue.parentId) continue
+      const siblings = children.get(issue.parentId) ?? []
+      siblings.push(issue)
+      children.set(issue.parentId, siblings)
+    }
+    return children
+  }, [scopedIssues])
+  const agentNameById = React.useMemo(
+    () => new Map((state?.agents ?? []).map((agent) => [agent.id, agent.name])),
+    [state?.agents]
+  )
+  const taskAgentNameById = React.useMemo(
+    () =>
+      new Map(
+        (state?.taskAgents ?? []).map((agent) => [agent.id, agent.name])
+      ),
+    [state?.taskAgents]
+  )
 
   return (
     <div className="flex size-full min-h-0 flex-col gap-4">
@@ -145,16 +195,34 @@ export function IssuesPage() {
           size="sm"
           aria-label="按状态筛选 Issue"
         >
-          <ToggleGroupItem value="all">
+          <ToggleGroupItem value="all" className={issueFilterItemClassName}>
             全部{" "}
-            <span className="text-muted-foreground tabular-nums">
+            <span
+              className={cn(
+                "tabular-nums",
+                filter === "all"
+                  ? "text-primary-foreground/80"
+                  : "text-muted-foreground"
+              )}
+            >
               {scopedIssues.length}
             </span>
           </ToggleGroupItem>
           {statuses.map((status) => (
-            <ToggleGroupItem key={status} value={status}>
+            <ToggleGroupItem
+              key={status}
+              value={status}
+              className={issueFilterItemClassName}
+            >
               {statusLabels[status]}{" "}
-              <span className="text-muted-foreground tabular-nums">
+              <span
+                className={cn(
+                  "tabular-nums",
+                  filter === status
+                    ? "text-primary-foreground/80"
+                    : "text-muted-foreground"
+                )}
+              >
                 {statusCounts.get(status) ?? 0}
               </span>
             </ToggleGroupItem>
@@ -192,9 +260,11 @@ export function IssuesPage() {
           <Switch
             size="sm"
             checked={viewMode === "list"}
-            onCheckedChange={(checked) =>
-              setViewMode(checked ? "list" : "tree")
-            }
+            onCheckedChange={(checked) => {
+              const nextViewMode = checked ? "list" : "tree"
+              setViewMode(nextViewMode)
+              writeIssueViewMode(nextViewMode)
+            }}
             aria-label="切换树状/清单视图"
           />
           <span className="text-xs text-muted-foreground">清单</span>
@@ -202,16 +272,13 @@ export function IssuesPage() {
       </div>
 
       {viewMode === "list" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
           {groupOrder.map((key) => {
             const items = listGroups[key]
             const open = openGroups[key]
             return (
-              <section
-                key={key}
-                className="border-b border-border/60 last:border-0"
-              >
-                <div className="group flex h-8 items-center gap-2 rounded-md px-1 hover:bg-muted/40">
+              <section key={key}>
+                <div className="group flex h-10 items-center gap-2 rounded-lg bg-muted/55 px-2">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -222,63 +289,58 @@ export function IssuesPage() {
                         [key]: !current[key],
                       }))
                     }
-                    className="h-full min-w-0 flex-1 justify-start rounded-md px-1 text-xs text-muted-foreground hover:text-foreground"
+                    className="h-full min-w-0 flex-1 justify-start rounded-md px-0 text-sm font-medium hover:bg-transparent active:not-aria-[haspopup]:scale-100 active:bg-transparent aria-expanded:bg-transparent aria-expanded:text-foreground dark:hover:bg-transparent"
                   >
                     <ChevronRight
                       className={cn(
-                        "size-3.5 transition-transform",
+                        "size-3.5 text-muted-foreground transition-transform",
                         open && "rotate-90"
                       )}
                     />
                     {groupLabels[key]}
-                    <span className="tabular-nums">{items.length}</span>
+                    <span className="font-normal text-muted-foreground tabular-nums">
+                      {items.length}
+                    </span>
                   </Button>
                   {taskSourceId ? (
                     <Button
                       variant="ghost"
-                      size="icon-xs"
+                      size="icon-sm"
                       aria-label={`在「${groupLabels[key]}」中新建 Issue`}
                       onClick={() => {
                         setCreateStatus(groupToStatus[key])
                         setCreateOpen(true)
                       }}
-                      className="shrink-0 rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                      className="shrink-0 rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground active:not-aria-[haspopup]:scale-100 active:bg-transparent dark:hover:bg-transparent"
                     >
                       <Plus />
                     </Button>
                   ) : null}
                 </div>
                 {open ? (
-                  <div className="flex flex-col">
+                  <div className="divide-y divide-border/50">
                     {items.length === 0 ? (
-                      <p className="px-7 py-2 text-xs text-muted-foreground">
+                      <p className="px-10 py-3 text-xs text-muted-foreground">
                         暂无
                       </p>
                     ) : (
                       items.map((issue) => (
-                        <div
+                        <IssueListRow
                           key={issue.id}
-                          className="flex min-h-10 items-center gap-2 rounded-md px-7 py-1 hover:bg-muted/40"
-                        >
-                          <Link
-                            to={`/issues/${issue.id}`}
-                            className="flex min-w-0 flex-1 items-center gap-2 text-sm"
-                          >
-                            <span className="w-18 shrink-0 font-mono text-[11px] text-muted-foreground">
-                              {issue.identifier}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate font-medium">
-                              {issue.title}
-                            </span>
-                          </Link>
-                          <IssueStatusSelect issue={issue} align="end" />
-                          <IssueRuntimeBadge
-                            runtime={issueRuntimeOrUnavailable(
-                              runtimeMap,
-                              issue.id
-                            )}
-                          />
-                        </div>
+                          issue={issue}
+                          parent={
+                            issue.parentId
+                              ? issueById.get(issue.parentId)
+                              : undefined
+                          }
+                          children={childrenByParent.get(issue.id) ?? []}
+                          assignee={
+                            taskAgentNameById.get(
+                              issue.assigneeTaskAgentId ?? ""
+                            ) ??
+                            agentNameById.get(issue.assigneeAgentId ?? "")
+                          }
+                        />
                       ))
                     )}
                   </div>
@@ -316,6 +378,102 @@ export function IssuesPage() {
       ) : null}
     </div>
   )
+}
+
+function IssueListRow({
+  issue,
+  parent,
+  children,
+  assignee,
+}: {
+  issue: Issue
+  parent?: Issue
+  children: Issue[]
+  assignee?: string
+}) {
+  const navigate = useNavigate()
+  const completedChildren = children.filter(
+    (child) => issueWorkflowStatus(child.status) === "done"
+  ).length
+
+  return (
+    <div
+      role="link"
+      tabIndex={0}
+      aria-label={`打开 ${issue.identifier} ${issue.title}`}
+      onClick={() => navigate(`/issues/${issue.id}`)}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          navigate(`/issues/${issue.id}`)
+        }
+      }}
+      className="group/issue-row flex min-h-11 min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/60"
+    >
+      <CopyIssueIdentifier identifier={issue.identifier} className="hidden w-18 justify-start sm:inline-flex" />
+      <IssueStatusSelect
+        issue={issue}
+        align="start"
+        showDot={false}
+        ariaLabel={`修改 ${issue.identifier} 的状态`}
+        className="shrink-0 px-1.5 text-xs"
+      />
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-[0.8rem] leading-5">
+        <span className="min-w-0 shrink truncate font-medium" title={issue.title}>
+          {issue.title}
+        </span>
+        {parent ? (
+          <span
+            className="hidden min-w-0 items-center gap-1 text-muted-foreground md:flex"
+            title={`父 Issue：${parent.title}`}
+          >
+            <ChevronRight className="size-3.5 shrink-0" />
+            <span className="truncate">{parent.title}</span>
+          </span>
+        ) : null}
+      </div>
+      {children.length > 0 ? (
+        <span
+          className="hidden shrink-0 rounded-full border bg-background px-2 py-0.5 text-[11px] text-muted-foreground tabular-nums sm:inline-flex"
+          title={`${completedChildren} / ${children.length} 个直属子 Issue 已完成`}
+        >
+          {completedChildren}/{children.length}
+        </span>
+      ) : null}
+      {assignee ? (
+        <span
+          className="hidden max-w-32 shrink-0 truncate text-xs text-muted-foreground sm:block"
+          title={assignee}
+        >
+          {assignee}
+        </span>
+      ) : (
+        <span
+          className="hidden shrink-0 text-xs text-muted-foreground/60 sm:block"
+          title="未分配 Agent"
+        >
+          未分配
+        </span>
+      )}
+      <time
+        dateTime={issue.updatedAt}
+        title={formatTime(issue.updatedAt)}
+        className="hidden w-20 shrink-0 text-right text-xs text-muted-foreground tabular-nums lg:block"
+      >
+        {formatIssueListDate(issue.updatedAt)}
+      </time>
+    </div>
+  )
+}
+
+function formatIssueListDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "—"
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "short",
+    day: "numeric",
+  }).format(date)
 }
 
 function includeAncestors(matched: Issue[], allIssues: Issue[]) {

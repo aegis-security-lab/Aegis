@@ -104,6 +104,7 @@ export function SidebarTaskGroup() {
         </p>
         <Link
           to="/tasks/new"
+          state={{ backgroundLocation: location }}
           aria-label="新建任务"
           title="新建任务"
           className="flex size-6 items-center justify-center rounded-full text-sidebar-foreground/70 outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"

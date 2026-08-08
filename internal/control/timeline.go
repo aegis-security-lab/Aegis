@@ -40,11 +40,7 @@ func (s *Store) TaskTimeline(id string) (TaskTimeline, error) {
 		}
 	}
 	for _, identity := range taskAgents {
-		label := identity.Name
-		if role := agentNames[identity.AgentID]; role != "" {
-			label += " · " + role
-		}
-		taskAgentNames[identity.ID] = label
+		taskAgentNames[identity.ID] = fallback(agentNames[identity.AgentID], identity.Name)
 	}
 	actor := func(id string) (string, string) {
 		id = strings.TrimSpace(id)

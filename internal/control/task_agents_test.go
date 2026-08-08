@@ -39,8 +39,14 @@ func TestSameAgentTypeGetsDistinctTaskIdentitiesAndPhones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(identities) != 3 || identities[0].Name == identities[1].Name || identities[1].Name == identities[2].Name || identities[0].Name == identities[2].Name {
-		t.Fatalf("task aliases=%+v", identities)
+	if len(identities) != 3 {
+		t.Fatalf("task identities=%+v", identities)
+	}
+	for _, identity := range identities {
+		agent, agentErr := store.GetAgent(identity.AgentID)
+		if agentErr != nil || identity.Name != agent.Name {
+			t.Fatalf("task identity uses a generated alias: identity=%+v agent=%+v err=%v", identity, agent, agentErr)
+		}
 	}
 
 	firstPhone, err := phone.Start(context.Background(), agentapp.StartSessionRequest{AgentID: first.AssigneeAgentID, TaskAgentID: first.AssigneeTaskAgentID, TaskID: root.ID, InstalledApps: []string{"aegis.board", "aegis.relay"}})
@@ -63,17 +69,25 @@ func TestSameAgentTypeGetsDistinctTaskIdentitiesAndPhones(t *testing.T) {
 	}
 }
 
-func TestTaskAgentNameCatalogHasOneHundredUniqueNames(t *testing.T) {
-	names := TaskAgentNameCatalog()
-	if len(names) != 100 {
-		t.Fatalf("names=%d", len(names))
+func TestExistingTaskAgentAliasesAreReplacedByAgentTypeNames(t *testing.T) {
+	store := configuredStore(t)
+	root, err := store.CreateIssue(CreateIssueInput{Title: "Normalize identity", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	seen := map[string]bool{}
-	for _, name := range names {
-		if name == "" || seen[name] {
-			t.Fatalf("invalid name catalog entry %q", name)
-		}
-		seen[name] = true
+	if err = store.db.Model(&TaskAgent{}).Where("id = ?", root.AssigneeTaskAgentID).Update("name", "云舟").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = store.syncTaskAgentNames(); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := store.taskAgent(root.ID, root.AssigneeTaskAgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _ := store.GetAgent(root.AssigneeAgentID)
+	if identity.Name != agent.Name {
+		t.Fatalf("legacy alias was not removed: identity=%+v agent=%+v", identity, agent)
 	}
 }
 

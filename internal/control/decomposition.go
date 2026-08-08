@@ -132,7 +132,8 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 		children := make([]Issue, 0, len(input.Children))
 		for _, item := range input.Children {
 			maxNumber++
-			identity, identityErr := claimTaskAgentTx(tx, root.ID, item.AgentID, "")
+			agent, _ := agentByID(s.agents, item.AgentID)
+			identity, identityErr := claimTaskAgentTx(tx, root.ID, item.AgentID, agent.Name, "")
 			if identityErr != nil {
 				return identityErr
 			}

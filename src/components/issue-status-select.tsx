@@ -39,11 +39,13 @@ export function IssueStatusSelect({
   className,
   align = "start",
   ariaLabel = "修改 Issue 状态",
+  showDot = true,
 }: {
   issue: Issue
   className?: string
   align?: "start" | "center" | "end"
   ariaLabel?: string
+  showDot?: boolean
 }) {
   const { setState, refresh } = useAppState()
   const value = issueWorkflowStatus(issue.status)
@@ -99,7 +101,11 @@ export function IssueStatusSelect({
           className
         )}
       >
-        <span className={cn("size-1.5 shrink-0 rounded-full", statusDot[value])} />
+        {showDot ? (
+          <span
+            className={cn("size-1.5 shrink-0 rounded-full", statusDot[value])}
+          />
+        ) : null}
         <SelectValue />
       </SelectTrigger>
       <SelectContent

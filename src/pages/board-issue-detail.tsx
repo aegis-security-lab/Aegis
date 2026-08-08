@@ -12,6 +12,7 @@ import { toast } from "sonner"
 
 import { ChatComposer } from "@/components/chat-composer"
 import { IssueCommentsList } from "@/components/issue-comments-list"
+import { IssueMentionTextarea } from "@/components/issue-mention-input"
 import { IssueAgentActivity } from "@/components/issue-agent-activity"
 import { IssueChildTree } from "@/components/issue-child-tree"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
@@ -53,7 +54,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
-import { Textarea } from "@/components/ui/textarea"
 import {
   createIssue,
   createIssueComment,
@@ -62,6 +62,7 @@ import {
   updateIssue,
 } from "@/lib/api"
 import { formatTime } from "@/lib/format"
+import { issuesForTask } from "@/lib/collections"
 import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import {
   issueLabelMeta,
@@ -197,6 +198,11 @@ export function BoardIssueDetailPage() {
     ? state?.issues.find((candidate) => candidate.id === issue.parentId)
     : undefined
   const subtreeIssues = collectSubtree(issue.id, state?.issues ?? [])
+  const rootIssue = rootIssueOf(issue.id, state?.issues ?? [])
+  const taskSourceId = issue.taskSourceId ?? rootIssue?.taskSourceId
+  const taskIssues = taskSourceId
+    ? issuesForTask(taskSourceId, state?.issues ?? [])
+    : []
 
   const beginEdit = () => {
     setEditForm({
@@ -467,7 +473,7 @@ export function BoardIssueDetailPage() {
             />
           </section>
           <ChatComposer
-            className="mt-2"
+            className="mt-2 px-1 pb-1"
             value={comment}
             onValueChange={setComment}
             onSend={() => void submit()}
@@ -475,6 +481,8 @@ export function BoardIssueDetailPage() {
             placeholder="在 Board 上发表评论…"
             ariaLabel="发表评论"
             hint=""
+            mentionIssues={taskIssues}
+            inputGroupClassName="has-[[data-slot=input-group-control]:focus-visible]:ring-1"
           />
         </div>
       </div>
@@ -511,13 +519,14 @@ export function BoardIssueDetailPage() {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="issue-edit-description">描述</Label>
-              <Textarea
+              <IssueMentionTextarea
                 id="issue-edit-description"
                 value={editForm.description}
-                onChange={(event) =>
+                issues={taskIssues}
+                onValueChange={(value) =>
                   setEditForm((current) => ({
                     ...current,
-                    description: event.target.value,
+                    description: value,
                   }))
                 }
                 className="min-h-28"
@@ -525,13 +534,14 @@ export function BoardIssueDetailPage() {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="issue-edit-objective">目标</Label>
-              <Textarea
+              <IssueMentionTextarea
                 id="issue-edit-objective"
                 value={editForm.objective}
-                onChange={(event) =>
+                issues={taskIssues}
+                onValueChange={(value) =>
                   setEditForm((current) => ({
                     ...current,
-                    objective: event.target.value,
+                    objective: value,
                   }))
                 }
                 className="min-h-28"
@@ -693,26 +703,28 @@ export function BoardIssueDetailPage() {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="child-issue-objective">目标</Label>
-              <Textarea
+              <IssueMentionTextarea
                 id="child-issue-objective"
                 value={childForm.objective}
-                onChange={(event) =>
+                issues={taskIssues}
+                onValueChange={(value) =>
                   setChildForm((current) => ({
                     ...current,
-                    objective: event.target.value,
+                    objective: value,
                   }))
                 }
               />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="child-issue-description">描述</Label>
-              <Textarea
+              <IssueMentionTextarea
                 id="child-issue-description"
                 value={childForm.description}
-                onChange={(event) =>
+                issues={taskIssues}
+                onValueChange={(value) =>
                   setChildForm((current) => ({
                     ...current,
-                    description: event.target.value,
+                    description: value,
                   }))
                 }
               />

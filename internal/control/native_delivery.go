@@ -50,7 +50,7 @@ func (s NativeDeliverySource) Resolve(_ context.Context, execution capability.Re
 	binding := nativeDeliveryBinding{store: s.Store, issue: issue, execution: durableExecution, container: runtimeID, root: root}
 	return capability.Resolved{
 		Tools:        []agentcore.Tool{binding.publishAttachmentTool(), binding.reportProgressTool(), binding.submitFinalResultTool(), binding.submitBudgetSummaryTool()},
-		Instructions: []capability.Instruction{{Source: "aegis-delivery", Content: "Publish every user-facing deliverable with aegis_publish_attachment before calling aegis_submit_final_result. Source files remain private in the Task container; only explicitly published attachments are copied into Aegis attachment storage. aegis_submit_budget_summary is reserved for the runtime-controlled budget summary phase and is rejected during normal work."}},
+		Instructions: []capability.Instruction{{Source: "aegis-delivery", Content: "Before calling aegis_submit_final_result, publish a complete standalone final report and every required supporting deliverable with aegis_publish_attachment. The user package contains only attachments from the latest submission; submission text, final chat prose, comments, and earlier-attempt attachments are excluded. After a retry, publish a consolidated replacement package rather than an addendum. Source files remain private in the Task container; only explicitly published attachments are copied into Aegis attachment storage. aegis_submit_budget_summary is reserved for the runtime-controlled budget summary phase and is rejected during normal work."}},
 		Snapshot:     capability.Snapshot{Kind: capability.KindTool, Name: ref.Name, Version: ref.Version, Metadata: map[string]string{"workspace": root, "transport": "container-stream"}},
 	}, nil
 }
@@ -141,7 +141,7 @@ func (b nativeDeliveryBinding) reportProgressTool() agentcore.Tool {
 
 func (b nativeDeliveryBinding) submitFinalResultTool() agentcore.Tool {
 	return agentcore.FuncTool{ToolDefinition: agentcore.ToolDefinition{
-		Name: "aegis_submit_final_result", Description: "Submit the standalone final result for this Issue and end the current Agent loop. Publish deliverable files first.",
+		Name: "aegis_submit_final_result", Description: "End the current Agent loop after publishing a complete standalone final report and all supporting files. Only this latest submission's attachments are delivered to the user; text and earlier submissions are excluded.",
 		Parameters: json.RawMessage(`{"type":"object","properties":{"body":{"type":"string","minLength":1,"maxLength":50000}},"required":["body"],"additionalProperties":false}`),
 	}, Mode: agentcore.ToolExecutionSequential, ExecuteFunc: func(ctx context.Context, raw json.RawMessage, _ agentcore.ToolUpdateSink) (agentcore.ToolResult, error) {
 		if err := contextError(ctx); err != nil {
@@ -163,6 +163,15 @@ func (b nativeDeliveryBinding) submitFinalResultTool() agentcore.Tool {
 		}
 		if unfinished > 0 {
 			return agentcore.ToolResult{}, fmt.Errorf("仍有 %d 个直属子 Issue 未结束，不能提交最终结果", unfinished)
+		}
+		if b.issue.ParentID == "" && strings.TrimSpace(b.issue.TaskSourceID) != "" {
+			var attachmentCount int64
+			if err := b.store.db.Model(&IssueAttachment{}).Where("issue_id = ? AND execution_id = ?", b.issue.ID, b.execution.ID).Count(&attachmentCount).Error; err != nil {
+				return agentcore.ToolResult{}, err
+			}
+			if attachmentCount == 0 {
+				return agentcore.ToolResult{}, errors.New("根 Issue 必须先发布本轮完整最终报告附件，才能提交最终结果")
+			}
 		}
 		if err := b.store.db.Model(&Execution{}).Where("id = ? AND issue_id = ?", b.execution.ID, b.issue.ID).Updates(map[string]any{"final_result": input.Body, "final_result_submitted": true, "result": input.Body, "updated_at": time.Now()}).Error; err != nil {
 			return agentcore.ToolResult{}, err

@@ -147,7 +147,9 @@
     touch-action: manipulation;
   }
   ::selection {
-    @apply bg-primary/20 text-foreground;
+    background: color-mix(in srgb, #52525b 78%, #8b5cf6 22%);
+    color: #ffffff;
+    text-shadow: none;
   }
 }
 

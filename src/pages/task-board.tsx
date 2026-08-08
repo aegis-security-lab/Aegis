@@ -1,9 +1,10 @@
 import * as React from "react"
 import { LayoutGrid, Plus } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { CreateIssueDialog } from "@/components/create-issue-dialog"
+import { CopyIssueIdentifier } from "@/components/copy-issue-identifier"
 import { IssueRuntimeBadge } from "@/components/issue-runtime-badge"
 import { IssueStatusSelect } from "@/components/issue-status-select"
 import { SearchInput } from "@/components/ui/search-input"
@@ -347,35 +348,43 @@ const BoardCard = React.memo(function BoardCard({
   onDragStart: (issueId: string, event: React.DragEvent) => void
   onDragEnd: () => void
 }) {
+  const navigate = useNavigate()
   const labels = issueLabelsOf(issue)
   return (
     <article
       draggable
+      role="link"
+      tabIndex={0}
       aria-label={`${issue.identifier} ${issue.title}`}
       onDragStart={(event) => onDragStart(issue.id, event)}
       onDragEnd={onDragEnd}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='menuitem']")) return
+        navigate(`/issues/${issue.id}?view=board`)
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          navigate(`/issues/${issue.id}?view=board`)
+        }
+      }}
       className={cn(
-        "group flex cursor-grab flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity,transform] duration-150 hover:-translate-y-px hover:shadow-md hover:ring-foreground/15 active:cursor-grabbing",
+        "group flex cursor-pointer flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity,transform] duration-150 hover:-translate-y-px hover:shadow-md hover:ring-foreground/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing",
         dragging && "translate-y-0 opacity-45"
       )}
     >
       <div className="flex items-center gap-1.5">
-        <span className="font-mono text-[11px] text-muted-foreground">
-          {issue.identifier}
-        </span>
+        <CopyIssueIdentifier identifier={issue.identifier} />
         <span
           className={cn("size-1.5 rounded-full", priorityDot[issue.priority])}
           title={priorityLabel[issue.priority]}
         />
         <IssueStatusSelect issue={issue} className="ml-auto" />
       </div>
-      <Link
-        to={`/issues/${issue.id}?view=board`}
-        draggable={false}
-        className="line-clamp-2 rounded-sm text-sm leading-snug font-medium outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring/50"
-      >
+      <p className="line-clamp-2 text-sm leading-snug font-medium">
         {issue.title}
-      </Link>
+      </p>
       {labels.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1">
           {labels.map((label) => (
