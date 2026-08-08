@@ -126,7 +126,6 @@ function TaskList({
           key={task.id}
           task={task}
           latest={latestRunByTask.get(task.id)}
-          active={task.id === activeTaskId}
           expanded={expandedTaskId === task.id}
           onToggle={() =>
             setExpandedTaskId((current) =>
@@ -146,14 +145,12 @@ function TaskList({
 function TaskSidebarItem({
   task,
   latest,
-  active,
   expanded,
   onToggle,
   rowRef,
 }: {
   task: Task
   latest?: Issue
-  active: boolean
   expanded: boolean
   onToggle: () => void
   rowRef: (element: HTMLDivElement | null) => void
@@ -168,19 +165,15 @@ function TaskSidebarItem({
     <SidebarMenuItem>
       <div
         ref={rowRef}
-        className={cn(
-          "flex h-7 min-w-0 items-center gap-0.5 rounded-md pr-8 text-[0.8rem] text-sidebar-foreground transition-colors",
-          active
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
-            : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        )}
+        className="flex h-7 min-w-0 items-center gap-0.5 rounded-md pr-8 text-[0.8rem] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       >
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
-          className="flex h-6 min-w-0 flex-1 items-center gap-0.5 rounded-md px-1 py-0.5 text-left focus-visible:ring-2 focus-visible:ring-ring outline-none"
-          title={task.title}
+          aria-label={expanded ? `收起 ${task.title}` : `展开 ${task.title}`}
+          title={expanded ? "收起" : "展开"}
+          className="flex size-6 shrink-0 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:ring-ring outline-none"
         >
           <ChevronRight
             className={cn(
@@ -188,8 +181,14 @@ function TaskSidebarItem({
               expanded && "rotate-90"
             )}
           />
-          <span className="min-w-0 flex-1 truncate">{label}</span>
         </button>
+        <NavLink
+          to={homeTo}
+          title={task.title}
+          className="flex h-6 min-w-0 flex-1 items-center rounded-md px-1 text-left focus-visible:ring-2 focus-visible:ring-ring outline-none"
+        >
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+        </NavLink>
         <TaskRowMenu
           task={task}
           triggerRender={
