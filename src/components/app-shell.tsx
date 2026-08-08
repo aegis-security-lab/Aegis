@@ -46,7 +46,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { useAppState } from "@/lib/state"
@@ -65,6 +64,10 @@ const loadSettingsOverlay = () => import("@/components/settings-overlay")
 const SettingsOverlay = React.lazy(() =>
   loadSettingsOverlay().then((module) => ({ default: module.SettingsOverlay }))
 )
+
+const SIDEBAR_WIDTH_KEY = "aegis.sidebar.width"
+const MIN_SIDEBAR_WIDTH = 220
+const MAX_SIDEBAR_WIDTH = 420
 
 type NavigationItem = {
   to: string
@@ -106,6 +109,16 @@ export function AppShell() {
   const [overlayGroup, setOverlayGroup] = React.useState<OverlayGroup | null>(
     null
   )
+  const [sidebarWidth, setSidebarWidth] = React.useState(() => {
+    const stored = Number.parseInt(
+      localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "",
+      10
+    )
+    return Number.isFinite(stored)
+      ? Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, stored))
+      : 240
+  })
+  const [resizingSidebar, setResizingSidebar] = React.useState(false)
   const [tabs, setTabs] = React.useState<TabState[]>(() => {
     const restored = loadTabs()
     if (restored) return restored
@@ -120,6 +133,41 @@ export function AppShell() {
   React.useEffect(() => {
     saveTabs(tabs, activeTabId)
   }, [tabs, activeTabId])
+
+  React.useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth))
+  }, [sidebarWidth])
+
+  const startSidebarResize = React.useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault()
+      const startX = event.clientX
+      const startWidth = sidebarWidth
+      setResizingSidebar(true)
+      document.body.style.cursor = "col-resize"
+      document.body.style.userSelect = "none"
+      const move = (moveEvent: PointerEvent) => {
+        setSidebarWidth(
+          Math.min(
+            MAX_SIDEBAR_WIDTH,
+            Math.max(MIN_SIDEBAR_WIDTH, startWidth + moveEvent.clientX - startX)
+          )
+        )
+      }
+      const stop = () => {
+        setResizingSidebar(false)
+        document.body.style.cursor = ""
+        document.body.style.userSelect = ""
+        window.removeEventListener("pointermove", move)
+        window.removeEventListener("pointerup", stop)
+        window.removeEventListener("pointercancel", stop)
+      }
+      window.addEventListener("pointermove", move)
+      window.addEventListener("pointerup", stop)
+      window.addEventListener("pointercancel", stop)
+    },
+    [sidebarWidth]
+  )
 
   const bootedRef = React.useRef(false)
   React.useEffect(() => {
@@ -224,8 +272,14 @@ export function AppShell() {
 
   return (
     <SidebarProvider
-      className="h-svh overflow-hidden"
-      style={{ "--sidebar-width": "15rem" } as React.CSSProperties}
+      open
+      onOpenChange={() => {}}
+      className={cn(
+        "h-svh overflow-hidden",
+        resizingSidebar &&
+          "[&_[data-slot=sidebar-container]]:transition-none [&_[data-slot=sidebar-gap]]:transition-none"
+      )}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
       <a
         href="#main-content"
@@ -348,8 +402,44 @@ export function AppShell() {
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarFooter>
-        <SidebarRail />
       </Sidebar>
+
+      <div
+        role="separator"
+        aria-label="调整侧边栏宽度"
+        aria-orientation="vertical"
+        aria-valuemin={MIN_SIDEBAR_WIDTH}
+        aria-valuemax={MAX_SIDEBAR_WIDTH}
+        aria-valuenow={sidebarWidth}
+        tabIndex={0}
+        onPointerDown={startSidebarResize}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            event.preventDefault()
+            setSidebarWidth((current) =>
+              Math.min(
+                MAX_SIDEBAR_WIDTH,
+                Math.max(
+                  MIN_SIDEBAR_WIDTH,
+                  current + (event.key === "ArrowRight" ? 8 : -8)
+                )
+              )
+            )
+          } else if (event.key === "Home") {
+            event.preventDefault()
+            setSidebarWidth(MIN_SIDEBAR_WIDTH)
+          } else if (event.key === "End") {
+            event.preventDefault()
+            setSidebarWidth(MAX_SIDEBAR_WIDTH)
+          }
+        }}
+        className={cn(
+          "fixed inset-y-0 z-30 hidden w-2 -translate-x-1 cursor-col-resize touch-none outline-none md:block",
+          "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors hover:after:bg-primary/35 focus-visible:after:bg-primary/55",
+          resizingSidebar && "after:bg-primary/55"
+        )}
+        style={{ left: sidebarWidth }}
+      />
 
       <SidebarInset className="flex h-svh min-h-0 flex-col p-1.5 sm:p-2">
         <SidebarTrigger className="fixed right-4 bottom-4 z-40 size-11 rounded-full shadow-lg ring-1 ring-foreground/10 md:hidden" />

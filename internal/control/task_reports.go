@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type taskReportManifest struct {
@@ -33,8 +31,8 @@ type taskReportManifestArtifact struct {
 	Size        int64  `json:"size"`
 }
 
-// publishRootIssueTaskReport replaces the Task Home report for a root Issue
-// with a ZIP made exclusively from the final successful Worker Execution.
+// publishRootIssueTaskReport appends an immutable lifecycle report made
+// exclusively from one successful Worker Execution.
 func (m *Manager) publishRootIssueTaskReport(issue Issue, sourceExecutionID string, now time.Time) error {
 	if issue.ParentID != "" || strings.TrimSpace(issue.TaskSourceID) == "" {
 		return nil
@@ -42,6 +40,10 @@ func (m *Manager) publishRootIssueTaskReport(issue Issue, sourceExecutionID stri
 	sourceExecutionID = strings.TrimSpace(sourceExecutionID)
 	if sourceExecutionID == "" {
 		return errors.New("根 Issue 最终报告缺少来源 Execution")
+	}
+	var existing TaskReport
+	if err := m.store.db.First(&existing, "root_issue_id = ? AND source_execution_id = ?", issue.ID, sourceExecutionID).Error; err == nil {
+		return nil
 	}
 	var attachments []IssueAttachment
 	if err := m.store.db.Where("issue_id = ? AND execution_id = ?", issue.ID, sourceExecutionID).Order("created_at asc, id asc").Find(&attachments).Error; err != nil {
@@ -56,7 +58,8 @@ func (m *Manager) publishRootIssueTaskReport(issue Issue, sourceExecutionID stri
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("创建任务报告目录失败: %w", err)
 	}
-	name := safeTaskReportFilename(issue)
+	title := m.taskReportTitle(issue, sourceExecutionID, now)
+	name := safeTaskReportFilename(issue.Identifier, title)
 	finalPath := filepath.Join(directory, name)
 	temporary, err := os.CreateTemp(directory, ".report-*.zip")
 	if err != nil {
@@ -131,31 +134,23 @@ func (m *Manager) publishRootIssueTaskReport(issue Issue, sourceExecutionID stri
 		return err
 	}
 
-	var previous TaskReport
-	_ = m.store.db.First(&previous, "root_issue_id = ?", issue.ID).Error
-	report := TaskReport{
-		ID: reportID, TaskID: issue.TaskSourceID, RootIssueID: issue.ID,
-		SourceExecutionID: sourceExecutionID, Name: name, StoragePath: filepath.Join("task-reports", reportID, name),
-		MimeType: "application/zip", Size: info.Size(), AttachmentCount: len(attachments),
-		CreatedAt: now, UpdatedAt: now,
-	}
-	if err = m.store.db.Transaction(func(tx *gorm.DB) error {
-		if previous.ID != "" {
-			if err := tx.Delete(&TaskReport{}, "id = ?", previous.ID).Error; err != nil {
-				return err
-			}
-		}
-		return tx.Create(&report).Error
-	}); err != nil {
+	var maxVersion int
+	if err = m.store.db.Model(&TaskReport{}).Where("root_issue_id = ?", issue.ID).Select("coalesce(max(version), 0)").Scan(&maxVersion).Error; err != nil {
 		cleanup()
 		return err
 	}
-	if previous.StoragePath != "" {
-		if oldPath, pathErr := m.store.taskReportStoragePath(previous); pathErr == nil && oldPath != finalPath {
-			_ = os.RemoveAll(filepath.Dir(oldPath))
-		}
+	report := TaskReport{
+		ID: reportID, TaskID: issue.TaskSourceID, RootIssueID: issue.ID,
+		SourceExecutionID: sourceExecutionID, Version: maxVersion + 1, Title: title,
+		Name: name, StoragePath: filepath.Join("task-reports", reportID, name),
+		MimeType: "application/zip", Size: info.Size(), AttachmentCount: len(attachments),
+		CreatedAt: now, UpdatedAt: now,
 	}
-	m.store.addEvent(sourceExecutionID, issue.ID, "delivery", "任务最终报告已生成", fmt.Sprintf("已将最后一次提交的 %d 个附件打包为 %s。", len(attachments), name))
+	if err = m.store.db.Create(&report).Error; err != nil {
+		cleanup()
+		return err
+	}
+	m.store.addEvent(sourceExecutionID, issue.ID, "delivery", "任务报告已生成", fmt.Sprintf("第 %d 版报告已将本次提交的 %d 个附件打包为 %s。", report.Version, len(attachments), name))
 	return nil
 }
 
@@ -207,13 +202,49 @@ func copyTaskReportAttachment(archive *zip.Writer, sourcePath, archiveName strin
 	return nil
 }
 
-func safeTaskReportFilename(issue Issue) string {
+func (m *Manager) taskReportTitle(issue Issue, sourceExecutionID string, generatedAt time.Time) string {
+	var wakeup AgentWakeup
+	if err := m.store.db.Where("issue_id = ? AND execution_id = ? AND comment_id <> ''", issue.ID, sourceExecutionID).Order("created_at desc, id desc").First(&wakeup).Error; err == nil {
+		var comment IssueComment
+		if err := m.store.db.First(&comment, "id = ?", wakeup.CommentID).Error; err == nil {
+			if title := compactReportTitle(comment.Body); title != "" {
+				return title
+			}
+		}
+	}
+	var execution Execution
+	if err := m.store.db.First(&execution, "id = ?", sourceExecutionID).Error; err == nil && !execution.StartedAt.IsZero() {
+		var comment IssueComment
+		query := m.store.db.Where("issue_id = ? AND author_type = ? AND created_at >= ?", issue.ID, "operator", execution.StartedAt)
+		if !generatedAt.IsZero() {
+			query = query.Where("created_at <= ?", generatedAt)
+		}
+		if err := query.Order("created_at desc, id desc").First(&comment).Error; err == nil {
+			if title := compactReportTitle(comment.Body); title != "" {
+				return title
+			}
+		}
+	}
+	return fallback(strings.TrimSpace(issue.Title), issue.Identifier+" 报告")
+}
+
+func compactReportTitle(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\n", " "))
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.Trim(value, "#*-_ `。.!！?？")
+	if len([]rune(value)) > 48 {
+		value = string([]rune(value)[:48]) + "…"
+	}
+	return value
+}
+
+func safeTaskReportFilename(identifier, title string) string {
 	base := strings.Trim(strings.Map(func(r rune) rune {
 		if r == '/' || r == '\\' || r < 32 {
 			return '-'
 		}
 		return r
-	}, strings.TrimSpace(issue.Identifier)+"-"+strings.TrimSpace(issue.Title)), " .-")
+	}, strings.TrimSpace(identifier)+"-"+strings.TrimSpace(title)), " .-")
 	if base == "" {
 		base = "task-report"
 	}

@@ -7,7 +7,6 @@ import {
   Languages,
   HeartPulse,
   KeyRound,
-  Radar,
   Save,
   Search,
   ShieldCheck,
@@ -59,7 +58,7 @@ const providers = [
 ]
 
 export type SettingsSection =
-  "general" | "search" | "runtime" | "model" | "workspace" | "budget" | "policy"
+  "general" | "search" | "model" | "workspace" | "budget" | "policy"
 
 export function SettingsPage({
   embedded = false,
@@ -140,7 +139,7 @@ export function SettingsPage({
     }
   }
   return (
-    <form onSubmit={save} className="flex flex-col gap-7">
+    <form onSubmit={save} className="flex w-full min-w-0 flex-col gap-7">
       <PageHeader
         eyebrow="System"
         title="设置"
@@ -154,7 +153,9 @@ export function SettingsPage({
       <div
         className={cn(
           "items-start gap-5",
-          embedded ? "flex flex-col" : "grid md:grid-cols-[180px_minmax(0,1fr)]"
+          embedded
+            ? "flex w-full min-w-0 flex-col"
+            : "grid md:grid-cols-[180px_minmax(0,1fr)]"
         )}
       >
         {embedded ? null : (
@@ -165,7 +166,6 @@ export function SettingsPage({
             {(
               [
                 ["general", "全局配置"],
-                ["runtime", "AgentCore"],
                 ["model", "模型与认证"],
                 ["search", "Web 搜索"],
                 ["workspace", "工作区"],
@@ -185,7 +185,7 @@ export function SettingsPage({
             ))}
           </nav>
         )}
-        <div className="min-w-0">
+        <div className="w-full min-w-0">
           <div className="flex flex-col gap-5">
             <Card className={section === "general" ? undefined : "hidden"}>
               <CardHeader>
@@ -219,32 +219,6 @@ export function SettingsPage({
                     用于所有新启动 Agent 的文本回复、分析结论和报告。
                   </FieldDescription>
                 </Field>
-              </CardContent>
-            </Card>
-            <Card className={section === "runtime" ? undefined : "hidden"}>
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
-                    <Radar className="size-4" />
-                  </span>
-                  <div>
-                    <CardTitle>AgentCore Runtime</CardTitle>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      内嵌 Go 控制面
-                    </p>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <Alert>
-                  <ShieldCheck />
-                  <AlertTitle>AgentCore 已内嵌</AlertTitle>
-                  <AlertDescription>
-                    Agent 循环、模型调用、工具策略和调度都在 Aegis
-                    服务进程中运行；无需 Node.js 或外部 Agent
-                    CLI。文件和命令工具通过任务专属 Docker 容器执行。
-                  </AlertDescription>
-                </Alert>
               </CardContent>
             </Card>
             <div

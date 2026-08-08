@@ -6,7 +6,6 @@ import (
 )
 
 func compactIssueForState(issue Issue) Issue {
-	issue.Constraints = ""
 	issue.Result = ""
 	return issue
 }

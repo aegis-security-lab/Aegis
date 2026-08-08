@@ -167,7 +167,6 @@ func toolCatalog() map[string]ToolSnapshot {
 				parameter("title", "string", "清晰具体的任务标题，最多 120 个字符。", true),
 				parameter("taskDescription", "string", "执行背景、范围和需要完成的交付物。", true),
 				parameter("objective", "string", "根据需求和交付物提炼的具体可验证目标；确实无法形成有效目标时才为空。", true),
-				parameter("constraints", "string", "权限与执行边界：授权范围或目标、工作区限制、禁止的破坏性操作和必须完成的验证。", true),
 				{Name: "priority", Type: "enum", Description: "任务优先级。", Required: true, Enum: []string{"high", "middle", "low"}},
 				{Name: "workMode", Type: "enum", Description: "自主执行或需要引导审批。", Required: true, Enum: []string{"autonomous", "guided"}},
 				parameter("agentId", "string", "从管家当前收到的 Agent 名册中选择准确 ID；没有明确匹配时为空并由调度器选择。", false),

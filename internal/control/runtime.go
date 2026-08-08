@@ -228,7 +228,7 @@ func (m *Manager) RestartTask(id string) (Issue, error) {
 		ProjectID: task.ProjectID, Title: task.Title, Description: task.Description,
 		Objective: task.Objective, Priority: task.Priority, WorkMode: task.WorkMode,
 		AssigneeAgentID: task.AssigneeAgentID, Workspace: task.Workspace, TaskSourceID: task.ID,
-		ContainerProfileID: task.ContainerProfileID, ContainerID: task.ContainerID, Constraints: task.Constraints, TimeBudgetMinutes: task.TimeBudgetMinutes, HumanValidationFallback: task.HumanValidationFallback,
+		ContainerProfileID: task.ContainerProfileID, ContainerID: task.ContainerID, TimeBudgetMinutes: task.TimeBudgetMinutes, HumanValidationFallback: task.HumanValidationFallback,
 	})
 	if err != nil {
 		return Issue{}, err
@@ -902,7 +902,7 @@ func (m *Manager) handleSettled(s *PiSession) {
 		go m.scheduleChildren(issue.ID)
 		return
 	}
-	if !settledFromCommentWakeup && strings.Contains(execution.InitialPrompt, "aegis_submit_final_result") && !execution.FinalResultSubmitted {
+	if (!settledFromCommentWakeup || s.kind == "continuation" || s.kind == "rework") && strings.Contains(execution.InitialPrompt, "aegis_submit_final_result") && !execution.FinalResultSubmitted {
 		prompt := fmt.Sprintf("本轮执行尚未提交最终结果，因此不能结束任务。请围绕 Issue 目标整理最终交付内容，必要时发布附件，然后必须调用 aegis_submit_final_result 提交正文（可选文件或目录）。不要只回复验收意见。Issue：%s", issue.Title)
 		_ = m.store.updateExecution(s.executionID, map[string]any{"status": "running", "error": "", "current_tool": "", "finished_at": nil, "result": ""})
 		bridge := m.Coordination()
@@ -2263,7 +2263,7 @@ func (m *Manager) createTaskFromConcierge(executionID string, input CreateConcie
 		Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description),
 		Objective: strings.TrimSpace(input.Objective), Priority: priority, Status: "todo",
 		WorkMode: workMode, AssigneeAgentID: strings.TrimSpace(input.AssigneeAgentID),
-		Workspace: strings.TrimSpace(input.Workspace), Constraints: strings.TrimSpace(input.Constraints),
+		Workspace:     strings.TrimSpace(input.Workspace),
 		AttachmentIDs: attachmentIDs, AttachmentSourceExecutionID: executionID,
 	})
 	if err != nil {
@@ -2486,8 +2486,13 @@ type commentWakeupTarget struct {
 }
 
 func (m *Manager) AddIssueComment(issueID, body string) (IssueComment, error) {
+	return m.AddIssueCommentWithObjective(issueID, body, "")
+}
+
+func (m *Manager) AddIssueCommentWithObjective(issueID, body, newObjective string) (IssueComment, error) {
 	body = strings.TrimSpace(body)
-	if body == "" {
+	newObjective = strings.TrimSpace(newObjective)
+	if body == "" && newObjective == "" {
 		return IssueComment{}, errors.New("评论内容不能为空")
 	}
 	if utf8.RuneCountInString(body) > 10000 {
@@ -2497,9 +2502,35 @@ func (m *Manager) AddIssueComment(issueID, body string) (IssueComment, error) {
 	if err != nil {
 		return IssueComment{}, err
 	}
+	if newObjective != "" && utf8.RuneCountInString(newObjective) > 10000 {
+		return IssueComment{}, errors.New("目标内容不能超过 10000 个字符")
+	}
+	if body == "" {
+		body = "设置了新的验收目标。"
+	}
 	mentions := m.validMentions(body, "")
 	comment := IssueComment{ID: nextID("comment"), IssueID: issueID, Type: "normal", AuthorType: "operator", AuthorID: "operator", Body: body, Mentions: mentions, Attachments: []IssueAttachment{}, CreatedAt: time.Now()}
-	if err = m.store.db.Create(&comment).Error; err != nil {
+	err = m.store.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&comment).Error; err != nil {
+			return err
+		}
+		if newObjective == "" || newObjective == strings.TrimSpace(issue.Objective) {
+			return nil
+		}
+		var maxVersion int
+		if err := tx.Model(&IssueObjective{}).Where("issue_id = ?", issue.ID).Select("coalesce(max(version), 0)").Scan(&maxVersion).Error; err != nil {
+			return err
+		}
+		objective := IssueObjective{ID: nextID("objective"), IssueID: issue.ID, Version: maxVersion + 1, Content: newObjective, SourceCommentID: comment.ID, CreatedBy: "operator", CreatedAt: comment.CreatedAt}
+		if err := tx.Create(&objective).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+			"objective": newObjective, "objective_abandoned": false,
+			"validation_execution_id": "", "updated_at": comment.CreatedAt,
+		}).Error
+	})
+	if err != nil {
 		return IssueComment{}, err
 	}
 	if bridge := m.Coordination(); bridge != nil {
@@ -2608,6 +2639,8 @@ func (m *Manager) dispatchWakeup(id string) {
 	kind := "wakeup"
 	if w.Reason == "validation_feedback" {
 		kind = "rework"
+	} else if w.Reason == "issue_comment_resume" {
+		kind = "continuation"
 	} else if w.Reason == issueHeartbeatReason {
 		kind = "heartbeat"
 	}
@@ -2677,10 +2710,20 @@ func (m *Manager) markIssueForWakeup(w *AgentWakeup, issue Issue, executionID st
 		if updated.RowsAffected != 1 {
 			return errors.New("Wakeup 已被其他执行处理")
 		}
-		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		issueUpdates := map[string]any{
 			"status": "in_progress", "execution_phase": "active", "checkout_execution_id": executionID,
 			"current_execution_id": executionID, "error": "", "updated_at": now,
-		}).Error; err != nil {
+		}
+		if w.Reason == "issue_comment_resume" {
+			issueUpdates["completed_at"] = nil
+			issueUpdates["cancelled_at"] = nil
+			issueUpdates["abandoned_at"] = nil
+			issueUpdates["abandon_requested_at"] = nil
+			issueUpdates["abandonment_reason"] = ""
+			issueUpdates["objective_abandoned"] = false
+			issueUpdates["labels"] = issueLabelsColumn(withoutIssueLabels(issue, issueLabelFailed, issueLabelBudgetExceeded, issueLabelBlocked))
+		}
+		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(issueUpdates).Error; err != nil {
 			return err
 		}
 		if issue.AssigneeTaskAgentID != "" {
@@ -2733,6 +2776,10 @@ func (m *Manager) completeWakeup(s *PiSession, result string) {
 
 func (m *Manager) restoreIssueAfterWakeup(issueID, executionID string) {
 	if issueID == "" || executionID == "" {
+		return
+	}
+	var permanentResumes int64
+	if err := m.store.db.Model(&AgentWakeup{}).Where("issue_id = ? AND execution_id = ? AND reason = ?", issueID, executionID, "issue_comment_resume").Count(&permanentResumes).Error; err == nil && permanentResumes > 0 {
 		return
 	}
 	var issue Issue

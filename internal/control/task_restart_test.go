@@ -11,7 +11,7 @@ func TestRestartTaskCreatesNewRootIssueWithOriginalSource(t *testing.T) {
 	task, original, err := store.CreateTask(CreateIssueInput{
 		Title: "Repeatable security review", Description: "Inspect the target.", Objective: "Produce evidence.",
 		Priority: "high", WorkMode: "guided",
-		Workspace: store.Config().Workspace, Constraints: "Original boundary",
+		Workspace: store.Config().Workspace,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +24,7 @@ func TestRestartTaskCreatesNewRootIssueWithOriginalSource(t *testing.T) {
 	if restarted.ID == original.ID || restarted.ParentID != "" || restarted.TaskSourceID != task.ID {
 		t.Fatalf("restart did not create a sourced root Issue: original=%+v restarted=%+v", original, restarted)
 	}
-	if restarted.Title != original.Title || restarted.Description != original.Description || restarted.Objective != original.Objective || restarted.Priority != original.Priority || restarted.WorkMode != original.WorkMode || restarted.AssigneeAgentID != original.AssigneeAgentID || restarted.Workspace != original.Workspace || restarted.Constraints != original.Constraints {
+	if restarted.Title != original.Title || restarted.Description != original.Description || restarted.Objective != original.Objective || restarted.Priority != original.Priority || restarted.WorkMode != original.WorkMode || restarted.AssigneeAgentID != original.AssigneeAgentID || restarted.Workspace != original.Workspace {
 		t.Fatalf("restart did not preserve task parameters: original=%+v restarted=%+v", original, restarted)
 	}
 

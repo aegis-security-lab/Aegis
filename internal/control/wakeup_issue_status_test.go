@@ -44,6 +44,43 @@ func TestWakeupExecutionMakesIssueActiveThenRestoresPriorTerminalState(t *testin
 	}
 }
 
+func TestOperatorCommentResumePermanentlyReopensInactiveIssue(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Resume failed work", Objective: "Finish the work.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
+		"status": "done", "execution_phase": "completed", "labels": issueLabelsColumn([]string{issueLabelFailed}),
+		"error": "previous failure", "completed_at": now, "objective_abandoned": true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	issue, _ = store.GetIssue(issue.ID)
+	wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: issue.ID, AgentID: issue.AssigneeAgentID, Reason: "issue_comment_resume", Status: "queued", CreatedAt: now}
+	if err = store.db.Create(&wakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	if err = manager.markIssueForWakeup(&wakeup, issue, "execution-continuation", now); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, _ := store.GetIssue(issue.ID)
+	if reopened.Status != "in_progress" || reopened.ExecutionPhase != "active" || reopened.CurrentExecutionID != "execution-continuation" {
+		t.Fatalf("comment did not reopen Issue: %+v", reopened)
+	}
+	if reopened.CompletedAt != nil || reopened.CancelledAt != nil || reopened.ObjectiveAbandoned || reopened.Error != "" || hasIssueLabel(reopened, issueLabelFailed) {
+		t.Fatalf("stale terminal outcome survived resume: %+v", reopened)
+	}
+	manager.restoreIssueAfterWakeup(issue.ID, "execution-continuation")
+	stillActive, _ := store.GetIssue(issue.ID)
+	if stillActive.Status != "in_progress" {
+		t.Fatalf("resume was incorrectly restored to terminal state: %+v", stillActive)
+	}
+}
+
 func TestWakeupPromptRequiresVisibleReplyOnCurrentIssue(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{Title: "Follow-up", Objective: "Answer the operator.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})

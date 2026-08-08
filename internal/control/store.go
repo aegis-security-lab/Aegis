@@ -534,7 +534,6 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		// paths before persistence instead of relying on a later runtime rewrite.
 		input.Description = rewriteWorkspacePaths(input.Description, workspace, requestedWorkspace, parentWorkspace, s.config.Workspace)
 		input.Objective = rewriteWorkspacePaths(input.Objective, workspace, requestedWorkspace, parentWorkspace, s.config.Workspace)
-		input.Constraints = rewriteWorkspacePaths(input.Constraints, workspace, requestedWorkspace, parentWorkspace, s.config.Workspace)
 	}
 	if input.TimeBudgetMinutes != nil && *input.TimeBudgetMinutes <= 0 {
 		return Issue{}, errors.New("任务时间预算必须大于 0 分钟，或留空使用全局配置")
@@ -561,7 +560,7 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 			return err
 		}
 		now := time.Now()
-		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: fallback(strings.TrimSpace(input.Constraints), "允许访问任务 Docker 容器内的任意文件路径；避免无关或破坏性操作；完成后运行相关验证。"), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
+		issue = Issue{ID: fallback(strings.TrimSpace(input.RequestedID), nextID("issue")), Number: max + 1, Identifier: fmt.Sprintf("%s-%04d", project.Key, max+1), ProjectID: project.ID, ParentID: input.ParentID, TaskSourceID: input.TaskSourceID, Title: input.Title, Description: strings.TrimSpace(input.Description), Objective: input.Objective, Status: status, Priority: input.Priority, WorkMode: input.WorkMode, ExecutionPhase: "active", ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, AssigneeAgentID: input.AssigneeAgentID, Capabilities: append([]capability.Ref(nil), input.Capabilities...), CapabilitySelection: strings.TrimSpace(input.CapabilitySelection), Workspace: workspace, ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedBy: fallback(strings.TrimSpace(input.CreatedBy), "operator"), CreatedAt: now, UpdatedAt: now}
 		if issue.ParentID != "" {
 			var parent Issue
 			if err := tx.First(&parent, "id = ?", issue.ParentID).Error; err != nil {
@@ -593,6 +592,12 @@ func (s *Store) CreateIssue(input CreateIssueInput) (Issue, error) {
 		}
 		if err := tx.Create(&issue).Error; err != nil {
 			return err
+		}
+		if issue.Objective != "" {
+			objective := IssueObjective{ID: nextID("objective"), IssueID: issue.ID, Version: 1, Content: issue.Objective, CreatedBy: issue.CreatedBy, CreatedAt: now}
+			if err := tx.Create(&objective).Error; err != nil {
+				return err
+			}
 		}
 		var bindErr error
 		createdInputAttachmentDirs, bindErr = s.bindInputAttachmentsTx(tx, issue, input)
@@ -639,9 +644,8 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	input.Workspace = profile.WorkspacePath
 	input.Description = rewriteWorkspacePaths(input.Description, input.Workspace, requestedWorkspace, s.Config().Workspace)
 	input.Objective = rewriteWorkspacePaths(input.Objective, input.Workspace, requestedWorkspace, s.Config().Workspace)
-	input.Constraints = rewriteWorkspacePaths(input.Constraints, input.Workspace, requestedWorkspace, s.Config().Workspace)
 	now := time.Now()
-	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, Constraints: strings.TrimSpace(input.Constraints), TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedAt: now, UpdatedAt: now}
+	task := Task{ID: nextID("task"), ProjectID: input.ProjectID, Title: strings.TrimSpace(input.Title), Description: strings.TrimSpace(input.Description), Objective: strings.TrimSpace(input.Objective), Priority: input.Priority, WorkMode: input.WorkMode, AssigneeAgentID: input.AssigneeAgentID, Workspace: strings.TrimSpace(input.Workspace), ContainerProfileID: input.ContainerProfileID, ContainerID: input.ContainerID, TimeBudgetMinutes: input.TimeBudgetMinutes, HumanValidationFallback: input.HumanValidationFallback, CreatedAt: now, UpdatedAt: now}
 	if err := s.db.Create(&task).Error; err != nil {
 		return Task{}, Issue{}, err
 	}
@@ -654,7 +658,7 @@ func (s *Store) CreateTask(input CreateIssueInput) (Task, Issue, error) {
 	// Persist normalized/defaulted values from the actual run.
 	task.ProjectID, task.Title, task.Description, task.Objective = issue.ProjectID, issue.Title, issue.Description, issue.Objective
 	task.Priority, task.WorkMode, task.AssigneeAgentID = issue.Priority, issue.WorkMode, issue.AssigneeAgentID
-	task.Workspace, task.ContainerProfileID, task.ContainerID, task.Constraints = issue.Workspace, issue.ContainerProfileID, issue.ContainerID, issue.Constraints
+	task.Workspace, task.ContainerProfileID, task.ContainerID = issue.Workspace, issue.ContainerProfileID, issue.ContainerID
 	task.TimeBudgetMinutes = issue.TimeBudgetMinutes
 	task.HumanValidationFallback = issue.HumanValidationFallback
 	if err = s.db.Save(&task).Error; err != nil {
@@ -692,20 +696,16 @@ func (s *Store) GetTaskDetail(id string) (TaskDetail, error) {
 		return TaskDetail{}, err
 	}
 	var reports []TaskReport
-	if err = s.db.Where("task_id = ?", task.ID).Find(&reports).Error; err != nil {
+	if err = s.db.Where("task_id = ?", task.ID).Order("created_at desc, id desc").Find(&reports).Error; err != nil {
 		return TaskDetail{}, err
 	}
-	reportByRoot := make(map[string]TaskReport, len(reports))
+	reportsByRoot := make(map[string][]TaskReport, len(reports))
 	for _, report := range reports {
-		reportByRoot[report.RootIssueID] = report
+		reportsByRoot[report.RootIssueID] = append(reportsByRoot[report.RootIssueID], report)
 	}
 	rootReports := make([]TaskRootReport, 0, len(roots))
 	for _, root := range roots {
-		item := TaskRootReport{IssueID: root.ID, Identifier: root.Identifier, Title: root.Title, Status: root.Status, CompletedAt: root.CompletedAt}
-		if report, ok := reportByRoot[root.ID]; ok {
-			copy := report
-			item.Report = &copy
-		}
+		item := TaskRootReport{IssueID: root.ID, Identifier: root.Identifier, Title: root.Title, Status: root.Status, CompletedAt: root.CompletedAt, Reports: reportsByRoot[root.ID]}
 		rootReports = append(rootReports, item)
 	}
 	return TaskDetail{Task: task, InputAttachments: attachments, RootReports: rootReports}, nil
@@ -774,7 +774,7 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, InputAttachments: []InputAttachment{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Watermark: time.Now()}
+	d := IssueDetail{Issue: issue, Children: []Issue{}, BlockedBy: []Issue{}, Blocks: []Issue{}, Executions: []Execution{}, Comments: []IssueComment{}, Messages: []Message{}, InputAttachments: []InputAttachment{}, Events: []ExecutionEvent{}, Approvals: []Approval{}, Wakeups: []AgentWakeup{}, Validations: []IssueValidation{}, Objectives: []IssueObjectiveView{}, Watermark: time.Now()}
 	if runtimes := s.issueRuntimeViews([]Issue{issue}); len(runtimes) == 1 {
 		d.Runtime = runtimes[0]
 	}
@@ -823,7 +823,31 @@ func (s *Store) GetIssueDetail(id string) (IssueDetail, error) {
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Approvals)
 	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Wakeups)
 	s.db.Where("parent_issue_id = ?", issue.ID).Order("created_at desc").Find(&d.Decompositions)
-	s.db.Where("issue_id = ?", issue.ID).Order("attempt desc").Find(&d.Validations)
+	s.db.Where("issue_id = ?", issue.ID).Order("created_at desc, id desc").Find(&d.Validations)
+	var objectives []IssueObjective
+	if err := s.db.Where("issue_id = ?", issue.ID).Order("version desc").Find(&objectives).Error; err != nil {
+		return IssueDetail{}, err
+	}
+	for index, objective := range objectives {
+		view := IssueObjectiveView{IssueObjective: objective, Current: index == 0, ValidationStatus: "pending"}
+		for _, validation := range d.Validations {
+			matches := validation.ObjectiveID == objective.ID || (validation.ObjectiveID == "" && validation.Objective == objective.Content)
+			if !matches {
+				continue
+			}
+			view.ValidationRounds++
+			if view.ValidationRounds == 1 {
+				view.ValidationStatus = validation.Status
+				view.ValidationPassed = validation.Passed
+				view.LastValidationAt = validation.CompletedAt
+				if view.LastValidationAt == nil {
+					created := validation.CreatedAt
+					view.LastValidationAt = &created
+				}
+			}
+		}
+		d.Objectives = append(d.Objectives, view)
+	}
 	return d, nil
 }
 
@@ -984,7 +1008,19 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if labelsChanged {
 		updates["labels"] = issueLabelsColumn(labels)
 	}
-	if err := s.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if input.Objective == nil || strings.TrimSpace(*input.Objective) == strings.TrimSpace(issue.Objective) || strings.TrimSpace(*input.Objective) == "" {
+			return nil
+		}
+		var maxVersion int
+		if err := tx.Model(&IssueObjective{}).Where("issue_id = ?", issue.ID).Select("coalesce(max(version), 0)").Scan(&maxVersion).Error; err != nil {
+			return err
+		}
+		return tx.Create(&IssueObjective{ID: nextID("objective"), IssueID: issue.ID, Version: maxVersion + 1, Content: strings.TrimSpace(*input.Objective), CreatedBy: "operator", CreatedAt: time.Now()}).Error
+	}); err != nil {
 		return Issue{}, err
 	}
 	var refreshed Issue
@@ -1397,6 +1433,19 @@ func (s *Store) addEvent(executionID, issueID, kind, title, detail string) {
 	}
 	observability.Default().Log(ctx, level, "control.execution_event", slog.String("event_type", kind), slog.String("title", title), slog.String("detail", truncate(detail, 4000)))
 	observability.DefaultMetrics().AddCounter("control_execution_events_total", 1, observability.Labels{"type": kind})
+	s.notify()
+}
+
+func (s *Store) addToolEvent(executionID, issueID, toolName, arguments string) {
+	toolName, arguments = strings.TrimSpace(toolName), strings.TrimSpace(arguments)
+	_ = s.db.Create(&ExecutionEvent{
+		ID: nextID("event"), ExecutionID: executionID, IssueID: issueID,
+		Type: "tool", Title: toolName, Detail: truncate(arguments, 1000),
+		ToolName: toolName, InputJSON: arguments, CreatedAt: time.Now(),
+	}).Error
+	ctx := observability.WithScope(context.Background(), observability.Scope{IssueID: issueID, ExecutionID: executionID, Component: "control.domain"})
+	observability.Default().Log(ctx, slog.LevelInfo, "control.execution_event", slog.String("event_type", "tool"), slog.String("tool_name", toolName), slog.String("detail", truncate(arguments, 4000)))
+	observability.DefaultMetrics().AddCounter("control_execution_events_total", 1, observability.Labels{"type": "tool"})
 	s.notify()
 }
 func (s *Store) notify() {

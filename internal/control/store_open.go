@@ -106,16 +106,45 @@ func initializeStoreSchema(db *gorm.DB) error {
 			return fmt.Errorf("remove retired task Agent alias index: %w", err)
 		}
 	}
+	// Reports used to be replaceable per root Issue. Drop that historical
+	// uniqueness before AutoMigrate so multiple immutable versions can coexist.
+	for _, index := range []string{"uni_task_reports_root_issue_id", "idx_task_reports_root_issue_id"} {
+		if db.Migrator().HasIndex(&TaskReport{}, index) {
+			if err := db.Migrator().DropIndex(&TaskReport{}, index); err != nil {
+				return fmt.Errorf("remove replaceable task report index: %w", err)
+			}
+		}
+	}
 	models := []any{
 		&configRecord{}, &agentRecord{}, &skillRecord{}, &uncoverProviderRecord{},
 		&KnowledgeBase{}, &KnowledgeDocument{}, &Project{}, &ContainerProfile{}, &ContainerInstance{},
 		&Task{}, &TaskReport{}, &TaskAudit{}, &TaskAuditEvent{}, &Issue{}, &TaskAgent{}, &ConciergeConversation{},
-		&IssueRelation{}, &Execution{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{},
+		&IssueRelation{}, &Execution{}, &IssueObjective{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{},
 		&Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &InputAttachment{}, &AgentWakeup{},
 		&IssueDecomposition{}, &IssueChildWait{}, &RelayThread{}, &RelayMessage{}, &RelayReceipt{}, &Finding{},
 	}
 	if err := db.AutoMigrate(models...); err != nil {
 		return fmt.Errorf("initialize sqlite schema: %w", err)
+	}
+	if err := db.Exec(`UPDATE task_reports
+		SET version = 1,
+			title = COALESCE(NULLIF(title, ''), (SELECT title FROM issues WHERE issues.id = task_reports.root_issue_id), name)
+		WHERE version = 0 OR title = ''`).Error; err != nil {
+		return fmt.Errorf("backfill task report history metadata: %w", err)
+	}
+	// Seed version 1 for Issues created before objective history existed.
+	if err := db.Exec(`INSERT INTO issue_objectives (id, issue_id, version, content, created_by, created_at)
+		SELECT 'objective-' || id, id, 1, objective, COALESCE(NULLIF(created_by, ''), 'system'), created_at
+		FROM issues WHERE TRIM(objective) <> ''
+		AND NOT EXISTS (SELECT 1 FROM issue_objectives WHERE issue_objectives.issue_id = issues.id)`).Error; err != nil {
+		return fmt.Errorf("backfill issue objective history: %w", err)
+	}
+	for _, model := range []any{&Task{}, &Issue{}} {
+		if db.Migrator().HasColumn(model, "Constraints") {
+			if err := db.Migrator().DropColumn(model, "Constraints"); err != nil {
+				return fmt.Errorf("remove retired execution boundary column: %w", err)
+			}
+		}
 	}
 	return nil
 }

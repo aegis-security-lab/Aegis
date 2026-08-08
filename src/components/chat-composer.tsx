@@ -41,6 +41,7 @@ export function ChatComposer({
   addonClassName,
   embedded = false,
   mentionIssues = [],
+  additionalCanSend = false,
 }: {
   value: string
   onValueChange: (value: string) => void
@@ -60,11 +61,13 @@ export function ChatComposer({
   addonClassName?: string
   embedded?: boolean
   mentionIssues?: Issue[]
+  additionalCanSend?: boolean
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const canSend =
     Boolean(value.trim()) ||
-    Boolean(attachments && attachments.attachmentIds.length > 0)
+    Boolean(attachments && attachments.attachmentIds.length > 0) ||
+    additionalCanSend
   const disabled =
     sending ||
     Boolean(attachments?.uploading) ||

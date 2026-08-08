@@ -707,7 +707,7 @@ func (r NativeIssueRunner) eventSink(prepared preparedIssueExecution, next agent
 		switch event.Type {
 		case agentcore.EventToolExecutionStart:
 			_ = r.Manager.store.updateExecution(prepared.execution.ID, map[string]any{"status": "running", "current_tool": event.ToolName, "checkpoint": "正在调用 " + event.ToolName, "checkpoint_at": time.Now()})
-			r.Manager.store.addEvent(prepared.execution.ID, prepared.issue.ID, "tool", "Go AgentCore 调用 "+event.ToolName, truncate(string(event.Arguments), 1000))
+			r.Manager.store.addToolEvent(prepared.execution.ID, prepared.issue.ID, event.ToolName, string(event.Arguments))
 		case agentcore.EventToolExecutionEnd:
 			_ = r.Manager.store.updateExecution(prepared.execution.ID, map[string]any{"current_tool": "", "checkpoint": "工具 " + event.ToolName + " 已完成", "checkpoint_at": time.Now()})
 		}

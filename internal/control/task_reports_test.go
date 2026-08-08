@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestRootIssueTaskReportContainsOnlyLatestSuccessfulSubmission(t *testing.T) {
+func TestRootIssueTaskReportKeepsImmutableHistory(t *testing.T) {
 	store := configuredStore(t)
 	task, root, err := store.CreateTask(CreateIssueInput{
 		Title: "Consolidated delivery", Objective: "Deliver one complete report package.",
@@ -44,12 +44,15 @@ func TestRootIssueTaskReportContainsOnlyLatestSuccessfulSubmission(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.RootReports) != 1 || detail.RootReports[0].Report == nil {
+	if len(detail.RootReports) != 1 || len(detail.RootReports[0].Reports) != 2 {
 		t.Fatalf("unexpected root report projection: %+v", detail.RootReports)
 	}
-	report := detail.RootReports[0].Report
+	report := detail.RootReports[0].Reports[0]
 	if report.SourceExecutionID != latest.ID || report.AttachmentCount != 2 {
 		t.Fatalf("report does not point at latest submission: %+v", report)
+	}
+	if detail.RootReports[0].Reports[1].SourceExecutionID != first.ID {
+		t.Fatalf("first report was not retained: %+v", detail.RootReports[0].Reports)
 	}
 
 	_, file, err := store.TaskReportFile(report.ID)
@@ -81,6 +84,39 @@ func TestRootIssueTaskReportContainsOnlyLatestSuccessfulSubmission(t *testing.T)
 		if strings.Contains(body, oldBody) {
 			t.Fatal("obsolete submission leaked into latest task report")
 		}
+	}
+}
+
+func TestTaskReportUsesResumeCommentAsTitle(t *testing.T) {
+	store := configuredStore(t)
+	_, root, err := store.CreateTask(CreateIssueInput{Title: "Initial task title", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, _ := store.createExecution(root, root.AssigneeAgentID, "continuation")
+	comment := IssueComment{ID: nextID("comment"), IssueID: root.ID, AuthorType: "operator", AuthorID: "operator", Body: "现在根据新的验证结果重新生成完整报告，并附上复现步骤。", CreatedAt: time.Now().Add(-time.Second)}
+	if err = store.db.Create(&comment).Error; err != nil {
+		t.Fatal(err)
+	}
+	wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: root.ID, CommentID: comment.ID, AgentID: root.AssigneeAgentID, ExecutionID: execution.ID, Reason: "issue_comment_resume", Status: "delivered", CreatedAt: comment.CreatedAt}
+	if err = store.db.Create(&wakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := "report"
+	if _, err = store.captureUploadedAttachment(root, execution.ID, PublishAttachmentInput{Path: "report.md"}, strings.NewReader(body), int64(len(body))); err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	if err = manager.publishRootIssueTaskReport(root, execution.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := store.GetTaskDetail(root.TaskSourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := detail.RootReports[0].Reports[0]
+	if !strings.HasPrefix(report.Title, "现在根据新的验证结果重新生成完整报告") {
+		t.Fatalf("report title=%q", report.Title)
 	}
 }
 

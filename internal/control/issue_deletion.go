@@ -116,7 +116,7 @@ func (s *Store) DeleteIssueTree(issueID string) (DeleteIssueResult, error) {
 		if err := tx.Where("issue_id IN ? OR related_issue_id IN ?", issueIDs, issueIDs).Delete(&IssueRelation{}).Error; err != nil {
 			return err
 		}
-		for _, model := range []any{&ConciergeConversation{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &RelayMessage{}} {
+		for _, model := range []any{&ConciergeConversation{}, &IssueObjective{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}, &RelayMessage{}} {
 			if err := tx.Where("issue_id IN ?", issueIDs).Delete(model).Error; err != nil {
 				return err
 			}

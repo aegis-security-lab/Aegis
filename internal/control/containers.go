@@ -829,7 +829,7 @@ func (s *Store) DeleteContainer(id string, cascadeIssues bool) (ContainerDeleteR
 			if err := tx.Where("issue_id IN ? OR related_issue_id IN ?", plan.IssueIDs, plan.IssueIDs).Delete(&IssueRelation{}).Error; err != nil {
 				return err
 			}
-			for _, model := range []any{&ConciergeConversation{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}} {
+			for _, model := range []any{&ConciergeConversation{}, &IssueObjective{}, &IssueValidation{}, &ExecutionEvent{}, &ExecutionProgress{}, &Message{}, &Approval{}, &IssueComment{}, &IssueAttachment{}, &AgentWakeup{}} {
 				if err := tx.Where("issue_id IN ?", plan.IssueIDs).Delete(model).Error; err != nil {
 					return err
 				}

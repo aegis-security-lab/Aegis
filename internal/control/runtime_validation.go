@@ -42,8 +42,14 @@ func (m *Manager) beginIssueValidationWithContext(issue Issue, source Execution,
 	if err != nil {
 		return err
 	}
+	var currentObjective IssueObjective
+	_ = m.store.db.Where("issue_id = ?", issue.ID).Order("version desc").First(&currentObjective).Error
 	var attempts int64
-	if err := m.store.db.Model(&IssueValidation{}).Where("issue_id = ?", issue.ID).Count(&attempts).Error; err != nil {
+	attemptQuery := m.store.db.Model(&IssueValidation{}).Where("issue_id = ?", issue.ID)
+	if currentObjective.ID != "" {
+		attemptQuery = attemptQuery.Where("objective_id = ?", currentObjective.ID)
+	}
+	if err := attemptQuery.Count(&attempts).Error; err != nil {
 		return err
 	}
 	attempt := int(attempts) + 1
@@ -56,7 +62,7 @@ func (m *Manager) beginIssueValidationWithContext(issue Issue, source Execution,
 	validation := IssueValidation{
 		ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID,
 		ValidationExecutionID: validationExecution.ID, Attempt: attempt,
-		Objective: objective, CandidateResult: strings.TrimSpace(candidateResult), Status: "running", CreatedAt: now,
+		ObjectiveID: currentObjective.ID, Objective: objective, CandidateResult: strings.TrimSpace(candidateResult), Status: "running", CreatedAt: now,
 		ManualOverrideReason: strings.TrimSpace(manualReason),
 	}
 	if err := withSQLiteRetry(func() error {
@@ -133,6 +139,17 @@ func (m *Manager) settleValidation(issue Issue, executionID, raw string) {
 	var validation IssueValidation
 	if err := m.store.db.Where("validation_execution_id = ? AND status = ?", executionID, "running").First(&validation).Error; err != nil {
 		return
+	}
+	if validation.ObjectiveID != "" {
+		var current IssueObjective
+		if err := m.store.db.Where("issue_id = ?", issue.ID).Order("version desc").First(&current).Error; err == nil && current.ID != validation.ObjectiveID {
+			now := time.Now()
+			_ = m.store.updateExecution(executionID, map[string]any{"status": "completed", "result": raw, "current_tool": "", "finished_at": now, "pid": 0})
+			_ = m.store.db.Model(&IssueValidation{}).Where("id = ?", validation.ID).Updates(map[string]any{"status": "superseded", "summary": "验收期间目标已更新，本轮结果不再作用于 Issue。", "completed_at": now}).Error
+			m.store.addEvent(executionID, issue.ID, "validation", "旧目标验收已失效", "Issue 已切换到更新的目标版本，本轮结果仅保留为历史记录。")
+			m.store.notify()
+			return
+		}
 	}
 	decision, err := submittedValidationDecision(validation)
 	now := time.Now()

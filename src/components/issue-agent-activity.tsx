@@ -1,10 +1,12 @@
 import * as React from "react"
 import {
   Bot,
+  Check,
   CheckCircle2,
   ChevronDown,
   CircleAlert,
   ClipboardCheck,
+  Copy,
   LoaderCircle,
   TerminalSquare,
 } from "lucide-react"
@@ -26,6 +28,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -154,9 +161,7 @@ export function IssueAgentActivity({
                 <ActivityGroupRow
                   key={group.id}
                   group={group}
-                  active={
-                    activeGroup && group === lastGroup
-                  }
+                  active={activeGroup && group === lastGroup}
                   executionMap={executionMap}
                   onSelect={setSelected}
                 />
@@ -265,8 +270,7 @@ function AgentProcess({
     if (!open) return
     let cancelled = false
     const toolEvents = items.filter(
-      (item) =>
-        item.event.type === "tool" && !fullEvents.has(item.event.id)
+      (item) => item.event.type === "tool" && !fullEvents.has(item.event.id)
     )
     if (toolEvents.length === 0) return
     void Promise.all(
@@ -312,14 +316,12 @@ function AgentProcess({
             className={cn("transition-transform", open && "rotate-180")}
           />
         )}
-        {active
-          ? "Agent 正在执行"
-          : `查看执行过程 · ${items.length} 条`}
+        {active ? "Agent 正在执行" : `查看执行过程 · ${items.length} 条`}
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1 overflow-hidden data-[ending-style]:animate-out data-[starting-style]:animate-in">
         <div
           ref={processViewport}
-          className="flex max-h-56 flex-col gap-2 overflow-y-auto py-1 pl-1 pr-1"
+          className="flex max-h-56 flex-col gap-2 overflow-y-auto py-1 pr-1 pl-1"
         >
           {items.map((item) => (
             <ToolEventRow
@@ -347,45 +349,121 @@ function ToolEventRow({
   const event = item.event
   const isTool = event.type === "tool"
   const summary = eventSummary(event)
-  const output = fullEvent?.outputJson || fullEvent?.inputJson
+  const row = (
+    <button
+      type="button"
+      onClick={isTool ? undefined : onSelect}
+      className="flex w-full min-w-0 items-start gap-2 rounded-md text-left text-xs leading-5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+    >
+      {event.isError ? (
+        <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+      ) : (
+        <TerminalSquare className="mt-0.5 size-3.5 shrink-0" />
+      )}
+      {isTool ? (
+        <span
+          className="min-w-0 flex-1 [scrollbar-width:none] overflow-x-auto font-mono whitespace-nowrap [&::-webkit-scrollbar]:hidden"
+          title={summary}
+          onWheel={(event) => {
+            event.currentTarget.scrollLeft += event.deltaY || event.deltaX
+          }}
+        >
+          {summary}
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate">{summary}</span>
+      )}
+    </button>
+  )
+  if (!isTool) return <div className="min-w-0">{row}</div>
+  return (
+    <Popover>
+      <PopoverTrigger render={row} />
+      <PopoverContent
+        side="left"
+        align="start"
+        sideOffset={10}
+        className="w-[min(34rem,calc(100vw-2rem))] gap-0 overflow-hidden p-0"
+      >
+        <ToolEventInspector event={fullEvent ?? event} />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function ToolEventInspector({ event }: { event: ExecutionEvent }) {
+  const input = meaningfulJSON(event.inputJson) || event.detail
+  const output = event.outputJson
   return (
     <div className="min-w-0">
-      <button
-        type="button"
-        onClick={onSelect}
-        className="flex w-full min-w-0 items-start gap-2 rounded-md text-left text-xs leading-5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-      >
-        {event.isError ? (
-          <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-        ) : (
-          <TerminalSquare className="mt-0.5 size-3.5 shrink-0" />
-        )}
-        {isTool ? (
-          <span
-            className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            title={summary}
-            onWheel={(event) => {
-              event.currentTarget.scrollLeft +=
-                event.deltaY || event.deltaX
-            }}
-          >
-            {summary}
-          </span>
-        ) : (
-          <span className="min-w-0 flex-1 truncate">{summary}</span>
-        )}
-      </button>
-      {output ? (
-        <pre
-          className={cn(
-            "mt-1 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-2 font-mono text-[11px] leading-4 break-words",
-            event.isError && "text-destructive"
-          )}
-        >
-          {formatJSON(output)}
-        </pre>
-      ) : null}
+      <div className="flex items-center gap-2 border-b px-3 py-2.5">
+        <TerminalSquare className="size-3.5 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
+          {toolDisplayName(event)}
+        </span>
+        {event.status ? <StatusBadge status={event.status} /> : null}
+      </div>
+      <div className="max-h-[min(30rem,70vh)] overflow-y-auto p-3">
+        {input ? <ToolValue label="参数" value={formatJSON(input)} /> : null}
+        {output ? (
+          <ToolValue
+            label={event.isError ? "错误输出" : "输出"}
+            value={formatJSON(output)}
+            error={event.isError}
+            className={input ? "mt-3" : undefined}
+          />
+        ) : null}
+        {!input && !output ? (
+          <p className="text-xs text-muted-foreground">没有可展示的详细信息</p>
+        ) : null}
+      </div>
     </div>
+  )
+}
+
+function ToolValue({
+  label,
+  value,
+  error = false,
+  className,
+}: {
+  label: string
+  value: string
+  error?: boolean
+  className?: string
+}) {
+  const [copied, setCopied] = React.useState(false)
+  const copy = async () => {
+    await navigator.clipboard.writeText(value)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1200)
+  }
+  return (
+    <section className={className}>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-muted-foreground">
+          {label}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => void copy()}
+          aria-label={`复制${label}`}
+        >
+          {copied ? <Check /> : <Copy />}
+          {copied ? "已复制" : "复制"}
+        </Button>
+      </div>
+      <pre
+        className={cn(
+          "max-h-64 overflow-auto rounded-md bg-muted/55 p-2.5 font-mono text-[11px] leading-5 break-words whitespace-pre-wrap",
+          error && "text-destructive"
+        )}
+      >
+        {value}
+      </pre>
+    </section>
   )
 }
 
@@ -582,11 +660,58 @@ function activityTitle(item: ActivityItem) {
 
 function eventSummary(event: ExecutionEvent) {
   if (event.type === "tool") {
-    return `${event.toolName || "工具调用"} · ${event.title}`
+    const name = toolDisplayName(event)
+    const detail = toolSummaryDetail(event)
+    return detail ? `${name} · ${detail}` : name
   }
   return event.detail
     ? `${event.title} · ${oneLine(event.detail)}`
     : event.title
+}
+
+function toolDisplayName(event: ExecutionEvent) {
+  const raw = (event.toolName || event.title || "Tool")
+    .replace(/^工具调用\s*[·:：-]?\s*/i, "")
+    .replace(/^Go\s+AgentCore\s+调用\s*/i, "")
+    .replace(/^AgentCore\s+调用\s*/i, "")
+    .trim()
+  const names: Record<string, string> = {
+    bash: "Bash",
+    read: "Read",
+    write: "Write",
+    edit: "Edit",
+    glob: "Glob",
+    grep: "Grep",
+  }
+  return names[raw.toLowerCase()] ?? raw
+}
+
+function toolSummaryDetail(event: ExecutionEvent) {
+  const raw = event.detail || meaningfulJSON(event.inputJson)
+  if (!raw) return ""
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>
+    for (const key of [
+      "command",
+      "path",
+      "file_path",
+      "query",
+      "pattern",
+      "url",
+    ]) {
+      if (typeof value[key] === "string" && value[key]) {
+        return oneLine(value[key])
+      }
+    }
+  } catch {
+    // Plain-text tool arguments are already suitable for a compact summary.
+  }
+  return oneLine(raw)
+}
+
+function meaningfulJSON(value?: string) {
+  const normalized = value?.trim()
+  return normalized && normalized !== "{}" ? normalized : ""
 }
 
 function validationLabel(validation: IssueValidation) {

@@ -100,18 +100,18 @@ func TestConciergeSystemPromptIncludesOnlyAssignableAgentRoster(t *testing.T) {
 	}
 }
 
-func TestConciergeTaskInputLimitsObjectiveAndExecutionBoundary(t *testing.T) {
+func TestConciergeTaskInputLimitsObjective(t *testing.T) {
 	valid := CreateConciergeTaskInput{
 		Title: "实现登录页面", Description: "完成页面与接口联调。",
-		Objective: "登录页面通过浏览器验收。", Constraints: "仅修改授权工作区并运行相关测试。",
+		Objective: "登录页面通过浏览器验收。",
 	}
 	if err := validateConciergeTaskInput(valid); err != nil {
 		t.Fatalf("valid concierge task input: %v", err)
 	}
 	invalid := valid
-	invalid.Constraints = strings.Repeat("界", 20001)
-	if err := validateConciergeTaskInput(invalid); err == nil || !strings.Contains(err.Error(), "执行边界") {
-		t.Fatalf("expected execution boundary length error, got %v", err)
+	invalid.Objective = strings.Repeat("验", 20001)
+	if err := validateConciergeTaskInput(invalid); err == nil || !strings.Contains(err.Error(), "任务目标") {
+		t.Fatalf("expected objective length error, got %v", err)
 	}
 }
 

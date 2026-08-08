@@ -59,7 +59,6 @@ export function TaskNewPage() {
     containerProfileId: clone?.containerProfileId,
     workMode: "autonomous",
     workspace: state?.config.workspace ?? "",
-    constraints: "",
     timeBudgetMinutes: clone?.timeBudgetMinutes,
     humanValidationFallback: clone?.humanValidationFallback,
   })
@@ -115,7 +114,6 @@ export function TaskNewPage() {
         title,
         description,
         objective: objectiveEnabled ? form.objective : "",
-        constraints: "",
         assigneeAgentId: selectedAgentId,
         containerProfileId: defaultContainerProfile.id,
         attachmentIds: attachments.attachmentIds,

@@ -85,7 +85,6 @@ export interface Task {
   workspace: string
   containerProfileId?: string
   containerId?: string
-  constraints?: string
   timeBudgetMinutes?: number
   humanValidationFallback?: boolean
   createdAt: string
@@ -102,13 +101,15 @@ export interface TaskRootReport {
   title: string
   status: string
   completedAt?: string
-  report?: TaskReport
+  reports: TaskReport[]
 }
 export interface TaskReport {
   id: string
   taskId: string
   rootIssueId: string
   sourceExecutionId: string
+  version: number
+  title: string
   name: string
   mimeType: string
   size: number
@@ -297,7 +298,6 @@ export interface Issue {
   workspace: string
   containerProfileId?: string
   containerId?: string
-  constraints?: string
   timeBudgetMinutes?: number
   humanValidationFallback?: boolean
   result?: string
@@ -549,6 +549,7 @@ export interface IssueValidation {
   sourceExecutionId: string
   validationExecutionId: string
   attempt: number
+  objectiveId?: string
   objective: string
   candidateResult: string
   status:
@@ -558,6 +559,7 @@ export interface IssueValidation {
     | "abandoned"
     | "skipped"
     | "interrupted"
+    | "superseded"
     | "error"
   passed: boolean
   summary: string
@@ -567,6 +569,20 @@ export interface IssueValidation {
   manualOverrideReason?: string
   createdAt: string
   completedAt?: string
+}
+export interface IssueObjective {
+  id: string
+  issueId: string
+  version: number
+  content: string
+  sourceCommentId?: string
+  createdBy: string
+  createdAt: string
+  current: boolean
+  validationRounds: number
+  validationStatus: string
+  validationPassed: boolean
+  lastValidationAt?: string
 }
 export interface IssueDetail {
   issue: Issue
@@ -583,6 +599,7 @@ export interface IssueDetail {
   wakeups: AgentWakeup[]
   decompositions: IssueDecomposition[]
   validations: IssueValidation[]
+  objectives: IssueObjective[]
   commentsPage: PageInfo
   eventsPage: PageInfo
   executionsPage: PageInfo
@@ -869,7 +886,6 @@ export interface CreateIssueInput {
   assigneeAgentId?: string
   workspace: string
   containerProfileId?: string
-  constraints: string
   timeBudgetMinutes?: number
   humanValidationFallback?: boolean
   blockedBy?: string[]

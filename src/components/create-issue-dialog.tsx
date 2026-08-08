@@ -113,7 +113,6 @@ export function CreateIssueDialog({
         assigneeAgentId: form.assigneeAgentId || undefined,
         workspace: workspace ?? state?.config.workspace ?? "",
         workMode: "autonomous",
-        constraints: "",
         attachmentIds: attachments.attachmentIds,
         timeBudgetMinutes: form.timeBudgetMinutes,
         humanValidationFallback: form.humanValidationFallback,

@@ -312,6 +312,9 @@ func TestBoardCommentSteersExactTaskAgentThroughCoordination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = store.createExecution(issue, issue.AssigneeAgentID, "work"); err != nil {
+		t.Fatal(err)
+	}
 	comment, err := manager.AddIssueComment(issue.ID, "请先补充可复现测试。")
 	if err != nil {
 		t.Fatal(err)

@@ -1,5 +1,10 @@
 import * as React from "react"
 import {
+  ArrowDown,
+  ArrowUp,
+  CheckCircle2,
+  CircleDashed,
+  History,
   ChevronRight,
   MessageSquareWarning,
   Pencil,
@@ -54,6 +59,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import {
   createIssue,
   createIssueComment,
@@ -132,12 +138,16 @@ export function BoardIssueDetailPage() {
   const fromBoard = new URLSearchParams(location.search).get("view") === "board"
   const [detail, setDetail] = React.useState<IssueDetail | null>(null)
   const [comment, setComment] = React.useState("")
+  const [newObjectiveEnabled, setNewObjectiveEnabled] = React.useState(false)
+  const [newObjective, setNewObjective] = React.useState("")
+  const [objectiveHistoryOpen, setObjectiveHistoryOpen] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [editOpen, setEditOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [manualRejectOpen, setManualRejectOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [childTreeOpen, setChildTreeOpen] = React.useState(false)
+  const contentScrollRef = React.useRef<HTMLDivElement>(null)
   const [childForm, setChildForm] =
     React.useState<ChildIssueForm>(emptyChildIssue)
   const [editForm, setEditForm] = React.useState<IssueEditForm>({
@@ -276,7 +286,6 @@ export function BoardIssueDetailPage() {
         workMode: "autonomous",
         assigneeAgentId: childForm.assigneeAgentId || undefined,
         workspace: issue.workspace,
-        constraints: issue.constraints ?? "",
       })
       const next = await load()
       if (next) setDetail(next)
@@ -295,15 +304,19 @@ export function BoardIssueDetailPage() {
   }
   const submit = async () => {
     const body = comment.trim()
-    if (!body || busy) return
+    const objective = newObjectiveEnabled ? newObjective.trim() : ""
+    if ((!body && !objective) || busy) return
     setBusy(true)
     setComment("")
+    setNewObjective("")
     try {
-      await createIssueComment(issue.id, body)
+      await createIssueComment(issue.id, body, objective)
       const next = await load()
       if (next) setDetail(next)
+      setNewObjectiveEnabled(false)
     } catch (error) {
       setComment(body)
+      setNewObjective(objective)
       toast.error(error instanceof Error ? error.message : "评论失败")
     } finally {
       setBusy(false)
@@ -311,7 +324,10 @@ export function BoardIssueDetailPage() {
   }
   return (
     <div className="relative size-full min-h-0 overflow-hidden">
-      <div className="size-full min-h-0 overflow-y-auto pr-1 lg:pr-[380px]">
+      <div
+        ref={contentScrollRef}
+        className="size-full min-h-0 overflow-y-auto pr-1 lg:pr-[380px]"
+      >
         <div className="flex min-h-full flex-col gap-4">
           {parentIssue ? (
             <Link
@@ -325,12 +341,17 @@ export function BoardIssueDetailPage() {
             </Link>
           ) : null}
           <header className="flex flex-col gap-2">
-            <h1
-              className="truncate text-base font-semibold"
-              title={issue.title}
-            >
-              {issue.title}
-            </h1>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <h1
+                className="min-w-0 truncate text-base font-semibold"
+                title={issue.title}
+              >
+                {issue.title}
+              </h1>
+              <div className="shrink-0" title={runtime.detail}>
+                <IssueRuntimeBadge runtime={runtime} />
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" size="sm" onClick={beginEdit}>
                 <Pencil />
@@ -411,7 +432,6 @@ export function BoardIssueDetailPage() {
                   </div>
                 </PopoverContent>
               </Popover>
-              <IssueRuntimeBadge runtime={runtime} />
               {issueLabelsOf(issue).map((label) => (
                 <Badge
                   key={label}
@@ -454,12 +474,89 @@ export function BoardIssueDetailPage() {
               </div>
             ) : null}
           </header>
-          <div className="mt-4 flex flex-col gap-5">
-            <Section label="描述" value={issue.description || "未填写"} />
-            <Section label="目标" value={issue.objective || "未填写"} />
-            <Section label="执行边界" value={issue.constraints || "未填写"} />
-            {issue.result ? (
-              <Section label="最新交付" value={issue.result} />
+          <div className="mt-4 flex flex-col gap-5 rounded-xl bg-card px-4 py-4">
+            <MarkdownContent className="text-sm !leading-7">
+              {issue.description || "未填写 Issue 描述"}
+            </MarkdownContent>
+            {issue.objective ? (
+              <div className="overflow-hidden rounded-lg bg-muted/45">
+                <div className="flex items-start gap-3 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                      <span>当前目标</span>
+                      {detail.objectives?.[0]?.validationRounds ? (
+                        <span>
+                          已验收 {detail.objectives[0].validationRounds} 轮
+                        </span>
+                      ) : (
+                        <span>尚未验收</span>
+                      )}
+                    </div>
+                    <MarkdownContent className="text-sm !leading-6 text-foreground/85">
+                      {issue.objective}
+                    </MarkdownContent>
+                  </div>
+                  {detail.objectives?.[0]?.validationPassed ? (
+                    <CheckCircle2
+                      className="mt-0.5 size-4 shrink-0 text-emerald-600"
+                      aria-label="验收通过"
+                    />
+                  ) : (
+                    <CircleDashed
+                      className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                      aria-label="等待验收"
+                    />
+                  )}
+                </div>
+                {(detail.objectives?.length ?? 0) > 1 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="flex h-9 w-full items-center gap-2 border-t border-border/60 px-4 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                      onClick={() => setObjectiveHistoryOpen((open) => !open)}
+                      aria-expanded={objectiveHistoryOpen}
+                    >
+                      <History className="size-3.5" />
+                      {objectiveHistoryOpen
+                        ? "收起目标历史"
+                        : `查看目标历史 · ${detail.objectives.length - 1}`}
+                      <ChevronRight
+                        className={cn(
+                          "ml-auto size-3.5 transition-transform",
+                          objectiveHistoryOpen && "rotate-90"
+                        )}
+                      />
+                    </button>
+                    {objectiveHistoryOpen ? (
+                      <div className="border-t border-border/60 px-4 py-1">
+                        {detail.objectives.slice(1).map((objective) => (
+                          <div
+                            key={objective.id}
+                            className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 border-b border-border/50 py-3 last:border-b-0"
+                          >
+                            <span className="pt-0.5 font-mono text-[11px] text-muted-foreground">
+                              v{objective.version}
+                            </span>
+                            <div className="min-w-0">
+                              <MarkdownContent className="text-sm !leading-6 text-muted-foreground">
+                                {objective.content}
+                              </MarkdownContent>
+                              <div className="mt-1.5 flex flex-wrap gap-x-3 text-[11px] text-muted-foreground">
+                                <span>{formatTime(objective.createdAt)}</span>
+                                <span>
+                                  {objective.validationRounds
+                                    ? `${objective.validationRounds} 轮验收 · ${objective.validationPassed ? "通过" : objective.validationStatus}`
+                                    : "未验收"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
             ) : null}
           </div>
           <section className="mt-4" aria-label="评论">
@@ -482,6 +579,33 @@ export function BoardIssueDetailPage() {
             ariaLabel="发表评论"
             hint=""
             mentionIssues={taskIssues}
+            additionalCanSend={
+              newObjectiveEnabled && Boolean(newObjective.trim())
+            }
+            extra={
+              <label className="flex h-7 cursor-pointer items-center gap-2 rounded-full border border-input bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground">
+                <Switch
+                  size="sm"
+                  checked={newObjectiveEnabled}
+                  onCheckedChange={setNewObjectiveEnabled}
+                />
+                设置新目标
+              </label>
+            }
+            beforeAddon={
+              newObjectiveEnabled ? (
+                <div className="border-t border-border/60 px-3 py-2">
+                  <textarea
+                    value={newObjective}
+                    onChange={(event) => setNewObjective(event.target.value)}
+                    placeholder="输入新的验收目标；提交后将成为 Agent 执行与验收的当前目标…"
+                    aria-label="新的验收目标"
+                    rows={2}
+                    className="block min-h-12 w-full resize-none bg-transparent text-[13px] leading-6 outline-none placeholder:text-muted-foreground"
+                  />
+                </div>
+              ) : null
+            }
             inputGroupClassName="has-[[data-slot=input-group-control]:focus-visible]:ring-1"
           />
         </div>
@@ -495,6 +619,36 @@ export function BoardIssueDetailPage() {
           approvals={detail.approvals}
         />
       </aside>
+      <div className="fixed right-6 bottom-6 z-30 flex flex-col gap-2 lg:right-[392px]">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          className="rounded-full bg-background/90 shadow-md backdrop-blur"
+          aria-label="回到顶部"
+          title="回到顶部"
+          onClick={() =>
+            contentScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
+          }
+        >
+          <ArrowUp />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          className="rounded-full bg-background/90 shadow-md backdrop-blur"
+          aria-label="前往底部"
+          title="前往底部"
+          onClick={() => {
+            const target = contentScrollRef.current
+            if (target)
+              target.scrollTo({ top: target.scrollHeight, behavior: "smooth" })
+          }}
+        >
+          <ArrowDown />
+        </Button>
+      </div>
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
@@ -895,16 +1049,6 @@ function rootIssueOf(issueId: string, issues: Issue[]) {
   return current
 }
 
-function Section({ label, value }: { label: string; value: string }) {
-  return (
-    <section>
-      <h2 className="mb-2 text-sm font-medium text-muted-foreground">
-        {label}
-      </h2>
-      <MarkdownContent className="text-sm !leading-6">{value}</MarkdownContent>
-    </section>
-  )
-}
 function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-3">

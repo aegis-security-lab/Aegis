@@ -380,10 +380,10 @@ export const manuallyRejectIssueValidation = (id: string, reason: string) =>
   )
 export const fetchTaskTimeline = (id: string) =>
   request<TaskTimeline>(`/api/tasks/${encodeURIComponent(id)}/timeline`)
-export const createIssueComment = (id: string, body: string) =>
+export const createIssueComment = (id: string, body: string, objective = "") =>
   request<IssueComment>(`/api/issues/${encodeURIComponent(id)}/comments`, {
     method: "POST",
-    body: JSON.stringify({ body }),
+    body: JSON.stringify({ body, objective }),
   })
 export const resolveApproval = (
   id: string,

@@ -671,7 +671,6 @@ const createTaskTool = defineTool({
   promptGuidelines: [
     "Ask a concise clarification before calling when a missing decision would materially change the requested work.",
     "Derive a concrete, verifiable objective from the requested outcome and deliverables whenever reasonably possible. Use an empty objective only when no meaningful acceptance target can be inferred; Aegis will then skip acceptance validation.",
-    "Set a concise execution boundary covering authorized scope or targets, workspace restrictions, prohibited destructive actions, and required verification. Never broaden authorization beyond the operator's request.",
     "Compare the request with the current system-provided Agent roster. Use the exact agentId when one enabled Agent is clearly appropriate; otherwise leave it empty for Coordination routing.",
     "Never claim creation succeeded unless this tool returns a Task identifier.",
     "When the current turn includes operator attachments, mention that Aegis will transfer them automatically; do not invent attachment IDs or claim to have inspected opaque file contents.",
@@ -689,11 +688,6 @@ const createTaskTool = defineTool({
     objective: Type.String({
       description:
         "Concrete and verifiable acceptance target inferred from the request and deliverables; use an empty string only when no meaningful target can be inferred",
-      maxLength: 20000,
-    }),
-    constraints: Type.String({
-      description:
-        "Concise permission and execution boundary: authorized scope or targets, workspace limits, prohibited or destructive actions, and required verification",
       maxLength: 20000,
     }),
     priority: Type.Union([

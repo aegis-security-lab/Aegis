@@ -82,7 +82,7 @@ func TestConciergeCreateTaskRequiresObjectiveAndExecutionBoundary(t *testing.T) 
 			required[parameter.Name] = true
 		}
 	}
-	for _, name := range []string{"objective", "constraints"} {
+	for _, name := range []string{"objective"} {
 		if !required[name] {
 			t.Fatalf("create task tool must require %s: %+v", name, tools[0].Parameters)
 		}

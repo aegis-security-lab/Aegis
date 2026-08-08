@@ -210,7 +210,6 @@ type Task struct {
 	Workspace               string    `json:"workspace"`
 	ContainerProfileID      string    `json:"containerProfileId,omitempty" gorm:"index"`
 	ContainerID             string    `json:"containerId,omitempty" gorm:"index"`
-	Constraints             string    `json:"constraints,omitempty" gorm:"type:text"`
 	TimeBudgetMinutes       *int      `json:"timeBudgetMinutes,omitempty"`
 	HumanValidationFallback bool      `json:"humanValidationFallback"`
 	CreatedAt               time.Time `json:"createdAt"`
@@ -228,22 +227,23 @@ type TaskDetail struct {
 // TaskRootReport is the Task Home projection for one root Issue and its latest
 // accepted (or validation-skipped) user-facing delivery bundle.
 type TaskRootReport struct {
-	IssueID     string      `json:"issueId"`
-	Identifier  string      `json:"identifier"`
-	Title       string      `json:"title"`
-	Status      string      `json:"status"`
-	CompletedAt *time.Time  `json:"completedAt,omitempty"`
-	Report      *TaskReport `json:"report,omitempty"`
+	IssueID     string       `json:"issueId"`
+	Identifier  string       `json:"identifier"`
+	Title       string       `json:"title"`
+	Status      string       `json:"status"`
+	CompletedAt *time.Time   `json:"completedAt,omitempty"`
+	Reports     []TaskReport `json:"reports"`
 }
 
-// TaskReport is the single replaceable ZIP delivery mounted on Task Home for
-// a root Issue. Its bytes contain only the latest successful Worker
-// submission's published attachments plus a machine-readable manifest.
+// TaskReport is one immutable, lifecycle-generated ZIP delivery. Repeated
+// completions of the same root Issue append history instead of replacing it.
 type TaskReport struct {
 	ID                string    `json:"id" gorm:"primaryKey"`
 	TaskID            string    `json:"taskId" gorm:"index"`
-	RootIssueID       string    `json:"rootIssueId" gorm:"uniqueIndex"`
+	RootIssueID       string    `json:"rootIssueId" gorm:"index"`
 	SourceExecutionID string    `json:"sourceExecutionId" gorm:"index"`
+	Version           int       `json:"version"`
+	Title             string    `json:"title"`
 	Name              string    `json:"name"`
 	StoragePath       string    `json:"-"`
 	MimeType          string    `json:"mimeType"`
@@ -333,7 +333,6 @@ type Issue struct {
 	Workspace               string           `json:"workspace"`
 	ContainerProfileID      string           `json:"containerProfileId,omitempty" gorm:"index"`
 	ContainerID             string           `json:"containerId,omitempty" gorm:"index"`
-	Constraints             string           `json:"constraints,omitempty"`
 	TimeBudgetMinutes       *int             `json:"timeBudgetMinutes,omitempty"`
 	HumanValidationFallback bool             `json:"humanValidationFallback"`
 	Result                  string           `json:"result,omitempty"`
@@ -395,7 +394,6 @@ type CreateConciergeTaskInput struct {
 	Title           string `json:"title"`
 	Description     string `json:"taskDescription"`
 	Objective       string `json:"objective"`
-	Constraints     string `json:"constraints"`
 	Priority        string `json:"priority"`
 	WorkMode        string `json:"workMode"`
 	AssigneeAgentID string `json:"agentId"`
@@ -483,6 +481,7 @@ type IssueValidation struct {
 	SourceExecutionID     string     `json:"sourceExecutionId" gorm:"index"`
 	ValidationExecutionID string     `json:"validationExecutionId" gorm:"index"`
 	Attempt               int        `json:"attempt"`
+	ObjectiveID           string     `json:"objectiveId,omitempty" gorm:"index"`
 	Objective             string     `json:"objective" gorm:"type:text"`
 	CandidateResult       string     `json:"candidateResult" gorm:"type:text"`
 	Status                string     `json:"status" gorm:"index"`
@@ -495,6 +494,27 @@ type IssueValidation struct {
 	Error                 string     `json:"error,omitempty" gorm:"type:text"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	CompletedAt           *time.Time `json:"completedAt,omitempty"`
+}
+
+// IssueObjective is one immutable revision of an Issue's acceptance target.
+// Issue.Objective remains the current projection used by runtime prompts.
+type IssueObjective struct {
+	ID              string    `json:"id" gorm:"primaryKey"`
+	IssueID         string    `json:"issueId" gorm:"uniqueIndex:idx_issue_objective_version,priority:1;index"`
+	Version         int       `json:"version" gorm:"uniqueIndex:idx_issue_objective_version,priority:2"`
+	Content         string    `json:"content" gorm:"type:text"`
+	SourceCommentID string    `json:"sourceCommentId,omitempty" gorm:"index"`
+	CreatedBy       string    `json:"createdBy"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+type IssueObjectiveView struct {
+	IssueObjective
+	Current          bool       `json:"current"`
+	ValidationRounds int        `json:"validationRounds"`
+	ValidationStatus string     `json:"validationStatus"`
+	ValidationPassed bool       `json:"validationPassed"`
+	LastValidationAt *time.Time `json:"lastValidationAt,omitempty"`
 }
 
 type ToolSnapshot struct {
@@ -969,6 +989,7 @@ type IssueDetail struct {
 	Wakeups          []AgentWakeup        `json:"wakeups"`
 	Decompositions   []IssueDecomposition `json:"decompositions"`
 	Validations      []IssueValidation    `json:"validations"`
+	Objectives       []IssueObjectiveView `json:"objectives"`
 	CommentsPage     PageInfo             `json:"commentsPage"`
 	EventsPage       PageInfo             `json:"eventsPage"`
 	ExecutionsPage   PageInfo             `json:"executionsPage"`
@@ -1127,7 +1148,6 @@ type CreateIssueInput struct {
 	Workspace               string           `json:"workspace"`
 	ContainerProfileID      string           `json:"containerProfileId"`
 	ContainerID             string           `json:"containerId"`
-	Constraints             string           `json:"constraints"`
 	TimeBudgetMinutes       *int             `json:"timeBudgetMinutes"`
 	HumanValidationFallback bool             `json:"humanValidationFallback"`
 	BlockedBy               []string         `json:"blockedBy"`

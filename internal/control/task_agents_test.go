@@ -69,6 +69,34 @@ func TestSameAgentTypeGetsDistinctTaskIdentitiesAndPhones(t *testing.T) {
 	}
 }
 
+func TestCommentRoutingRepairsMissingIssueTaskAgent(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Legacy assigned Issue", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Update("assignee_task_agent_id", "").Error; err != nil {
+		t.Fatal(err)
+	}
+	issue.AssigneeTaskAgentID = ""
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	bridge := &CoordinationBridge{manager: manager}
+	repaired, err := bridge.ensureIssueTaskAgent(issue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.AssigneeTaskAgentID == "" {
+		t.Fatal("missing task-local Agent identity was not repaired")
+	}
+	identity, err := store.taskAgent(repaired.ID, repaired.AssigneeTaskAgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.AgentID != issue.AssigneeAgentID {
+		t.Fatalf("identity=%+v", identity)
+	}
+}
+
 func TestExistingTaskAgentAliasesAreReplacedByAgentTypeNames(t *testing.T) {
 	store := configuredStore(t)
 	root, err := store.CreateIssue(CreateIssueInput{Title: "Normalize identity", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})

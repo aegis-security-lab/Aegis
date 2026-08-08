@@ -296,7 +296,7 @@ func TestStateRevisionIncludesLatestIssueAndExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest := time.Date(2026, 8, 8, 12, 30, 0, 0, time.UTC)
+	latest := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	if err = s.db.Model(&Execution{}).Where("id = ?", execution.ID).Updates(map[string]any{"updated_at": latest}).Error; err != nil {
 		t.Fatal(err)
 	}

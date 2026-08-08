@@ -207,8 +207,5 @@ func validateConciergeTaskInput(input CreateConciergeTaskInput) error {
 	if utf8.RuneCountInString(input.Objective) > 20000 {
 		return errors.New("任务目标不能超过 20000 个字符")
 	}
-	if utf8.RuneCountInString(input.Constraints) > 20000 {
-		return errors.New("执行边界不能超过 20000 个字符")
-	}
 	return nil
 }

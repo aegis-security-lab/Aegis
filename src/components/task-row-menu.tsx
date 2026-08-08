@@ -91,7 +91,6 @@ export function TaskRowMenu({
             ) && task.containerProfileId
               ? task.containerProfileId
               : undefined,
-          constraints: task.constraints,
           timeBudgetMinutes: task.timeBudgetMinutes,
           humanValidationFallback: task.humanValidationFallback,
         },

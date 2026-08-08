@@ -106,7 +106,6 @@ const GROUP_CONFIG: Record<OverlayGroup, GroupConfig> = {
     label: "系统设置",
     items: [
       { key: "general", label: "全局配置", icon: Languages },
-      { key: "runtime", label: "AgentCore", icon: Radar },
       { key: "model", label: "模型与认证", icon: Bot },
       { key: "search", label: "Web 搜索", icon: Search },
       { key: "workspace", label: "工作区", icon: FolderCog },
@@ -249,8 +248,8 @@ export function SettingsOverlay({
               )
             })}
           </nav>
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="mx-auto w-full max-w-[1200px] px-4 py-5 lg:px-6 lg:py-6 [&_[data-slot=page-header-identity]]:hidden [&_[data-slot=page-header]]:justify-end [&_[data-slot=page-header]]:border-0 [&_[data-slot=page-header]]:pb-0">
+          <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+            <div className="mx-auto w-full max-w-[1200px] min-w-0 px-4 py-5 lg:px-6 lg:py-6 [&_[data-slot=page-header-identity]]:hidden [&_[data-slot=page-header]]:justify-end [&_[data-slot=page-header]]:border-0 [&_[data-slot=page-header]]:pb-0 [&>[data-slot]]:w-full">
               <React.Suspense fallback={<OverlayFallback />}>
                 {group === "system" ? (
                   <SettingsPage
@@ -265,7 +264,7 @@ export function SettingsOverlay({
                 )}
               </React.Suspense>
             </div>
-          </ScrollArea>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

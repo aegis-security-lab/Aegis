@@ -1,6 +1,6 @@
 import * as React from "react"
 /* eslint-disable react-hooks/set-state-in-effect */
-import { Archive, Download, Paperclip } from "lucide-react"
+import { Archive, ChevronDown, Download, Paperclip } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { toast } from "sonner"
 
@@ -14,9 +14,16 @@ import {
 } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { TimelinePanel } from "@/components/timeline-panel"
 import { fetchTask } from "@/lib/api"
-import { formatBytes } from "@/lib/format"
+import { formatBytes, formatTime } from "@/lib/format"
 import { useAppState } from "@/lib/state"
 import type { TaskDetail } from "@/types"
 
@@ -155,60 +162,116 @@ export function TaskDetailPage() {
             <CardHeader className="gap-1">
               <CardTitle>任务报告</CardTitle>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                每个根 Issue 只保留最后一次成功交付的完整附件包。
+                每次根 Issue 完成后立即生成独立
+                ZIP；默认下载最新版本，历史版本长期保留。
               </p>
             </CardHeader>
             <CardContent className="flex flex-col gap-1">
               {detail.rootReports.length > 0 ? (
-                detail.rootReports.map((item) => (
-                  <div
-                    key={item.issueId}
-                    className="group flex min-w-0 items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted/45"
-                  >
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                      <Archive className="size-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-baseline gap-2">
-                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                          {item.identifier}
-                        </span>
-                        <p
-                          className="truncate text-sm font-medium"
-                          title={item.title}
-                        >
-                          {item.title}
+                detail.rootReports.map((item) => {
+                  const latest = item.reports[0]
+                  const history = item.reports.slice(1)
+                  return (
+                    <div
+                      key={item.issueId}
+                      className="group flex min-w-0 items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted/45"
+                    >
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                        <Archive className="size-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-baseline gap-2">
+                          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                            {item.identifier}
+                          </span>
+                          <p
+                            className="truncate text-sm font-medium"
+                            title={item.title}
+                          >
+                            {item.title}
+                          </p>
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {latest
+                            ? `${latest.title || item.title} · ${formatBytes(latest.size)} · 包含 ${latest.attachmentCount} 个附件`
+                            : taskReportPlaceholder(item.status)}
                         </p>
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {item.report
-                          ? `${item.report.name} · ${formatBytes(item.report.size)} · 包含 ${item.report.attachmentCount} 个附件`
-                          : taskReportPlaceholder(item.status)}
-                      </p>
+                      {latest ? (
+                        <div className="flex shrink-0 items-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={
+                              history.length ? "rounded-r-md pr-1.5" : undefined
+                            }
+                            render={
+                              <a
+                                href={`/api/task-reports/${encodeURIComponent(latest.id)}`}
+                                download={latest.name}
+                              />
+                            }
+                            nativeButton={false}
+                          >
+                            <Download />
+                            下载最新
+                          </Button>
+                          {history.length ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="ml-0.5 rounded-l-md"
+                                    aria-label="查看历史报告"
+                                    title="查看历史报告"
+                                  />
+                                }
+                              >
+                                <ChevronDown />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-80">
+                                <DropdownMenuLabel>历史报告</DropdownMenuLabel>
+                                {history.map((report) => (
+                                  <DropdownMenuItem
+                                    key={report.id}
+                                    render={
+                                      <a
+                                        href={`/api/task-reports/${encodeURIComponent(report.id)}`}
+                                        download={report.name}
+                                      />
+                                    }
+                                  >
+                                    <Archive />
+                                    <span className="min-w-0 flex-1">
+                                      <span
+                                        className="block truncate text-xs font-medium"
+                                        title={report.title}
+                                      >
+                                        {report.title || item.title}
+                                      </span>
+                                      <span className="block text-[11px] text-muted-foreground">
+                                        v{report.version} ·{" "}
+                                        {formatTime(report.createdAt)} ·{" "}
+                                        {formatBytes(report.size)}
+                                      </span>
+                                    </span>
+                                    <Download />
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {taskReportStatus(item.status)}
+                        </span>
+                      )}
                     </div>
-                    {item.report ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="shrink-0"
-                        render={
-                          <a
-                            href={`/api/task-reports/${encodeURIComponent(item.report.id)}`}
-                            download={item.report.name}
-                          />
-                        }
-                        nativeButton={false}
-                      >
-                        <Download />
-                        下载 ZIP
-                      </Button>
-                    ) : (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {taskReportStatus(item.status)}
-                      </span>
-                    )}
-                  </div>
-                ))
+                  )
+                })
               ) : (
                 <div className="rounded-lg bg-muted/35 px-4 py-6 text-center text-sm text-muted-foreground">
                   当前任务还没有根 Issue。

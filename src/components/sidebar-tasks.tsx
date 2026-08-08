@@ -256,7 +256,7 @@ function TaskSidebarItem({
 
   return (
     <SidebarMenuItem ref={itemRef}>
-      <div className="flex h-7 min-w-0 items-center gap-0.5 rounded-md pr-8 text-[0.8rem] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+      <div className="flex h-7 min-w-0 items-center gap-0.5 rounded-md text-[0.8rem] text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
         <button
           type="button"
           onClick={onToggle}
@@ -291,6 +291,7 @@ function TaskSidebarItem({
           triggerRender={
             <SidebarMenuAction
               showOnHover
+              className="isolate before:pointer-events-none before:absolute before:inset-y-0 before:right-0 before:z-0 before:w-10 before:rounded-r-md before:bg-gradient-to-l before:from-sidebar-accent before:via-sidebar-accent before:to-transparent [&>svg]:relative [&>svg]:z-10"
               aria-label={`任务操作：${task.title}`}
               title="任务操作"
             />

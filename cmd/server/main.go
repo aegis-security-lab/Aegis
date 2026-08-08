@@ -1327,12 +1327,13 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	})
 	api.POST("/issues/:id/comments", func(c *gin.Context) {
 		var in struct {
-			Body string `json:"body"`
+			Body      string `json:"body"`
+			Objective string `json:"objective"`
 		}
 		if !bindJSON(c, &in) {
 			return
 		}
-		v, err := manager.AddIssueComment(c.Param("id"), in.Body)
+		v, err := manager.AddIssueCommentWithObjective(c.Param("id"), in.Body, in.Objective)
 		if err != nil {
 			writeError(c, 422, err)
 			return

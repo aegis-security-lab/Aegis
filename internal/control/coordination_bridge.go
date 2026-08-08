@@ -639,16 +639,25 @@ func (b *CoordinationBridge) SubmitIssueComment(ctx context.Context, comment Iss
 	if err != nil {
 		return err
 	}
-	if issue.AssigneeAgentID == "" || issue.AssigneeTaskAgentID == "" {
+	if issue.AssigneeAgentID == "" {
 		return nil
 	}
-	if issueStatusTerminal(issue.Status) {
-		// A completed Issue can still receive an operator follow-up. Persist a
-		// normal AgentWakeup so the existing wakeup path reopens the Issue,
-		// creates a fresh Execution for its owner, and delivers the comment.
+	if issue.AssigneeTaskAgentID == "" {
+		issue, err = b.ensureIssueTaskAgent(issue)
+		if err != nil {
+			return err
+		}
+	}
+	var activeExecutions int64
+	if err := b.manager.store.db.Model(&Execution{}).Where("issue_id = ? AND task_agent_id = ? AND status IN ?", issue.ID, issue.AssigneeTaskAgentID, activeExecutionStatuses).Count(&activeExecutions).Error; err != nil {
+		return err
+	}
+	if activeExecutions == 0 {
+		// A comment on a non-running Issue is new work rather than a temporary
+		// reply. A continuation wakeup permanently reopens every inactive state.
 		wakeup := AgentWakeup{
 			ID: nextID("wakeup"), IssueID: issue.ID, CommentID: comment.ID,
-			AgentID: issue.AssigneeAgentID, Reason: "issue_comment_assignee",
+			AgentID: issue.AssigneeAgentID, Reason: "issue_comment_resume",
 			Status: "queued", CreatedAt: comment.CreatedAt,
 		}
 		if err := b.manager.store.db.Create(&wakeup).Error; err != nil {
@@ -665,7 +674,12 @@ func (b *CoordinationBridge) SubmitIssueComment(ctx context.Context, comment Iss
 	if _, err = b.ensureBinding(ctx, root.ID); err != nil {
 		return err
 	}
-	payload, _ := json.Marshal(coordination.RelayReceived{Channel: "board_comment", MessageID: comment.ID, SenderID: comment.AuthorID, SenderName: "操作员", Body: comment.Body})
+	body := comment.Body
+	var objective IssueObjective
+	if err := b.manager.store.db.Where("source_comment_id = ?", comment.ID).First(&objective).Error; err == nil {
+		body += fmt.Sprintf("\n\n[Authoritative objective update · v%d]\n%s\n\nUse this as the current Issue objective for all subsequent work and delivery.", objective.Version, objective.Content)
+	}
+	payload, _ := json.Marshal(coordination.RelayReceived{Channel: "board_comment", MessageID: comment.ID, SenderID: comment.AuthorID, SenderName: "操作员", Body: body})
 	_, err = b.runtime.Submit(ctx, coordination.Event{
 		ID: "issue-comment:" + comment.ID, Type: coordination.EventRelayReceived,
 		CoordinationID: root.ID, TaskID: root.ID, IssueID: issue.ID, ParentIssueID: issue.ParentID,
@@ -673,6 +687,43 @@ func (b *CoordinationBridge) SubmitIssueComment(ctx context.Context, comment Iss
 		OccurredAt: comment.CreatedAt.UTC(), Payload: payload,
 	})
 	return err
+}
+
+func (b *CoordinationBridge) ensureIssueTaskAgent(issue Issue) (Issue, error) {
+	agent, err := b.manager.store.executionAgent(issue.AssigneeAgentID)
+	if err != nil {
+		return Issue{}, err
+	}
+	root, err := b.manager.store.taskRoot(issue)
+	if err != nil {
+		return Issue{}, err
+	}
+	err = b.manager.store.db.Transaction(func(tx *gorm.DB) error {
+		// Recheck under the write transaction so simultaneous comments cannot
+		// create two task-local identities for the same Issue.
+		var current Issue
+		if err := tx.First(&current, "id = ?", issue.ID).Error; err != nil {
+			return err
+		}
+		if current.AssigneeTaskAgentID != "" {
+			issue = current
+			return nil
+		}
+		identity, err := claimTaskAgentTx(tx, root.ID, current.AssigneeAgentID, agent.Name, "")
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&Issue{}).Where("id = ? AND assignee_task_agent_id = ''", current.ID).Updates(map[string]any{
+			"assignee_task_agent_id": identity.ID,
+			"updated_at":             time.Now(),
+		}).Error; err != nil {
+			return err
+		}
+		current.AssigneeTaskAgentID = identity.ID
+		issue = current
+		return nil
+	})
+	return issue, err
 }
 
 func (b *CoordinationBridge) submitIssue(ctx context.Context, kind coordination.EventType, issue Issue, discriminator string) error {

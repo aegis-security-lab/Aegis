@@ -144,7 +144,7 @@ func (s *Store) CreateSubIssues(parentID, executionID, actorAgentID string, inpu
 				WorkMode: parent.WorkMode, ExecutionPhase: "active", RequestDepth: parent.RequestDepth + 1,
 				ValidationMode: validationMode, MaxValidationAttempts: maxValidationAttempts, ValidationDisabled: validationDisabled,
 				AssigneeAgentID: item.AgentID, AssigneeTaskAgentID: identity.ID, Workspace: parent.Workspace, ContainerProfileID: parent.ContainerProfileID, ContainerID: parent.ContainerID,
-				Constraints: parent.Constraints, CreatedBy: creatorID, CreatedAt: now, UpdatedAt: now,
+				CreatedBy: creatorID, CreatedAt: now, UpdatedAt: now,
 			}
 			if err := tx.Create(&child).Error; err != nil {
 				return err
