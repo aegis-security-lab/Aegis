@@ -10,6 +10,7 @@ import {
 import { Link, NavLink, useLocation } from "react-router-dom"
 
 import { TaskRowMenu } from "@/components/task-row-menu"
+import { Spinner } from "@/components/ui/spinner"
 import {
   SidebarMenu,
   SidebarMenuAction,
@@ -19,6 +20,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
+import { issueRuntimeMap, issueRuntimeOrUnavailable } from "@/lib/issue-runtime"
 import { useAppState } from "@/lib/state"
 import { cn } from "@/lib/utils"
 import type { Issue, Task } from "@/types"
@@ -30,15 +32,35 @@ export function SidebarTaskGroup() {
     right.updatedAt.localeCompare(left.updatedAt)
   )
   const issues = React.useMemo(() => state?.issues ?? [], [state?.issues])
-  const latestRunByTask = new Map<string, Issue>()
-  for (const issue of issues) {
-    if (issue.parentId || !issue.taskSourceId) continue
-    const current = latestRunByTask.get(issue.taskSourceId)
-    if (!current || issue.createdAt > current.createdAt) {
-      latestRunByTask.set(issue.taskSourceId, issue)
+  const latestRunByTask = React.useMemo(() => {
+    const map = new Map<string, Issue>()
+    for (const issue of issues) {
+      if (issue.parentId || !issue.taskSourceId) continue
+      const current = map.get(issue.taskSourceId)
+      if (!current || issue.createdAt > current.createdAt) {
+        map.set(issue.taskSourceId, issue)
+      }
     }
-  }
+    return map
+  }, [issues])
   const routeIssueId = matchIssueId(location.pathname)
+  const runtimeMap = React.useMemo(
+    () => issueRuntimeMap(state?.issueRuntimes ?? []),
+    [state?.issueRuntimes]
+  )
+  const runningTaskIds = React.useMemo(() => {
+    const ids = new Set<string>()
+    for (const task of tasks) {
+      const latest = latestRunByTask.get(task.id)
+      if (
+        latest &&
+        issueRuntimeOrUnavailable(runtimeMap, latest.id).kind === "running"
+      ) {
+        ids.add(task.id)
+      }
+    }
+    return ids
+  }, [latestRunByTask, runtimeMap, tasks])
   const activeTaskId = React.useMemo(() => {
     if (!routeIssueId) return null
     const issueById = new Map(issues.map((issue) => [issue.id, issue]))
@@ -85,6 +107,7 @@ export function SidebarTaskGroup() {
           }
           tasks={tasks}
           latestRunByTask={latestRunByTask}
+          runningTaskIds={runningTaskIds}
           activeTaskId={activeTaskId}
           locationPathname={location.pathname}
         />
@@ -96,11 +119,13 @@ export function SidebarTaskGroup() {
 function TaskList({
   tasks,
   latestRunByTask,
+  runningTaskIds,
   activeTaskId,
   locationPathname,
 }: {
   tasks: Task[]
   latestRunByTask: Map<string, Issue>
+  runningTaskIds: Set<string>
   activeTaskId: string | null
   locationPathname: string
 }) {
@@ -137,6 +162,7 @@ function TaskList({
           key={task.id}
           task={task}
           latest={latestRunByTask.get(task.id)}
+          running={runningTaskIds.has(task.id)}
           routeTaskId={activeTaskId}
           expanded={expandedTaskId === task.id}
           onToggle={() =>
@@ -157,6 +183,7 @@ function TaskList({
 function TaskSidebarItem({
   task,
   latest,
+  running,
   routeTaskId,
   expanded,
   onToggle,
@@ -164,6 +191,7 @@ function TaskSidebarItem({
 }: {
   task: Task
   latest?: Issue
+  running: boolean
   routeTaskId: string | null
   expanded: boolean
   onToggle: () => void
@@ -199,7 +227,15 @@ function TaskSidebarItem({
               expanded && "rotate-90"
             )}
           />
-          <span className="min-w-0 flex-1 truncate">{label}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <span className="min-w-0 flex-1 truncate">{label}</span>
+            {running ? (
+              <Spinner
+                className="size-3 shrink-0 text-primary"
+                aria-label="执行中"
+              />
+            ) : null}
+          </span>
         </button>
         <TaskRowMenu
           task={task}
