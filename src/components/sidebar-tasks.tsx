@@ -29,7 +29,7 @@ export function SidebarTaskGroup() {
   const tasks = [...(state?.tasks ?? [])].sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt)
   )
-  const issues = state?.issues ?? []
+  const issues = React.useMemo(() => state?.issues ?? [], [state?.issues])
   const latestRunByTask = new Map<string, Issue>()
   for (const issue of issues) {
     if (issue.parentId || !issue.taskSourceId) continue
@@ -39,11 +39,17 @@ export function SidebarTaskGroup() {
     }
   }
   const routeIssueId = matchIssueId(location.pathname)
-  const activeTaskId = routeIssueId
-    ? (issues.find(
-        (issue) => issue.id === routeIssueId && !issue.parentId
-      )?.taskSourceId ?? null)
-    : null
+  const activeTaskId = React.useMemo(() => {
+    if (!routeIssueId) return null
+    const issueById = new Map(issues.map((issue) => [issue.id, issue]))
+    let current = issueById.get(routeIssueId)
+    const seen = new Set<string>()
+    while (current && current.parentId && !seen.has(current.id)) {
+      seen.add(current.id)
+      current = issueById.get(current.parentId)
+    }
+    return current?.taskSourceId ?? null
+  }, [issues, routeIssueId])
 
   return (
     <div className="mt-2 pt-2 group-data-[collapsible=icon]:hidden">
@@ -100,6 +106,7 @@ function TaskList({
   const taskRowRefs = React.useRef(new Map<string, HTMLDivElement>())
 
   // Keep the active task visible: scroll it to the middle of the sidebar.
+  // Only fires on navigation (task/path change), never on manual expand.
   React.useEffect(() => {
     if (!activeTaskId) return
     const frame = window.requestAnimationFrame(() => {
@@ -117,7 +124,7 @@ function TaskList({
       container.scrollTo({ top: target, behavior: "smooth" })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [activeTaskId, expandedTaskId, locationPathname])
+  }, [activeTaskId, locationPathname])
 
   return (
     <>
