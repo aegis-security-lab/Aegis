@@ -234,6 +234,19 @@ func (m *Manager) activeValidationForExecution(executionID string) (IssueValidat
 	return validation, nil
 }
 
+// reactivateInterruptedValidation reopens an interrupted validation round when
+// its AgentCore session starts again after a service restart. The recovery
+// paths that go through prepareIssueRecovery reactivate the row themselves;
+// this covers sessions resumed directly by a live coordination envelope.
+func (m *Manager) reactivateInterruptedValidation(executionID string) {
+	if m == nil || m.store == nil || strings.TrimSpace(executionID) == "" {
+		return
+	}
+	_ = m.store.db.Model(&IssueValidation{}).
+		Where("validation_execution_id = ? AND status = ?", executionID, "interrupted").
+		Update("status", "running").Error
+}
+
 func (m *Manager) validationAttachmentInfos(sourceExecutionID string) ([]ValidationAttachmentInfo, error) {
 	var attachments []IssueAttachment
 	if err := m.store.db.Where("execution_id = ?", sourceExecutionID).Order("created_at asc").Find(&attachments).Error; err != nil {

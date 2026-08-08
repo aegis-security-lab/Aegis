@@ -62,3 +62,34 @@ func TestNativeValidationCapabilityIsNarrowAndPersistsDecisionWithoutPiSession(t
 		}
 	}
 }
+
+func TestResumedValidationSessionReactivatesInterruptedRound(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Resumed validation", Objective: "Verify the evidence", Priority: "medium", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _ := store.createExecution(issue, issue.AssigneeAgentID, "work")
+	validationExecution, _, err := store.createInternalExecution(issue, "acceptance-validator", "validation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validation := IssueValidation{
+		ID: nextID("validation"), IssueID: issue.ID, SourceExecutionID: source.ID,
+		ValidationExecutionID: validationExecution.ID, Attempt: 1, Objective: issue.Objective,
+		CandidateResult: "evidence", Status: "interrupted", CreatedAt: time.Now(),
+	}
+	if err = store.db.Create(&validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	manager.reactivateInterruptedValidation(validationExecution.ID)
+
+	var refreshed IssueValidation
+	if err := store.db.First(&refreshed, "id = ?", validation.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Status != "running" {
+		t.Fatalf("interrupted validation was not reactivated: status=%s", refreshed.Status)
+	}
+}

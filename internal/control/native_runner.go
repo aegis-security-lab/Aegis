@@ -434,6 +434,11 @@ func (r NativeIssueRunner) prepareExistingExecution(issue Issue, executionID, pr
 		if err != nil || !agent.Enabled || !agent.Internal || agent.ID != "acceptance-validator" {
 			return preparedIssueExecution{}, errors.New("control native runner: validation Agent is unavailable")
 		}
+		// A validation interrupted by a service restart is resumed through the
+		// coordination envelope (without prepareIssueRecovery). Reactivate the
+		// validation row here so the resumed session can settle it instead of
+		// looping on "active validation not found".
+		r.Manager.reactivateInterruptedValidation(execution.ID)
 	} else {
 		agent, err = r.Manager.store.executionAgent(execution.AgentID)
 		if err != nil {

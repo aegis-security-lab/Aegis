@@ -3436,7 +3436,10 @@ func (m *Manager) reconcileOrphanedValidations() {
 	}
 	for _, validation := range validations {
 		issue, err := m.store.GetIssue(validation.IssueID)
-		if err != nil || issue.Status != "done" || !hasIssueLabel(issue, issueLabelFailed) || issue.ExecutionPhase != "completed" || issue.CurrentExecutionID != validation.ValidationExecutionID || issue.ValidationExecutionID != validation.ValidationExecutionID {
+		if err != nil {
+			continue
+		}
+		if issue.Status != "done" || !hasIssueLabel(issue, issueLabelFailed) || issue.ExecutionPhase != "completed" || issue.CurrentExecutionID != validation.ValidationExecutionID || issue.ValidationExecutionID != validation.ValidationExecutionID {
 			continue
 		}
 		var execution Execution
