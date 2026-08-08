@@ -78,7 +78,11 @@ export function SidebarTaskGroup() {
           </SidebarMenuButton>
         </SidebarMenuItem>
         <TaskList
-          key={activeTaskId ?? "no-task"}
+          key={
+            activeTaskId
+              ? `${activeTaskId}:${location.pathname}`
+              : "no-task"
+          }
           tasks={tasks}
           latestRunByTask={latestRunByTask}
           activeTaskId={activeTaskId}
