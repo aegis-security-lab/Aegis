@@ -41,6 +41,8 @@ export function TaskTemplateControls({
   }, [])
 
   React.useEffect(() => {
+    // Initial remote data belongs in this mount synchronization effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load().catch((error) =>
       toast.error(error instanceof Error ? error.message : "读取任务模板失败")
     )

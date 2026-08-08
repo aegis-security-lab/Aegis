@@ -52,6 +52,7 @@ import type {
   WebSearchInput,
   WebSearchResult,
 } from "@/types"
+import { authorizationHeaders, reportUnauthorized } from "@/lib/auth-session"
 export type SaveContainerProfileInput = Omit<
   ContainerProfile,
   "id" | "createdAt" | "updatedAt"
@@ -73,7 +74,7 @@ export type SaveKnowledgeDocumentInput = Pick<
   "name" | "content"
 >
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers)
+  const headers = authorizationHeaders(init?.headers)
   if (!(init?.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json")
   }
@@ -81,6 +82,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers,
   })
+  if (response.status === 401) reportUnauthorized()
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       error?: string
@@ -221,6 +223,8 @@ function uploadInputAttachment(
     body.append("file", file, file.name)
     const request = new XMLHttpRequest()
     request.open("POST", path)
+    const token = authorizationHeaders().get("Authorization")
+    if (token) request.setRequestHeader("Authorization", token)
     request.responseType = "json"
     request.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
@@ -230,6 +234,7 @@ function uploadInputAttachment(
       }
     })
     request.addEventListener("load", () => {
+      if (request.status === 401) reportUnauthorized()
       const response = request.response as
         InputAttachment | { error?: string } | null
       if (request.status >= 200 && request.status < 300 && response) {
@@ -504,8 +509,10 @@ export async function importSkill(file: File) {
   data.append("file", file)
   const response = await fetch("/api/skills/import", {
     method: "POST",
+    headers: authorizationHeaders(),
     body: data,
   })
+  if (response.status === 401) reportUnauthorized()
   if (!response.ok)
     throw new Error(
       ((await response.json().catch(() => null)) as { error?: string } | null)
@@ -557,7 +564,10 @@ export const searchUncover = (input: UncoverSearchInput) =>
     body: JSON.stringify(input),
   })
 export async function exportSkill(id: string) {
-  const response = await fetch(`/api/skills/${encodeURIComponent(id)}/export`)
+  const response = await fetch(`/api/skills/${encodeURIComponent(id)}/export`, {
+    headers: authorizationHeaders(),
+  })
+  if (response.status === 401) reportUnauthorized()
   if (!response.ok) throw new Error("导出失败")
   return response.blob()
 }

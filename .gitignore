@@ -9,6 +9,8 @@ lerna-debug.log*
 
 node_modules
 dist
+!internal/webui/dist/
+!internal/webui/dist/index.html
 dist-ssr
 bin/
 /server

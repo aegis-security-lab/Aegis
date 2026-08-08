@@ -1,0 +1,93 @@
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            asset: aegis-linux-amd64
+            binary: aegis
+            archive: aegis-linux-amd64.tar.gz
+          - runner: macos-14
+            asset: aegis-darwin-arm64
+            binary: aegis
+            archive: aegis-darwin-arm64.tar.gz
+          - runner: windows-latest
+            asset: aegis-windows-amd64
+            binary: aegis.exe
+            archive: aegis-windows-amd64.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build frontend
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+          rm -rf internal/webui/dist
+          mkdir -p internal/webui/dist
+          cp -R dist/. internal/webui/dist/
+
+      - name: Build binary
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: go build -trimpath -ldflags="-s -w -X main.version=${RELEASE_TAG}" -o "release/${{ matrix.binary }}" ./cmd/server
+
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -C release -czf "release/${{ matrix.archive }}" "${{ matrix.binary }}"
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "release/${{ matrix.binary }}" -DestinationPath "release/${{ matrix.archive }}"
+
+      - name: Create checksum
+        shell: bash
+        run: |
+          cd release
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+          fi
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" "release/${{ matrix.archive }}" "release/${{ matrix.archive }}.sha256" --clobber

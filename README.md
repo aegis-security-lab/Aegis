@@ -36,18 +36,34 @@ Aegis 是一个由 Go AgentCore 驱动的本地任务控制台。它把可复用
 ```bash
 cd /Users/patrick/Code/aegis
 npm install
-make run
+AEGIS_PASSWORD='请替换为强密码' make run
 ```
 
-打开 `http://localhost:8080`。首次访问会进入初始化向导；模型密钥只会写入本机 `data/aegis.db`，API 与 UI 只返回是否已配置，不返回密钥内容。
+打开 `http://localhost:8080`，输入启动密码后进入界面。首次访问会进入初始化向导；模型密钥只会写入本机 `data/aegis.db`，API 与 UI 只返回是否已配置，不返回密钥内容。除登录入口外，全部 API、SSE、上传和下载都要求有效的会话 Token。
 
 前后端开发模式：
 
 ```bash
-make dev
+AEGIS_PASSWORD='请替换为强密码' make dev
 ```
 
 Vite 地址为 `http://localhost:5173`，`/api` 会代理到 `http://localhost:8080`。
+
+### Release 二进制
+
+GitHub Release 发布后，CI 会自动构建并上传 Linux AMD64、macOS Apple Silicon 和 Windows AMD64 压缩包及 SHA-256 文件。Release 二进制已经嵌入前端资源，不需要额外携带 `dist` 目录：
+
+```bash
+./aegis --password '请替换为强密码' --port 8080
+```
+
+也可以使用环境变量，避免密码出现在进程参数中：
+
+```bash
+AEGIS_PASSWORD='请替换为强密码' ./aegis --port 8080 --data-dir ./data
+```
+
+`--password` 或 `AEGIS_PASSWORD` 至少设置一个，否则服务会拒绝启动。登录成功后生成一个 24 小时随机 Token；密码只在进程内用于恒定时间校验，不写入数据库。
 
 ## 独立 Agent App 模块
 
@@ -171,6 +187,7 @@ UI 与领域边界、页面到后端职责的映射见 [`docs/architecture/ui-an
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `PORT` | `8080` | Gin 服务端口 |
+| `AEGIS_PASSWORD` | 无 | Web 访问密码；必须设置，也可用 `--password` 指定 |
 | `AEGIS_DATA_DIR` | `data` | SQLite 与运行时扩展目录 |
 | `AEGIS_DIST` | `dist` | 前端静态文件目录 |
 | `AEGIS_LOG_LEVEL` | `info` | JSON/SQLite 日志级别：debug、info、warn、error |

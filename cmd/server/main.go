@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -23,13 +24,32 @@ import (
 	"aegis/capability"
 	"aegis/coordination"
 	"aegis/internal/control"
+	"aegis/internal/webui"
 	"aegis/observability"
 	observabilitysqlite "aegis/observability/sqlitestore"
 	"github.com/gin-gonic/gin"
 )
 
+var version = "dev"
+
 func main() {
-	store, err := control.NewStore(envOr("AEGIS_DATA_DIR", "data"))
+	port := flag.Int("port", envInt("PORT", 8080), "HTTP 服务端口")
+	password := flag.String("password", strings.TrimSpace(os.Getenv("AEGIS_PASSWORD")), "Web 访问密码（也可使用 AEGIS_PASSWORD）")
+	dataDir := flag.String("data-dir", envOr("AEGIS_DATA_DIR", "data"), "数据目录")
+	showVersion := flag.Bool("version", false, "显示版本")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
+	if *port < 1 || *port > 65535 {
+		log.Fatal("port must be between 1 and 65535")
+	}
+	auth, err := newAuthService(*password, 24*time.Hour)
+	if err != nil {
+		log.Fatal("必须通过 --password 或 AEGIS_PASSWORD 设置 Web 访问密码")
+	}
+	store, err := control.NewStore(*dataDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -91,10 +111,10 @@ func main() {
 	manager.SetCoordination(coordinationBridge)
 	nativeCoordination.Bridge = coordinationBridge
 	defer coordinationBridge.Close()
-	router := buildRouter(store, manager, envOr("AEGIS_DIST", "dist"))
+	router := buildRouterWithAuth(store, manager, envOr("AEGIS_DIST", "dist"), auth)
 	// Input attachments can be multi-gigabyte audit images. Keep the header
 	// timeout, but do not terminate a healthy streaming request after 30 seconds.
-	server := &http.Server{Addr: ":" + envOr("PORT", "8080"), Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
+	server := &http.Server{Addr: fmt.Sprintf(":%d", *port), Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
 	go func() {
 		systemObservability.Logger.Info(ctx, "server.listen", slog.String("address", server.Addr))
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -155,10 +175,22 @@ func observabilityMiddleware(store *control.Store) gin.HandlerFunc {
 }
 
 func buildRouter(store *control.Store, manager *control.Manager, dist string) *gin.Engine {
+	return buildRouterWithAuth(store, manager, dist, nil)
+}
+
+func buildRouterWithAuth(store *control.Store, manager *control.Manager, dist string, auth *authService) *gin.Engine {
 	r := gin.New()
 	r.Use(observabilityMiddleware(store), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
+	if auth != nil {
+		r.POST("/auth/login", auth.login)
+	}
 	api := r.Group("/api")
+	if auth != nil {
+		api.Use(auth.middleware())
+		api.POST("/auth/logout", auth.logout)
+		api.GET("/auth/session", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	}
 	api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "time": time.Now()}) })
 	api.GET("/observability/metrics", func(c *gin.Context) {
 		if system := store.Observability(); system != nil {
@@ -1730,24 +1762,39 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 	}
 	api.POST("/setup/complete", saveConfig)
 	api.PUT("/settings", saveConfig)
+	frontend := http.FileSystem(http.FS(webui.Files()))
+	if info, err := os.Stat(filepath.Join(dist, "index.html")); err == nil && !info.IsDir() {
+		frontend = http.Dir(dist)
+	}
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			writeError(c, 404, errors.New("endpoint not found"))
 			return
 		}
-		requested := filepath.Join(dist, filepath.Clean(strings.TrimPrefix(c.Request.URL.Path, "/")))
-		if info, err := os.Stat(requested); err == nil && !info.IsDir() {
-			c.File(requested)
+		requested := filepath.ToSlash(filepath.Clean(c.Request.URL.Path))
+		if serveFrontendFile(c, frontend, requested) {
 			return
 		}
-		index := filepath.Join(dist, "index.html")
-		if _, err := os.Stat(index); err != nil {
-			c.JSON(200, gin.H{"message": "Aegis API is running"})
+		if serveFrontendFile(c, frontend, "/index.html") {
 			return
 		}
-		c.File(index)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "frontend assets are unavailable"})
 	})
 	return r
+}
+
+func serveFrontendFile(c *gin.Context, frontend http.FileSystem, name string) bool {
+	file, err := frontend.Open(name)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return false
+	}
+	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), file)
+	return true
 }
 
 func streamState(c *gin.Context, s *control.Store) {
@@ -1825,6 +1872,18 @@ func envOr(k, v string) string {
 		return x
 	}
 	return v
+}
+
+func envInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 func parseIntQuery(v string, defaultVal int) (int, error) {
 	if strings.TrimSpace(v) == "" {
