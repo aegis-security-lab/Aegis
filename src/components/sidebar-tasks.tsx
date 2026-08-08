@@ -171,9 +171,8 @@ function TaskSidebarItem({
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
-          aria-label={expanded ? `收起 ${task.title}` : `展开 ${task.title}`}
-          title={expanded ? "收起" : "展开"}
-          className="flex size-6 shrink-0 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:ring-ring outline-none"
+          title={task.title}
+          className="flex h-6 min-w-0 flex-1 items-center gap-0.5 rounded-md px-1 py-0.5 text-left focus-visible:ring-2 focus-visible:ring-ring outline-none"
         >
           <ChevronRight
             className={cn(
@@ -181,14 +180,8 @@ function TaskSidebarItem({
               expanded && "rotate-90"
             )}
           />
-        </button>
-        <NavLink
-          to={homeTo}
-          title={task.title}
-          className="flex h-6 min-w-0 flex-1 items-center rounded-md px-1 text-left focus-visible:ring-2 focus-visible:ring-ring outline-none"
-        >
           <span className="min-w-0 flex-1 truncate">{label}</span>
-        </NavLink>
+        </button>
         <TaskRowMenu
           task={task}
           triggerRender={
@@ -205,7 +198,7 @@ function TaskSidebarItem({
           <SidebarMenuSubItem>
             <SidebarMenuSubButton
               isActive={latest ? location.pathname === `/tasks/${latest.id}` : false}
-              render={<NavLink to={homeTo} />}
+              render={<NavLink to={homeTo} end />}
             >
               <House />
               <span>Home</span>
@@ -215,11 +208,13 @@ function TaskSidebarItem({
             <SidebarMenuSubButton
               isActive={
                 latest
-                  ? location.pathname === `/issues/${latest.id}` &&
-                    new URLSearchParams(location.search).get("view") !== "board"
+                  ? location.pathname === `/tasks/${latest.id}/issues` ||
+                    (location.pathname === `/issues/${latest.id}` &&
+                      new URLSearchParams(location.search).get("view") !==
+                        "board")
                   : false
               }
-              render={<NavLink to={issuesTo ?? "/tasks"} />}
+              render={<NavLink to={issuesTo ?? "/tasks"} end />}
             >
               <GitBranch />
               <span>Issues</span>
@@ -235,7 +230,7 @@ function TaskSidebarItem({
                         "board")
                   : false
               }
-              render={<NavLink to={boardTo ?? "/tasks"} />}
+              render={<NavLink to={boardTo ?? "/tasks"} end />}
             >
               <LayoutGrid />
               <span>Board</span>
