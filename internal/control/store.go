@@ -705,7 +705,11 @@ func (s *Store) GetTaskDetail(id string) (TaskDetail, error) {
 	}
 	rootReports := make([]TaskRootReport, 0, len(roots))
 	for _, root := range roots {
-		item := TaskRootReport{IssueID: root.ID, Identifier: root.Identifier, Title: root.Title, Status: root.Status, CompletedAt: root.CompletedAt, Reports: reportsByRoot[root.ID]}
+		reports := reportsByRoot[root.ID]
+		if reports == nil {
+			reports = make([]TaskReport, 0)
+		}
+		item := TaskRootReport{IssueID: root.ID, Identifier: root.Identifier, Title: root.Title, Status: root.Status, CompletedAt: root.CompletedAt, Reports: reports}
 		rootReports = append(rootReports, item)
 	}
 	return TaskDetail{Task: task, InputAttachments: attachments, RootReports: rootReports}, nil

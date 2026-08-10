@@ -515,7 +515,7 @@ func (r NativeIssueRunner) terminalChildAttentionPrompt(parentID string) string 
 		failed = failed[:20]
 	}
 	var summary strings.Builder
-	summary.WriteString("## 必须处理的直属子 Issue 异常结果\n\n恢复 Execution 排队期间出现了以下失败或超预算结果。不要继续被动等待；逐项明确选择 phone_board_continue_issue、使用 phone_board_delegate 委派替代方向，或接受部分结果并继续父目标：\n")
+	summary.WriteString("## 必须处理的直属子 Issue 异常结果\n\n恢复 Execution 排队期间出现了以下失败或超预算结果。不要继续被动等待。模型/API/供应商错误且没有可用结果时，必须视为未完成工作：暂时性错误恢复后使用 phone_board_continue_issue 创建新 Execution；硬性额度耗尽时先等待额度恢复或切换可用配置，避免用同一不可用配置盲目重试；也可以使用 phone_board_delegate 委派替代方向。只有已有证据确实推进父目标时，才接受部分结果并继续：\n")
 	for _, child := range failed {
 		fmt.Fprintf(&summary, "\n- %s · %s [%s]\n  结果：%s\n  错误：%s\n", child.Identifier, child.Title, strings.Join(child.Labels, ","), fallback(truncate(strings.TrimSpace(child.Result), 2400), "无结果摘要"), fallback(truncate(strings.TrimSpace(child.Error), 1000), "无"))
 	}
@@ -640,7 +640,7 @@ The only coordination mode is Board Autonomy:
 - Use phone_board_list_issues and phone_board_get_issue to inspect authoritative Issue status, runtime state, priority, assignee name, and Agent type before coordinating work.
 - Use phone_board_create_issue to create one child Issue without assigning it, or with an optional assignee. Use phone_board_update_issue to change priority, workflow status, or assignee; use phone_board_delete_issue only for permanently removing stopped work.
 - Use the Phone Board shortcut phone_board_delegate to create and assign durable child Issues. Delegation does not pause you; continue any useful parent work.
-- When a direct child ends as failed or budget_exceeded, you are woken immediately. Use phone_board_continue_issue only if its evidence justifies another Execution; otherwise use phone_board_delegate for a different direction or accept the partial result and continue. A new Execution resets only its own budget, never the Task wall-clock.
+- When a direct child ends as failed or budget_exceeded, you are woken immediately. Treat model/API/provider failures with no usable result as unfinished work, not successful completion: inspect the error, use phone_board_continue_issue to create a fresh Execution after transient availability returns or a working provider/configuration is selected, or use phone_board_delegate for a viable replacement. Do not blindly retry a hard quota failure while the same unavailable configuration remains active. Accept a partial result only when it contains evidence that genuinely advances the parent objective. A new Execution resets only its own budget, never the Task wall-clock.
 - A one-minute heartbeat wakes this Agent only after it releases the active loop into sleeping or waiting_children; it is never periodic input to active model work. On wake, use it to inspect, guide, stop, or reassign work when needed.
 - Board comments and Phone Relay messages identify the sender and may directly steer this running loop or wake it early. A reply is optional; reply only when it advances the task.
 - Use the Phone Board shortcut phone_board_sleep only when no valuable work remains until a heartbeat, comment, Relay message, or child update arrives.

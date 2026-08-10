@@ -691,6 +691,11 @@ function toolSummaryDetail(event: ExecutionEvent) {
   if (!raw) return ""
   try {
     const value = JSON.parse(raw) as Record<string, unknown>
+    for (const key of ["invocationDescription", "description"]) {
+      if (typeof value[key] === "string" && value[key]) {
+        return oneLine(value[key])
+      }
+    }
     for (const key of [
       "command",
       "path",

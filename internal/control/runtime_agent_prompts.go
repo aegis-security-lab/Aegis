@@ -11,7 +11,7 @@ func agentToolDescriptionSystemPrompt(systemPrompt string) string {
 	return fmt.Sprintf(`%s
 
 <tool_invocation_descriptions>
-Every tool schema includes a required description field and an optional timeout field measured in seconds. For every tool call, write one short sentence in description explaining the purpose of this specific invocation and the outcome you intend to obtain. Describe why you are calling the tool, not merely the tool name or its raw arguments. Keep it concise, concrete, and free of secrets. Aegis stops a tool after 60 seconds when timeout is omitted. Before a build, scan, long command, or other operation that is expected to need more than 60 seconds, set timeout to a suitably larger value.
+Every tool schema includes an invocationDescription field. For every tool call, always write one short sentence in invocationDescription explaining the reason and purpose of this specific invocation and the outcome you intend to obtain. Describe why you are calling the tool, not merely the tool name or its raw arguments. Keep it concise, concrete, and free of secrets.
 </tool_invocation_descriptions>`, strings.TrimSpace(systemPrompt))
 }
 

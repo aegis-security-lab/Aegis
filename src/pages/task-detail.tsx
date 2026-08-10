@@ -169,8 +169,9 @@ export function TaskDetailPage() {
             <CardContent className="flex flex-col gap-1">
               {detail.rootReports.length > 0 ? (
                 detail.rootReports.map((item) => {
-                  const latest = item.reports[0]
-                  const history = item.reports.slice(1)
+                  const reports = item.reports ?? []
+                  const latest = reports[0]
+                  const history = reports.slice(1)
                   return (
                     <div
                       key={item.issueId}

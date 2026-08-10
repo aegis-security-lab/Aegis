@@ -350,6 +350,7 @@ const BoardCard = React.memo(function BoardCard({
 }) {
   const navigate = useNavigate()
   const labels = issueLabelsOf(issue)
+  const showRuntime = shouldShowBoardRuntime(issue, runtime, labels)
   return (
     <article
       draggable
@@ -359,7 +360,12 @@ const BoardCard = React.memo(function BoardCard({
       onDragStart={(event) => onDragStart(issue.id, event)}
       onDragEnd={onDragEnd}
       onClick={(event) => {
-        if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='menuitem']")) return
+        if (
+          (event.target as HTMLElement).closest(
+            "button, a, input, select, textarea, [role='menuitem']"
+          )
+        )
+          return
         navigate(`/issues/${issue.id}?view=board`)
       }}
       onKeyDown={(event) => {
@@ -370,7 +376,7 @@ const BoardCard = React.memo(function BoardCard({
         }
       }}
       className={cn(
-        "group flex cursor-pointer flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity,transform] duration-150 hover:-translate-y-px hover:shadow-md hover:ring-foreground/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing",
+        "group flex cursor-pointer flex-col gap-1.5 rounded-lg border bg-card p-3 shadow-sm ring-1 ring-foreground/5 transition-[box-shadow,opacity,transform] duration-150 hover:-translate-y-px hover:shadow-md hover:ring-foreground/15 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none active:cursor-grabbing",
         dragging && "translate-y-0 opacity-45"
       )}
     >
@@ -385,34 +391,32 @@ const BoardCard = React.memo(function BoardCard({
       <p className="line-clamp-2 text-sm leading-snug font-medium">
         {issue.title}
       </p>
-      {labels.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
           {labels.map((label) => (
             <Badge
               key={label}
               variant="outline"
               className={cn(
-                "h-5 px-1.5 text-[10px] font-medium",
+                "h-5 shrink-0 px-1.5 text-[10px] font-medium",
                 issueLabelMeta[label].className
               )}
             >
               {issueLabelMeta[label].label}
             </Badge>
           ))}
+          {showRuntime ? <IssueRuntimeBadge runtime={runtime} /> : null}
+          {childCount > 0 ? (
+            <Badge
+              variant="outline"
+              className="h-5 shrink-0 px-1.5 text-[10px] font-normal text-muted-foreground"
+            >
+              {childCount} 个子项
+            </Badge>
+          ) : null}
         </div>
-      ) : null}
-      <div className="flex items-center gap-1.5">
-        <IssueRuntimeBadge runtime={runtime} />
-        {childCount > 0 ? (
-          <Badge
-            variant="outline"
-            className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground"
-          >
-            {childCount} 个子项
-          </Badge>
-        ) : null}
         {assigneeName ? (
-          <span className="ml-auto max-w-24 truncate rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          <span className="max-w-24 shrink-0 truncate rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {assigneeName}
           </span>
         ) : null}
@@ -420,3 +424,25 @@ const BoardCard = React.memo(function BoardCard({
     </article>
   )
 })
+
+function shouldShowBoardRuntime(
+  issue: Issue,
+  runtime: IssueRuntimeView,
+  labels: ReturnType<typeof issueLabelsOf>
+) {
+  if (
+    (runtime.state === "budget_exceeded" &&
+      labels.includes("budget_exceeded")) ||
+    (runtime.state === "failed" && labels.includes("failed")) ||
+    (runtime.state === "blocked" && labels.includes("blocked"))
+  ) {
+    return false
+  }
+  if (
+    (runtime.kind === "completed" && issue.status === "done") ||
+    (runtime.kind === "cancelled" && issue.status === "cancelled")
+  ) {
+    return false
+  }
+  return true
+}

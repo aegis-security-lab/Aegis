@@ -1182,7 +1182,7 @@ func childOutcomeWakeMessage(parent Issue, children []Issue) string {
 	}
 	instruction := "所有直属子 Issue 已经结束。请整合、验证并继续完成父 Issue。"
 	if hasFailure {
-		instruction = "至少一个直属子 Issue 未成功结束，因此立即唤醒你，不必等待其他子项。先检查失败原因和已有证据：对 failed 或 budget_exceeded 子项，如果原方向仍有价值，通过 Phone Board 快捷指令 phone_board_continue_issue 创建全新的 Execution；如果方向不值得继续，通过 phone_board_delegate 创建替代方向；如果现有结果足够，则接受部分结果并继续父 Issue。不要因为一个子项失败而停留在等待状态。"
+		instruction = "至少一个直属子 Issue 未成功结束，因此立即唤醒你，不必等待其他子项。先检查失败原因和已有证据。模型/API/供应商错误且没有可用结果时，必须视为未完成工作：暂时性错误恢复后通过 Phone Board 快捷指令 phone_board_continue_issue 创建全新的 Execution；硬性额度耗尽时先等待额度恢复或切换可用配置，避免用同一不可用配置盲目重试。如果原方向不值得继续，通过 phone_board_delegate 创建替代方向；只有已有证据确实推进父目标时，才接受部分结果并继续父 Issue。不要因为一个子项失败而停留在等待状态。"
 	}
 	return fmt.Sprintf("## 子 Issue 状态变化\n\n父 Issue %s：%s\n\n%s\n\n当前直属子 Issue：\n%s", parent.Identifier, parent.Title, instruction, summary.String())
 }

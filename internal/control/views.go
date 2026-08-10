@@ -33,7 +33,7 @@ func compactExecutionEvent(event ExecutionEvent) ExecutionEvent {
 			}
 		}
 	}
-	copyKeys("description")
+	copyKeys("invocationDescription", "description")
 	switch event.ToolName {
 	case "read":
 		copyKeys("path", "offset", "limit")

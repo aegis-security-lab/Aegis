@@ -2,11 +2,36 @@ package control
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestNewTaskDetailReturnsEmptyReportArray(t *testing.T) {
+	store := configuredStore(t)
+	task, _, err := store.CreateTask(CreateIssueInput{
+		Title: "Fresh task", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := store.GetTaskDetail(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.RootReports) != 1 || detail.RootReports[0].Reports == nil {
+		t.Fatalf("new task reports must be an empty array: %+v", detail.RootReports)
+	}
+	body, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), `"reports":null`) {
+		t.Fatalf("new task detail encoded a null reports collection: %s", body)
+	}
+}
 
 func TestRootIssueTaskReportKeepsImmutableHistory(t *testing.T) {
 	store := configuredStore(t)

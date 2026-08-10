@@ -94,9 +94,14 @@ func (h *Host) materialize(ctx context.Context, spec ExecutionSpec) (materialize
 		return materializedAgent{}, fmt.Errorf("agenthost: resolve capabilities: %w", err)
 	}
 	ctx = withAuthorizedTools(ctx, bundle.Tools)
+	tools, err := decorateInvocationMetadata(bundle.Tools)
+	if err != nil {
+		_ = bundle.Close()
+		return materializedAgent{}, err
+	}
 	config := h.AgentDefaults
 	config.Model = model
-	config.Tools = append([]agentcore.Tool(nil), bundle.Tools...)
+	config.Tools = tools
 	config.SystemPrompt = composeSystemPrompt(spec.SystemPrompt, bundle.Instructions)
 	config.ModelOptions = cloneValues(spec.Model.Options)
 	config.Hooks = observabilityHooks(config.Hooks)

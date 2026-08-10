@@ -64,7 +64,7 @@ func TestFailedChildImmediatelyWakesWaitingParentThroughCoordination(t *testing.
 	if err != nil || queued.Status != coordination.ExecutionQueued {
 		t.Fatalf("resume execution=%+v err=%v", queued, err)
 	}
-	if !strings.Contains(queued.Spec.Prompt, "dependency download failed") || !strings.Contains(queued.Spec.Prompt, "phone_board_continue_issue") {
+	if !strings.Contains(queued.Spec.Prompt, "dependency download failed") || !strings.Contains(queued.Spec.Prompt, "phone_board_continue_issue") || !strings.Contains(queued.Spec.Prompt, "模型/API/供应商错误") || !strings.Contains(queued.Spec.Prompt, "盲目重试") {
 		t.Fatalf("failure recovery context missing from wake prompt: %q", queued.Spec.Prompt)
 	}
 	currentSibling, _ := store.GetIssue(runningChild.ID)

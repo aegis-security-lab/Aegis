@@ -26,7 +26,7 @@ func TestConciergeConversationIsDurableAndHiddenFromWorkState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !detail.Execution.ToolsSnapshot[0].Parameters[0].Required || detail.Execution.Kind != "concierge" {
+	if detail.Execution.ToolsSnapshot[0].Parameters[0].Name != "invocationDescription" || detail.Execution.ToolsSnapshot[0].Parameters[0].Required || detail.Execution.Kind != "concierge" {
 		t.Fatalf("unexpected concierge execution: %+v", detail.Execution)
 	}
 	state := store.State()

@@ -589,7 +589,7 @@ func TestResumePromptIncludesFailedAndBudgetExceededChildrenThatArrivedWhileQueu
 		t.Fatal(err)
 	}
 	prompt := (NativeIssueRunner{Manager: manager}).terminalChildAttentionPrompt(parent.ID)
-	for _, expected := range []string{"必须处理", failed.Identifier, "connection failed", exceeded.Identifier, "partial audit evidence", "phone_board_continue_issue"} {
+	for _, expected := range []string{"必须处理", failed.Identifier, "connection failed", exceeded.Identifier, "partial audit evidence", "phone_board_continue_issue", "模型/API/供应商错误", "切换可用配置", "盲目重试"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("attention prompt missing %q: %s", expected, prompt)
 		}

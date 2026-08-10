@@ -39,7 +39,7 @@ func TestProgressToolSnapshotHasStructuredParameters(t *testing.T) {
 	if len(tools) != 1 || tools[0].Source != "aegis_extension" {
 		t.Fatalf("progress tool snapshot=%+v", tools)
 	}
-	if len(tools[0].Parameters) != 5 || tools[0].Parameters[0].Name != "description" || tools[0].Parameters[1].Name != "timeout" || tools[0].Parameters[4].Name != "currentActivity" {
+	if len(tools[0].Parameters) != 5 || tools[0].Parameters[0].Name != "invocationDescription" || tools[0].Parameters[1].Name != "timeout" || tools[0].Parameters[4].Name != "currentActivity" {
 		t.Fatalf("progress parameters=%+v", tools[0].Parameters)
 	}
 }
@@ -95,8 +95,8 @@ func TestEveryCatalogToolRequiresInvocationDescription(t *testing.T) {
 			t.Fatalf("tool %s has no parameters", name)
 		}
 		purpose := tool.Parameters[0]
-		if purpose.Name != "description" || purpose.Type != "string" || !purpose.Required || purpose.Description == "" {
-			t.Fatalf("tool %s does not require an invocation description: %+v", name, purpose)
+		if purpose.Name != "invocationDescription" || purpose.Type != "string" || purpose.Required || purpose.Description == "" {
+			t.Fatalf("tool %s does not expose a backward-compatible invocation description: %+v", name, purpose)
 		}
 		if len(tool.Parameters) < 2 {
 			t.Fatalf("tool %s has no common timeout parameter", name)
@@ -117,7 +117,7 @@ func TestEveryCatalogToolRequiresInvocationDescription(t *testing.T) {
 
 func TestAgentPromptRequiresPurposeForEveryToolCall(t *testing.T) {
 	prompt := agentToolDescriptionSystemPrompt("base")
-	for _, expected := range []string{"Every tool schema", "required description field", "optional timeout field", "purpose of this specific invocation", "one short sentence", "60 seconds"} {
+	for _, expected := range []string{"Every tool schema", "invocationDescription field", "reason and purpose of this specific invocation", "one short sentence"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("tool invocation prompt missing %q: %s", expected, prompt)
 		}

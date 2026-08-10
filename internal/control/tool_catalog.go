@@ -11,7 +11,7 @@ func snapshotTools(names []string) []ToolSnapshot {
 		result = append(result, ToolSnapshot{
 			Name: name, Label: name, Source: "unknown",
 			Parameters: []ToolParameterSnapshot{
-				{Name: "description", Type: "string", Description: "用一句简短的话说明本次调用工具的目的和预期获得的结果。", Required: true},
+				{Name: "invocationDescription", Type: "string", Description: "用一句简短的话说明本次调用工具的原因、用途和预期获得的结果。", Required: false},
 				{Name: "timeout", Type: "number", Description: "本次调用的超时限制，单位秒；默认 60 秒，需要更长时间时可显式指定。", Required: false},
 			},
 			Description: "该工具由 AgentCore capability 提供，但 Aegis 没有可序列化的定义元数据。",
@@ -286,7 +286,7 @@ func toolCatalog() map[string]ToolSnapshot {
 			},
 		},
 	}
-	purpose := parameter("description", "string", "用一句简短的话说明本次调用工具的目的和预期获得的结果。", true)
+	purpose := parameter("invocationDescription", "string", "用一句简短的话说明本次调用工具的原因、用途和预期获得的结果。", false)
 	timeout := parameter("timeout", "number", "本次调用的超时限制，单位秒；默认 60 秒，需要更长时间时可显式指定。", false)
 	for name, definition := range catalog {
 		parameters := make([]ToolParameterSnapshot, 0, len(definition.Parameters))
