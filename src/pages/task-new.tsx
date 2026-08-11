@@ -141,8 +141,8 @@ export function TaskNewPage() {
         }
       }}
     >
-      <DialogContent className="sm:max-w-4xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-4xl">
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {clone ? (
               <span className="flex items-center gap-2">
@@ -154,62 +154,69 @@ export function TaskNewPage() {
             )}
           </DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit}>
-          <IssueBriefComposer
-            idPrefix="task"
-            title={form.title}
-            description={form.description}
-            onTitleChange={(value) => update("title", value)}
-            onDescriptionChange={(value) => update("description", value)}
-            agents={enabledAgentTypes}
-            selectedAgentId={selectedAgentId}
-            onAgentChange={(value) =>
-              update("assigneeAgentId", value || undefined)
-            }
-            attachments={attachments}
-            objective={form.objective}
-            objectiveEnabled={objectiveEnabled}
-            onObjectiveChange={(value) => update("objective", value)}
-            footerControls={
-              <>
-                <Select
-                  items={priorityItems}
-                  value={form.priority}
-                  onValueChange={(value) =>
-                    update("priority", value as CreateIssueInput["priority"])
-                  }
-                >
-                  <SelectTrigger size="sm" className="w-auto min-w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {priorities.map((priority) => (
-                        <SelectItem key={priority} value={priority}>
-                          {priority}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <ObjectiveToggle
-                  checked={objectiveEnabled}
-                  onCheckedChange={setObjectiveEnabled}
-                />
-                <TimeBudgetControl
-                  value={form.timeBudgetMinutes}
-                  onValueChange={(value) => update("timeBudgetMinutes", value)}
-                />
-                <HumanValidationToggle
-                  checked={form.humanValidationFallback ?? false}
-                  onCheckedChange={(checked) =>
-                    update("humanValidationFallback", checked)
-                  }
-                />
-              </>
-            }
-          />
-          <DialogFooter className="mt-5 gap-3 sm:justify-between">
+        <form
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          onSubmit={submit}
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2">
+            <IssueBriefComposer
+              idPrefix="task"
+              title={form.title}
+              description={form.description}
+              onTitleChange={(value) => update("title", value)}
+              onDescriptionChange={(value) => update("description", value)}
+              agents={enabledAgentTypes}
+              selectedAgentId={selectedAgentId}
+              onAgentChange={(value) =>
+                update("assigneeAgentId", value || undefined)
+              }
+              attachments={attachments}
+              objective={form.objective}
+              objectiveEnabled={objectiveEnabled}
+              onObjectiveChange={(value) => update("objective", value)}
+              footerControls={
+                <>
+                  <Select
+                    items={priorityItems}
+                    value={form.priority}
+                    onValueChange={(value) =>
+                      update("priority", value as CreateIssueInput["priority"])
+                    }
+                  >
+                    <SelectTrigger size="sm" className="w-auto min-w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {priorities.map((priority) => (
+                          <SelectItem key={priority} value={priority}>
+                            {priority}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <ObjectiveToggle
+                    checked={objectiveEnabled}
+                    onCheckedChange={setObjectiveEnabled}
+                  />
+                  <TimeBudgetControl
+                    value={form.timeBudgetMinutes}
+                    onValueChange={(value) =>
+                      update("timeBudgetMinutes", value)
+                    }
+                  />
+                  <HumanValidationToggle
+                    checked={form.humanValidationFallback ?? false}
+                    onCheckedChange={(checked) =>
+                      update("humanValidationFallback", checked)
+                    }
+                  />
+                </>
+              }
+            />
+          </div>
+          <DialogFooter className="mt-5 shrink-0 gap-3 sm:justify-between">
             <TaskTemplateControls
               form={form}
               selectedAgentId={selectedAgentId}

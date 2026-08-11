@@ -72,7 +72,7 @@ func TestControlPhoneBoardShortcutDelegatesThroughCoordination(t *testing.T) {
 func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T) {
 	store, manager := bridgeTestManager(t)
 	issue, err := store.CreateIssue(CreateIssueInput{
-		Title: "Phone-visible issue", Objective: "Exercise the extracted Board app.",
+		Title: "Phone-visible issue", Description: "Preserve the complete persisted Issue description.", Objective: "Exercise the extracted Board app.",
 		Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
 	})
 	if err != nil {
@@ -134,6 +134,9 @@ func TestControlAgentPhoneReadsBoardAndAttributesIdempotentComment(t *testing.T)
 		}
 	}
 	detail := phoneAction(t, client, started.PhoneSessionID, board, agentapp.ActionClick, "@1", "open-issue", nil).Page
+	if !strings.Contains(detail.Text, "[SECTION] Description") || !strings.Contains(detail.Text, issue.Description) {
+		t.Fatalf("Phone Board omitted the persisted Issue description:\n%s", detail.Text)
+	}
 	detail = phoneAction(t, client, started.PhoneSessionID, detail, agentapp.ActionInput, "@1", "draft-comment", map[string]any{"value": "Verified through Agent Phone."}).Page
 	posted := phoneAction(t, client, started.PhoneSessionID, detail, agentapp.ActionSubmit, "@2", "post-comment", nil)
 	if posted.Toast != "Comment posted" {

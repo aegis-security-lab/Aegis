@@ -17,7 +17,7 @@ import (
 func testModule(t *testing.T) (*Phone, *MemoryBoardRepository, *MemoryRelayRepository) {
 	t.Helper()
 	board := NewMemoryBoardRepository(
-		BoardIssue{ID: "mine", Identifier: "ISSUE-1", Title: "My issue", Objective: "Finish it", Status: "todo", Priority: "high", AssigneeID: "agent-a"},
+		BoardIssue{ID: "mine", Identifier: "ISSUE-1", Title: "My issue", Description: "Use the complete Issue context.", Objective: "Finish it", Status: "todo", Priority: "high", AssigneeID: "agent-a"},
 		BoardIssue{ID: "other", Identifier: "ISSUE-2", Title: "Other issue", Objective: "Do not expose it", Status: "todo", Priority: "low", AssigneeID: "agent-b"},
 	)
 	relay := NewMemoryRelayRepository(RelayThread{ID: "thread-1", Title: "Agent A and B", ParticipantIDs: []string{"agent-a", "agent-b"}, UpdatedAt: time.Now().UTC()})
@@ -58,6 +58,9 @@ func TestPhoneBoardNavigationAndComment(t *testing.T) {
 	page = response.Page
 	if page.PageID != "issue.detail" || !page.CanBack {
 		t.Fatalf("unexpected detail page: %+v", page)
+	}
+	if !strings.Contains(page.Text, "[SECTION] Description") || !strings.Contains(page.Text, "Use the complete Issue context.") {
+		t.Fatalf("Issue description is missing from detail page:\n%s", page.Text)
 	}
 	response = act(t, phone, sessionID, page, ActionInput, "@1", map[string]any{"value": "Work is ready for review."}, "draft-comment")
 	page = response.Page

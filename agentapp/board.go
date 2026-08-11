@@ -15,6 +15,7 @@ type BoardIssue struct {
 	ID                  string    `json:"id"`
 	Identifier          string    `json:"identifier"`
 	Title               string    `json:"title"`
+	Description         string    `json:"description,omitempty"`
 	Objective           string    `json:"objective"`
 	Status              string    `json:"status"`
 	WorkflowStatus      string    `json:"workflowStatus"`
@@ -211,6 +212,7 @@ func (a *BoardApp) issue(ctx context.Context, request RenderRequest) (Page, erro
 		return Page{}, err
 	}
 	page := Page{PageID: "issue.detail", Title: issue.Identifier + " " + issue.Title, Summary: fmt.Sprintf("%s · %s · owner %s%s", boardWorkflowStatus(issue), issue.Priority, boardOwnerLabel(issue), boardExecutionLabel(issue))}
+	page.Sections = append(page.Sections, Section{Title: "Description", Lines: []Line{{Label: fallbackBoardText(issue.Description)}}})
 	page.Sections = append(page.Sections, Section{Title: "Objective", Lines: []Line{{Label: issue.Objective}}})
 	commentSection := Section{Title: "Recent comments"}
 	for _, comment := range comments {
@@ -634,12 +636,19 @@ func (r *MemoryBoardRepository) ListIssues(_ context.Context, actor Actor, query
 		if !boardIssueAssignedTo(issue, actor) && !actor.HasScope("board:read:all") {
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(issue.Identifier+" "+issue.Title+" "+issue.Objective), query) {
+		if query != "" && !strings.Contains(strings.ToLower(issue.Identifier+" "+issue.Title+" "+issue.Description+" "+issue.Objective), query) {
 			continue
 		}
 		result = append(result, issue)
 	}
 	return result, nil
+}
+
+func fallbackBoardText(value string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return "Not provided"
 }
 
 func (r *MemoryBoardRepository) GetIssue(_ context.Context, actor Actor, id string) (BoardIssue, []BoardComment, error) {

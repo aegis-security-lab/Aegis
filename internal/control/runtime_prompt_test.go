@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestPlanningPromptIncludesCompleteIssueContext(t *testing.T) {
+	issue := Issue{
+		Identifier:  "AEG-0042",
+		Title:       "Run the benchmark",
+		Description: "Use the supplied endpoint and credentials before decomposing the work.",
+		Objective:   "Complete every challenge.",
+		Workspace:   "/workspace",
+	}
+	prompt := planningPrompt(issue, 4, 10, 20, IssueBudgetConfig{MaxTurns: 100, ActiveTimeMinutes: 20})
+	for _, expected := range []string{issue.Identifier, issue.Title, issue.Description, issue.Objective, issue.Workspace} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("planning prompt is missing %q:\n%s", expected, prompt)
+		}
+	}
+}
+
 func TestContinuationPromptRequiresCompletionReassessmentAndFollowupDelegation(t *testing.T) {
 	prompt := continuationPrompt(
 		Issue{Identifier: "AEG-0001", Title: "Parent", Objective: "Complete coverage", Workspace: "/workspace"},

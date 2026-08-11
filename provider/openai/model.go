@@ -1,99 +1,209 @@
 package openai
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
 	"aegis/observability"
 	"github.com/z3r2ne/agentcore"
+	agentcoreopenai "github.com/z3r2ne/agentcore/provider/openai"
 )
 
-type Config struct {
-	BaseURL    string
-	APIKey     string
-	HTTPClient *http.Client
-	Headers    map[string]string
+// Config is the upstream AgentCore OpenAI-compatible provider configuration.
+// Keeping the alias preserves Aegis' public constructor while delegating wire
+// compatibility, response limits, and provider-data round trips to AgentCore.
+type Config = agentcoreopenai.Config
+
+// Model adds Aegis observability around AgentCore's OpenAI-compatible model.
+// AgentCore owns protocol translation so reasoning and provider-specific data
+// survive repeated model -> tool -> model turns.
+type Model struct {
+	inner *agentcoreopenai.Model
+	model string
 }
 
-type Model struct {
-	endpoint string
-	apiKey   string
-	client   *http.Client
-	headers  map[string]string
-	model    string
+const interruptedAssistantPlaceholder = "[response interrupted]"
+
+type replaySanitization struct {
+	repaired      int
+	reasoningOnly int
+	errors        int
 }
 
 func NewModel(config Config, model string) (*Model, error) {
-	endpoint, err := chatCompletionsEndpoint(config.BaseURL)
+	config.Model = model
+	inner, err := agentcoreopenai.New(config)
 	if err != nil {
 		return nil, err
 	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return nil, errors.New("provider/openai: model is required")
-	}
-	client := config.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-	headers := make(map[string]string, len(config.Headers))
-	for key, value := range config.Headers {
-		if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Content-Type") {
-			continue
-		}
-		headers[key] = value
-	}
-	return &Model{endpoint: endpoint, apiKey: strings.TrimSpace(config.APIKey), client: client, headers: headers, model: model}, nil
+	return &Model{inner: inner, model: model}, nil
 }
 
 func (m *Model) Stream(ctx context.Context, request agentcore.ModelRequest) (result agentcore.ModelStream, err error) {
-	ctx, span := (&observability.Tracer{Logger: observability.Default(), Metrics: observability.DefaultMetrics()}).Start(ctx, "provider.openai.stream", slog.String("model", m.model), slog.Int("message_count", len(request.Messages)), slog.Int("tool_count", len(request.Tools)))
+	sanitizedMessages, sanitization := sanitizeReplayMessages(request.Messages)
+	request.Messages = sanitizedMessages
+	if sanitization.repaired > 0 {
+		observability.Default().Warn(
+			ctx,
+			"provider.openai.history.sanitized",
+			slog.String("model", m.model),
+			slog.Int("repaired_message_count", sanitization.repaired),
+			slog.Int("reasoning_only_message_count", sanitization.reasoningOnly),
+			slog.Int("error_message_count", sanitization.errors),
+		)
+		observability.DefaultMetrics().AddCounter(
+			"provider_history_messages_sanitized_total",
+			float64(sanitization.repaired),
+			observability.Labels{"provider": "openai", "model": m.model},
+		)
+	}
+	ctx, span := (&observability.Tracer{Logger: observability.Default(), Metrics: observability.DefaultMetrics()}).Start(
+		ctx,
+		"provider.openai.stream",
+		slog.String("model", m.model),
+		slog.Int("message_count", len(request.Messages)),
+		slog.Int("tool_count", len(request.Tools)),
+	)
 	defer func() {
 		if err != nil {
 			span.End(err, slog.String("provider", "openai"), slog.String("model", m.model))
 			observability.DefaultMetrics().AddCounter("provider_requests_total", 1, observability.Labels{"provider": "openai", "model": m.model, "status": "error"})
 		}
 	}()
-	body, err := m.requestBody(request)
+	inner, err := m.inner.Stream(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(body)
+	return &observedStream{inner: inner, span: span, model: m.model}, nil
+}
+
+// sanitizeReplayMessages is the final wire-boundary defense for restored or
+// externally supplied histories. OpenAI-compatible providers reject an
+// assistant message whose serialized form has neither content nor tool calls.
+// A zero-token failed stream or a reasoning-only completion can leave exactly
+// that shape in a durable AgentCore Session and otherwise poison every later
+// execution that restores it.
+//
+// The repair is intentionally applied to a detached request copy. It preserves
+// hidden reasoning and vendor fields in ProviderData, adds only an honest
+// interruption marker as visible content, and never rewrites a valid tool-call
+// turn. The stored Session and UI transcript remain unchanged.
+func sanitizeReplayMessages(messages []agentcore.Message) ([]agentcore.Message, replaySanitization) {
+	var stats replaySanitization
+	result := messages
+	for index, message := range messages {
+		if message.Role != agentcore.RoleAssistant {
+			continue
+		}
+
+		neutralHasPayload := strings.TrimSpace(message.Text()) != "" || len(message.ToolCalls()) > 0
+		preserved, hasPreserved := preservedOpenAIMessage(message)
+		if hasPreserved {
+			if openAIAssistantHasPayload(preserved) {
+				continue
+			}
+		} else if neutralHasPayload {
+			continue
+		}
+
+		if stats.repaired == 0 {
+			result = append([]agentcore.Message(nil), messages...)
+		}
+		fixed := message
+		fixed.Content = append([]agentcore.ContentBlock(nil), message.Content...)
+
+		if neutralHasPayload {
+			// ProviderData wins over neutral content in AgentCore's OpenAI
+			// adapter. If those representations disagree, discard only the
+			// stale provider copy so the valid neutral message is serialized.
+			fixed.ProviderData = nil
+		} else {
+			fixed.Content = append(fixed.Content, agentcore.ContentBlock{
+				Type: agentcore.ContentText,
+				Text: interruptedAssistantPlaceholder,
+			})
+			if hasPreserved {
+				preserved["content"] = interruptedAssistantPlaceholder
+				fixed.ProviderData = repairedProviderData(message.ProviderData, preserved)
+			} else {
+				fixed.ProviderData = nil
+			}
+		}
+
+		result[index] = fixed
+		stats.repaired++
+		if assistantHasThinking(message) && strings.TrimSpace(message.Text()) == "" && len(message.ToolCalls()) == 0 {
+			stats.reasoningOnly++
+		}
+		if message.IsError || message.StopReason == agentcore.StopReasonError {
+			stats.errors++
+		}
+	}
+	return result, stats
+}
+
+func preservedOpenAIMessage(message agentcore.Message) (map[string]any, bool) {
+	if message.ProviderData == nil || message.ProviderData.Format != agentcoreopenai.ProviderDataFormat {
+		return nil, false
+	}
+	var preserved struct {
+		Message map[string]any `json:"message"`
+	}
+	if json.Unmarshal(message.ProviderData.Data, &preserved) != nil || preserved.Message == nil {
+		return nil, false
+	}
+	return preserved.Message, true
+}
+
+func openAIAssistantHasPayload(message map[string]any) bool {
+	return nonEmptyWireValue(message["content"]) ||
+		nonEmptyWireValue(message["tool_calls"]) ||
+		nonEmptyWireValue(message["function_call"])
+}
+
+func nonEmptyWireValue(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []any:
+		return len(typed) > 0
+	case map[string]any:
+		return len(typed) > 0
+	default:
+		return true
+	}
+}
+
+func repairedProviderData(original *agentcore.ProviderData, message map[string]any) *agentcore.ProviderData {
+	if original == nil {
+		return nil
+	}
+	var preserved map[string]any
+	if json.Unmarshal(original.Data, &preserved) != nil {
+		return nil
+	}
+	preserved["message"] = message
+	data, err := json.Marshal(preserved)
 	if err != nil {
-		return nil, fmt.Errorf("provider/openai: encode request: %w", err)
+		return nil
 	}
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(encoded))
-	if err != nil {
-		return nil, fmt.Errorf("provider/openai: create request: %w", err)
+	return &agentcore.ProviderData{Format: original.Format, Data: data}
+}
+
+func assistantHasThinking(message agentcore.Message) bool {
+	for _, block := range message.Content {
+		if block.Type == agentcore.ContentThinking && strings.TrimSpace(block.Text) != "" {
+			return true
+		}
 	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Accept", "text/event-stream")
-	if m.apiKey != "" {
-		httpRequest.Header.Set("Authorization", "Bearer "+m.apiKey)
-	}
-	for key, value := range m.headers {
-		httpRequest.Header.Set(key, value)
-	}
-	response, err := m.client.Do(httpRequest)
-	if err != nil {
-		return nil, fmt.Errorf("provider/openai: request: %w", err)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer response.Body.Close()
-		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		return nil, fmt.Errorf("provider/openai: HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(payload)))
-	}
-	return &observedStream{inner: newStream(response.Body), span: span, model: m.model}, nil
+	return false
 }
 
 type observedStream struct {
@@ -147,229 +257,6 @@ func (s *observedStream) finish(err error, incomplete bool) {
 		metrics.AddCounter("provider_cache_read_tokens_total", float64(s.usage.CacheReadTokens), observability.Labels{"provider": "openai", "model": s.model})
 		metrics.AddCounter("provider_cache_write_tokens_total", float64(s.usage.CacheWriteTokens), observability.Labels{"provider": "openai", "model": s.model})
 	})
-}
-
-func (m *Model) requestBody(request agentcore.ModelRequest) (map[string]any, error) {
-	messages := make([]map[string]any, 0, len(request.Messages)+1)
-	if strings.TrimSpace(request.SystemPrompt) != "" {
-		messages = append(messages, map[string]any{"role": "system", "content": request.SystemPrompt})
-	}
-	for _, message := range request.Messages {
-		converted, err := convertMessage(message)
-		if err != nil {
-			return nil, err
-		}
-		messages = append(messages, converted)
-	}
-	body := map[string]any{"model": m.model, "messages": messages, "stream": true, "stream_options": map[string]any{"include_usage": true}}
-	if len(request.Tools) > 0 {
-		tools := make([]map[string]any, len(request.Tools))
-		for index, definition := range request.Tools {
-			parameters := any(map[string]any{"type": "object"})
-			if len(definition.Parameters) > 0 {
-				decoder := json.NewDecoder(bytes.NewReader(definition.Parameters))
-				decoder.UseNumber()
-				if err := decoder.Decode(&parameters); err != nil {
-					return nil, fmt.Errorf("provider/openai: invalid schema for tool %s: %w", definition.Name, err)
-				}
-			}
-			tools[index] = map[string]any{"type": "function", "function": map[string]any{"name": definition.Name, "description": definition.Description, "parameters": parameters}}
-		}
-		body["tools"] = tools
-	}
-	for key, value := range request.Options {
-		switch key {
-		case "model", "messages", "tools", "stream", "stream_options":
-			continue
-		default:
-			body[key] = value
-		}
-	}
-	return body, nil
-}
-
-func convertMessage(message agentcore.Message) (map[string]any, error) {
-	result := map[string]any{"role": string(message.Role)}
-	switch message.Role {
-	case agentcore.RoleTool:
-		result["content"] = message.Text()
-		result["tool_call_id"] = message.ToolCallID
-		return result, nil
-	case agentcore.RoleAssistant:
-		result["content"] = message.Text()
-		calls := message.ToolCalls()
-		if len(calls) > 0 {
-			converted := make([]map[string]any, len(calls))
-			for index, call := range calls {
-				converted[index] = map[string]any{"id": call.ID, "type": "function", "function": map[string]any{"name": call.Name, "arguments": string(call.Arguments)}}
-			}
-			result["tool_calls"] = converted
-		}
-		return result, nil
-	case agentcore.RoleSystem, agentcore.RoleUser:
-		content, err := convertContent(message.Content)
-		if err != nil {
-			return nil, err
-		}
-		result["content"] = content
-		return result, nil
-	default:
-		return nil, fmt.Errorf("provider/openai: unsupported message role %q", message.Role)
-	}
-}
-
-func convertContent(blocks []agentcore.ContentBlock) (any, error) {
-	if len(blocks) == 0 {
-		return "", nil
-	}
-	if len(blocks) == 1 && blocks[0].Type == agentcore.ContentText {
-		return blocks[0].Text, nil
-	}
-	result := make([]map[string]any, 0, len(blocks))
-	for _, block := range blocks {
-		switch block.Type {
-		case agentcore.ContentText:
-			result = append(result, map[string]any{"type": "text", "text": block.Text})
-		case agentcore.ContentImage:
-			if block.URL == "" {
-				return nil, errors.New("provider/openai: inline image data is not supported")
-			}
-			result = append(result, map[string]any{"type": "image_url", "image_url": map[string]any{"url": block.URL}})
-		default:
-			return nil, fmt.Errorf("provider/openai: unsupported user content type %q", block.Type)
-		}
-	}
-	return result, nil
-}
-
-func chatCompletionsEndpoint(base string) (string, error) {
-	base = strings.TrimRight(strings.TrimSpace(base), "/")
-	if base == "" {
-		base = "https://api.openai.com/v1"
-	}
-	parsed, err := url.Parse(base)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return "", errors.New("provider/openai: valid HTTP(S) base URL is required")
-	}
-	if strings.HasSuffix(parsed.Path, "/chat/completions") {
-		return parsed.String(), nil
-	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/chat/completions"
-	return parsed.String(), nil
-}
-
-type stream struct {
-	body    io.ReadCloser
-	scanner *bufio.Scanner
-	done    bool
-}
-
-func newStream(body io.ReadCloser) *stream {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 64*1024), 4<<20)
-	return &stream{body: body, scanner: scanner}
-}
-
-type streamEnvelope struct {
-	Choices []struct {
-		Delta struct {
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
-			ToolCalls        []struct {
-				Index    int    `json:"index"`
-				ID       string `json:"id"`
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"delta"`
-		FinishReason *string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		PromptDetails    struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details"`
-	} `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-func (s *stream) Recv() (agentcore.ModelChunk, error) {
-	if s.done {
-		return agentcore.ModelChunk{}, io.EOF
-	}
-	for s.scanner.Scan() {
-		line := strings.TrimSpace(s.scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") || !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
-			s.done = true
-			return agentcore.ModelChunk{}, io.EOF
-		}
-		var envelope streamEnvelope
-		if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
-			return agentcore.ModelChunk{}, fmt.Errorf("provider/openai: decode stream event: %w", err)
-		}
-		if envelope.Error != nil {
-			return agentcore.ModelChunk{}, errors.New("provider/openai: " + envelope.Error.Message)
-		}
-		usage := agentcore.Usage{
-			InputTokens: envelope.Usage.PromptTokens, OutputTokens: envelope.Usage.CompletionTokens,
-			CacheReadTokens: envelope.Usage.PromptDetails.CachedTokens,
-		}
-		chunk := agentcore.ModelChunk{}
-		if usage != (agentcore.Usage{}) {
-			chunk.Usage = &usage
-		}
-		if len(envelope.Choices) > 0 {
-			choice := envelope.Choices[0]
-			chunk.TextDelta, chunk.ThinkingDelta = choice.Delta.Content, choice.Delta.ReasoningContent
-			chunk.ToolCallDeltas = make([]agentcore.ToolCallDelta, len(choice.Delta.ToolCalls))
-			for index, call := range choice.Delta.ToolCalls {
-				chunk.ToolCallDeltas[index] = agentcore.ToolCallDelta{Index: call.Index, ID: call.ID, Name: call.Function.Name, ArgumentsDelta: call.Function.Arguments}
-			}
-			if choice.FinishReason != nil {
-				chunk.StopReason = stopReason(*choice.FinishReason)
-			}
-		}
-		return chunk, nil
-	}
-	s.done = true
-	if err := s.scanner.Err(); err != nil {
-		return agentcore.ModelChunk{}, fmt.Errorf("provider/openai: read stream: %w", err)
-	}
-	return agentcore.ModelChunk{}, io.EOF
-}
-
-func (s *stream) Close() error {
-	if s == nil || s.body == nil {
-		return nil
-	}
-	s.done = true
-	err := s.body.Close()
-	s.body = nil
-	return err
-}
-
-func stopReason(reason string) agentcore.StopReason {
-	switch reason {
-	case "stop":
-		return agentcore.StopReasonStop
-	case "tool_calls", "function_call":
-		return agentcore.StopReasonToolUse
-	case "length":
-		return agentcore.StopReasonLength
-	case "content_filter":
-		return agentcore.StopReasonError
-	default:
-		return agentcore.StopReason(reason)
-	}
 }
 
 var _ agentcore.Model = (*Model)(nil)

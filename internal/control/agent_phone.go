@@ -194,7 +194,7 @@ func (r controlBoardRepository) ListIssues(ctx context.Context, actor agentapp.A
 		if !found || issueTaskSourceID != taskSourceID {
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(issue.Identifier+" "+issue.Title+" "+issue.Objective), query) {
+		if query != "" && !strings.Contains(strings.ToLower(issue.Identifier+" "+issue.Title+" "+issue.Description+" "+issue.Objective), query) {
 			continue
 		}
 		result = append(result, r.boardIssue(issue))
@@ -460,7 +460,7 @@ func (r controlBoardRepository) AddComment(ctx context.Context, actor agentapp.A
 
 func (r controlBoardRepository) boardIssue(issue Issue) agentapp.BoardIssue {
 	result := agentapp.BoardIssue{
-		ID: issue.ID, Identifier: issue.Identifier, Title: issue.Title, Objective: issue.Objective,
+		ID: issue.ID, Identifier: issue.Identifier, Title: issue.Title, Description: issue.Description, Objective: issue.Objective,
 		Status: issue.Status, WorkflowStatus: issue.Status, Priority: issue.Priority, AssigneeID: issue.AssigneeAgentID, AssigneeTaskAgentID: issue.AssigneeTaskAgentID,
 		ExecutionPhase: issue.ExecutionPhase, Blocked: hasIssueLabel(issue, issueLabelBlocked) || issue.ExecutionPhase == "blocked", UpdatedAt: issue.UpdatedAt,
 	}
