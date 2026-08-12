@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -21,6 +22,9 @@ printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 case "$1" in
   inspect)
     if [ -f "$FAKE_DOCKER_STATE" ]; then cat "$FAKE_DOCKER_STATE"; else printf 'no such container\n' >&2; exit 1; fi
+    ;;
+  ps)
+    if [ -f "$FAKE_DOCKER_STATE" ]; then printf 'aegis-task-container-test|running\n'; fi
     ;;
   version)
     printf '25.0.0\n'
@@ -59,6 +63,51 @@ esac
 	t.Setenv("FAKE_DOCKER_STATE", statePath)
 	t.Setenv("FAKE_DOCKER_VOLUME_STATE", volumeStatePath)
 	return logPath, statePath
+}
+
+func TestContainerRuntimeStatusQueryHonorsContextDeadline(t *testing.T) {
+	fakeBin := t.TempDir()
+	dockerPath := filepath.Join(fakeBin, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\nsleep 10\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	statuses := queryContainerRuntimeStatuses(ctx, []string{"aegis-task-container-test"})
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Docker status query ignored deadline: %s", elapsed)
+	}
+	if statuses["aegis-task-container-test"] != "unavailable" {
+		t.Fatalf("status=%q, want unavailable", statuses["aegis-task-container-test"])
+	}
+}
+
+func TestStateSnapshotDoesNotWaitForDocker(t *testing.T) {
+	fakeBin := t.TempDir()
+	dockerPath := filepath.Join(fakeBin, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\nsleep 10\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	store := configuredStore(t)
+	now := time.Now()
+	container := ContainerInstance{
+		ID: "container-nonblocking", Name: "aegis-task-container-nonblocking",
+		TaskID: "task-nonblocking", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.db.Create(&container).Error; err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	state := store.State()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("state snapshot waited for Docker: %s", elapsed)
+	}
+	if len(state.Containers) != 1 || state.Containers[0].RuntimeStatus != "missing" {
+		t.Fatalf("containers=%+v", state.Containers)
+	}
 }
 
 func TestManagerCreatesPrivateTaskVolumeAtPublication(t *testing.T) {

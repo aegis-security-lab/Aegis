@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -79,7 +78,7 @@ func TestConcurrentAppendHasContiguousSequence(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := store.AppendExecutionEvent(context.Background(), storage.NewExecutionEvent{ExecutionID: "exec-race", CreatedAt: time.Now(), Event: agentcore.Event{Type: agentcore.EventMessageUpdate}}); err != nil {
+			if _, err := store.AppendExecutionEvent(context.Background(), storage.NewExecutionEvent{ExecutionID: "exec-race", CreatedAt: time.Now(), Event: agentcore.Event{Type: agentcore.EventTurnStart}}); err != nil {
 				t.Errorf("append: %v", err)
 			}
 		}()
@@ -96,7 +95,38 @@ func TestConcurrentAppendHasContiguousSequence(t *testing.T) {
 	}
 }
 
-func TestStreamingToolArgumentsPersistAsDeltasUntilFinalJSON(t *testing.T) {
+func TestMessageUpdatesAreNotPersisted(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sink := storage.EventSink(store, "exec-filter", 0, nil)
+	for _, eventType := range []agentcore.EventType{
+		agentcore.EventMessageStart,
+		agentcore.EventMessageUpdate,
+		agentcore.EventMessageEnd,
+	} {
+		if err := sink(context.Background(), agentcore.Event{Type: eventType}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := store.ExecutionEvents(context.Background(), "exec-filter", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events=%d, want 2", len(events))
+	}
+	if events[0].Event.Type != agentcore.EventMessageStart || events[0].Sequence != 1 {
+		t.Fatalf("first event=%+v", events[0])
+	}
+	if events[1].Event.Type != agentcore.EventMessageEnd || events[1].Sequence != 2 {
+		t.Fatalf("second event=%+v", events[1])
+	}
+}
+
+func TestStreamingToolArgumentsPersistFinalJSONWithoutMessageUpdates(t *testing.T) {
 	store, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -128,14 +158,11 @@ func TestStreamingToolArgumentsPersistAsDeltasUntilFinalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var deltas []string
 	var finalArguments json.RawMessage
 	for _, record := range events {
 		event := record.Event
-		if event.Type == agentcore.EventMessageUpdate && event.Delta != nil {
-			for _, delta := range event.Delta.ToolCallDeltas {
-				deltas = append(deltas, delta.ArgumentsDelta)
-			}
+		if event.Type == agentcore.EventMessageUpdate {
+			t.Fatalf("message_update was persisted: %+v", event)
 		}
 		if event.Type == agentcore.EventMessageEnd && event.Message != nil {
 			calls := event.Message.ToolCalls()
@@ -145,9 +172,6 @@ func TestStreamingToolArgumentsPersistAsDeltasUntilFinalJSON(t *testing.T) {
 		}
 	}
 	const expected = `{"action":"open_app","ref":"@1"}`
-	if got := strings.Join(deltas, ""); got != expected {
-		t.Fatalf("deltas=%q", got)
-	}
 	if string(finalArguments) != expected {
 		t.Fatalf("final arguments=%s", finalArguments)
 	}

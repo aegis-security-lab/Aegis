@@ -55,3 +55,30 @@ func TestEventSinkPersistsAttemptAndTimestamp(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 }
+
+func TestEventSinkDoesNotPersistMessageUpdates(t *testing.T) {
+	store := NewMemoryEventStore()
+	sink := EventSink(store, "exec-filter", 1, nil)
+	for _, eventType := range []agentcore.EventType{
+		agentcore.EventMessageStart,
+		agentcore.EventMessageUpdate,
+		agentcore.EventMessageEnd,
+	} {
+		if err := sink(context.Background(), agentcore.Event{Type: eventType}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := store.ExecutionEvents(context.Background(), "exec-filter", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events=%d, want 2", len(events))
+	}
+	if events[0].Event.Type != agentcore.EventMessageStart || events[0].Sequence != 1 {
+		t.Fatalf("first event=%+v", events[0])
+	}
+	if events[1].Event.Type != agentcore.EventMessageEnd || events[1].Sequence != 2 {
+		t.Fatalf("second event=%+v", events[1])
+	}
+}

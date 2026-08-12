@@ -262,6 +262,37 @@ func TestNotifyCoalescesRapidBroadcasts(t *testing.T) {
 	}
 }
 
+func TestIssueDetailRevisionOnlyAdvancesForChangedIssue(t *testing.T) {
+	s := configuredStore(t)
+	first, err := s.CreateIssue(CreateIssueInput{Title: "First revision", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateIssue(CreateIssueInput{Title: "Second revision", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.addEvent("", first.ID, "runtime", "Started", "First change")
+	state := s.State()
+	if got := state.IssueDetailRevisions[first.ID]; got != 1 {
+		t.Fatalf("first issue detail revision=%d, want 1", got)
+	}
+	if got := state.IssueDetailRevisions[second.ID]; got != 0 {
+		t.Fatalf("unchanged second issue detail revision=%d, want 0", got)
+	}
+
+	s.addEvent("", first.ID, "runtime", "Continued", "Second change")
+	s.addEvent("", second.ID, "runtime", "Started", "Independent change")
+	state = s.State()
+	if got := state.IssueDetailRevisions[first.ID]; got != 2 {
+		t.Fatalf("first issue detail revision=%d, want 2", got)
+	}
+	if got := state.IssueDetailRevisions[second.ID]; got != 1 {
+		t.Fatalf("second issue detail revision=%d, want 1", got)
+	}
+}
+
 func TestSubscriberKeepsLatestStateWhenConsumerIsSlow(t *testing.T) {
 	s := configuredStore(t)
 	updates, unsubscribe := s.Subscribe()

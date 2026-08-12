@@ -272,6 +272,12 @@ func (m *Manager) UpdateBoardIssue(issueID string, input UpdateIssueInput) (Issu
 		}
 		return m.archiveBoardIssue(issueID, "通过 Board 取消了 Issue")
 	}
+	if input.Status != nil && slices.Contains([]string{"todo", "in_progress"}, strings.TrimSpace(*input.Status)) {
+		// Only an explicit Board action may cross the task cancellation barrier.
+		// Background schedulers call Store.UpdateIssue directly and therefore
+		// cannot accidentally resurrect stale work after an operator cancellation.
+		input.ReopenCancelledTask = true
+	}
 	requestedStart := input.Status != nil && strings.TrimSpace(*input.Status) == "in_progress" && before.Status != "in_progress"
 	if requestedStart {
 		assigneeID := before.AssigneeAgentID

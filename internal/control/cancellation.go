@@ -144,3 +144,75 @@ func (s *Store) belongsToCancelledTask(issue Issue) bool {
 	root, err := s.taskRoot(issue)
 	return err == nil && root.Status == "cancelled"
 }
+
+// reopenCancelledTaskAncestorsTx removes the task-level cancellation barrier
+// when an operator explicitly restarts work on an Issue. Only the cancelled
+// ancestors on the path to that Issue are reopened; cancelled sibling branches
+// remain terminal until they are explicitly restarted as well.
+func reopenCancelledTaskAncestorsTx(tx *gorm.DB, issue Issue, now time.Time, reason string) (Issue, bool, error) {
+	root, err := taskRootWithDB(tx, issue)
+	if err != nil {
+		return Issue{}, false, err
+	}
+	if root.Status != "cancelled" {
+		return root, false, nil
+	}
+
+	ancestorIDs := []string{issue.ID}
+	current := issue
+	seen := map[string]bool{issue.ID: true}
+	for current.ParentID != "" {
+		if seen[current.ParentID] {
+			return Issue{}, false, errors.New("Issue 层级存在循环")
+		}
+		seen[current.ParentID] = true
+		var parent Issue
+		if err := tx.First(&parent, "id = ?", current.ParentID).Error; err != nil {
+			return Issue{}, false, err
+		}
+		ancestorIDs = append(ancestorIDs, parent.ID)
+		current = parent
+	}
+
+	updates := map[string]any{
+		"status":                  "todo",
+		"execution_phase":         "active",
+		"checkout_execution_id":   "",
+		"current_execution_id":    "",
+		"validation_execution_id": "",
+		"recovery_execution_id":   "",
+		"recovery_phase":          "",
+		"recovery_requested_at":   nil,
+		"error":                   "",
+		"completed_at":            nil,
+		"cancelled_at":            nil,
+		"abandon_requested_at":    nil,
+		"abandoned_at":            nil,
+		"objective_abandoned":     false,
+		"abandonment_reason":      "",
+		"updated_at":              now,
+	}
+	if err := tx.Model(&Issue{}).Where("id IN ? AND status = ?", ancestorIDs, "cancelled").Updates(updates).Error; err != nil {
+		return Issue{}, false, err
+	}
+	if root.TaskSourceID != "" {
+		if err := tx.Model(&Task{}).Where("id = ?", root.TaskSourceID).Update("updated_at", now).Error; err != nil {
+			return Issue{}, false, err
+		}
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "操作员重新启动了已取消任务中的 Issue"
+	}
+	if err := tx.Create(&ExecutionEvent{
+		ID: nextID("event"), IssueID: root.ID, Type: "recovery",
+		Title: "任务已重新打开", Detail: reason, CreatedAt: now,
+	}).Error; err != nil {
+		return Issue{}, false, err
+	}
+	root.Status = "todo"
+	root.ExecutionPhase = "active"
+	root.CancelledAt = nil
+	root.UpdatedAt = now
+	return root, true, nil
+}

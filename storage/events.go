@@ -39,6 +39,12 @@ func EventSink(store EventStore, executionID string, attempt int, now func() tim
 		if store == nil {
 			return errors.New("storage: nil event store")
 		}
+		// message_update contains the full assistant message accumulated so far
+		// for every streamed delta. It is useful live but grows roughly
+		// quadratically when persisted. message_end retains the completed message.
+		if event.Type == agentcore.EventMessageUpdate {
+			return nil
+		}
 		createdAt := time.Now().UTC()
 		if now != nil {
 			createdAt = now().UTC()

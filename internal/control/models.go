@@ -1067,23 +1067,24 @@ type SessionDelta struct {
 	Watermark       time.Time           `json:"watermark"`
 }
 type StateView struct {
-	Configured        bool                `json:"configured"`
-	Config            ConfigView          `json:"config"`
-	Projects          []Project           `json:"projects"`
-	ContainerProfiles []ContainerProfile  `json:"containerProfiles"`
-	Containers        []ContainerInstance `json:"containers"`
-	Tasks             []Task              `json:"tasks"`
-	Issues            []Issue             `json:"issues"`
-	IssueRuntimes     []IssueRuntimeView  `json:"issueRuntimes"`
-	Relations         []IssueRelation     `json:"relations"`
-	Executions        []Execution         `json:"executions"`
-	Approvals         []Approval          `json:"approvals"`
-	Agents            []AgentDefinition   `json:"agents"`
-	TaskAgents        []TaskAgent         `json:"taskAgents"`
-	Skills            []SkillDefinition   `json:"skills"`
-	KnowledgeBases    []KnowledgeBase     `json:"knowledgeBases"`
-	Sessions          []SessionSummary    `json:"sessions"`
-	UpdatedAt         time.Time           `json:"updatedAt"`
+	Configured           bool                `json:"configured"`
+	Config               ConfigView          `json:"config"`
+	Projects             []Project           `json:"projects"`
+	ContainerProfiles    []ContainerProfile  `json:"containerProfiles"`
+	Containers           []ContainerInstance `json:"containers"`
+	Tasks                []Task              `json:"tasks"`
+	Issues               []Issue             `json:"issues"`
+	IssueRuntimes        []IssueRuntimeView  `json:"issueRuntimes"`
+	IssueDetailRevisions map[string]uint64   `json:"issueDetailRevisions"`
+	Relations            []IssueRelation     `json:"relations"`
+	Executions           []Execution         `json:"executions"`
+	Approvals            []Approval          `json:"approvals"`
+	Agents               []AgentDefinition   `json:"agents"`
+	TaskAgents           []TaskAgent         `json:"taskAgents"`
+	Skills               []SkillDefinition   `json:"skills"`
+	KnowledgeBases       []KnowledgeBase     `json:"knowledgeBases"`
+	Sessions             []SessionSummary    `json:"sessions"`
+	UpdatedAt            time.Time           `json:"updatedAt"`
 }
 
 const KnowledgeProviderKeywordAI = "keyword_ai"
@@ -1223,15 +1224,16 @@ type TaskWorkspace struct {
 	Entries []WorkspaceEntry `json:"entries"`
 }
 type UpdateIssueInput struct {
-	Title             *string   `json:"title"`
-	Description       *string   `json:"description"`
-	Objective         *string   `json:"objective"`
-	Priority          *string   `json:"priority"`
-	Status            *string   `json:"status"`
-	Labels            *[]string `json:"labels"`
-	AssigneeAgentID   *string   `json:"assigneeAgentId"`
-	ParentID          *string   `json:"parentId"`
-	TimeBudgetMinutes *int      `json:"timeBudgetMinutes"`
+	Title               *string   `json:"title"`
+	Description         *string   `json:"description"`
+	Objective           *string   `json:"objective"`
+	Priority            *string   `json:"priority"`
+	Status              *string   `json:"status"`
+	Labels              *[]string `json:"labels"`
+	AssigneeAgentID     *string   `json:"assigneeAgentId"`
+	ParentID            *string   `json:"parentId"`
+	TimeBudgetMinutes   *int      `json:"timeBudgetMinutes"`
+	ReopenCancelledTask bool      `json:"-"`
 }
 
 type CancelTaskInput struct {

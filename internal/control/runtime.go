@@ -565,7 +565,7 @@ func (m *Manager) appendAssistantDelta(s *PiSession, delta string) {
 		}
 	}
 	_ = m.store.db.Model(&Message{}).Where("id = ?", s.currentMessageID).Updates(map[string]any{"content": gorm.Expr("content || ?", delta), "updated_at": time.Now()}).Error
-	m.store.notify()
+	m.store.notifyIssueDetail(s.issueID)
 }
 
 func (s *PiSession) resetAssistantMessage() {
@@ -585,6 +585,7 @@ func (s *PiSession) finishAssistantMessage() {
 		"updated_at": time.Now(),
 	}).Error
 	s.currentMessageID = ""
+	s.manager.store.notifyIssueDetail(s.issueID)
 }
 
 func (s *PiSession) setResponseError(message string) {
@@ -1506,6 +1507,15 @@ func (m *Manager) ResumeIssueTreeFromExecution(executionID, token string, input 
 		}).Error; err != nil {
 			return err
 		}
+		root, rootErr := taskRootWithDB(tx, issue)
+		if rootErr != nil {
+			return rootErr
+		}
+		if root.TaskSourceID != "" {
+			if err := tx.Model(&Task{}).Where("id = ?", root.TaskSourceID).Update("updated_at", now).Error; err != nil {
+				return err
+			}
+		}
 		return tx.Create(&IssueComment{ID: nextID("comment"), IssueID: issue.ID, Type: "system", AuthorType: "system", AuthorID: "coordination", Body: "## 任务树已恢复\n\n" + reason, CreatedAt: now}).Error
 	}); err != nil {
 		return Issue{}, err
@@ -2294,7 +2304,7 @@ func (m *Manager) sendSessionPrompt(s *PiSession, message string) (Message, erro
 	if err := s.Send(map[string]any{"id": nextID("rpc"), "type": command, "message": message}); err != nil {
 		return Message{}, err
 	}
-	m.store.notify()
+	m.store.notifyIssueDetail(s.issueID)
 	return msg, nil
 }
 func (m *Manager) StopExecution(id string) error {
@@ -2699,6 +2709,11 @@ func (m *Manager) dispatchValidationDelivery(w AgentWakeup, issue Issue) {
 
 func (m *Manager) markIssueForWakeup(w *AgentWakeup, issue Issue, executionID string, now time.Time) error {
 	if err := m.store.db.Transaction(func(tx *gorm.DB) error {
+		if w.Reason == "issue_comment_resume" {
+			if _, _, err := reopenCancelledTaskAncestorsTx(tx, issue, now, "操作员通过评论重新启动了 "+issue.Identifier+"，同步解除任务取消状态"); err != nil {
+				return err
+			}
+		}
 		updated := tx.Model(&AgentWakeup{}).Where("id = ? AND status = ?", w.ID, "queued").Updates(map[string]any{
 			"status": "delivered", "execution_id": executionID, "delivered_at": now,
 			"prior_issue_status": issue.Status, "prior_execution_phase": issue.ExecutionPhase,

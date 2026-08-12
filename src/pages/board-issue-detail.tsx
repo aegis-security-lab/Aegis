@@ -148,6 +148,7 @@ export function BoardIssueDetailPage() {
   const [createOpen, setCreateOpen] = React.useState(false)
   const [childTreeOpen, setChildTreeOpen] = React.useState(false)
   const contentScrollRef = React.useRef<HTMLDivElement>(null)
+  const detailRequestRef = React.useRef(0)
   const [childForm, setChildForm] =
     React.useState<ChildIssueForm>(emptyChildIssue)
   const [editForm, setEditForm] = React.useState<IssueEditForm>({
@@ -167,19 +168,35 @@ export function BoardIssueDetailPage() {
   const stateRuntime = state?.issueRuntimes?.find(
     (candidate) => candidate.issueId === issueId
   )
+  const detailRevision = issueId
+    ? state?.issueDetailRevisions?.[issueId]
+    : undefined
   React.useEffect(() => {
+    const request = ++detailRequestRef.current
     let active = true
-    void load()
-      .then((next) => {
-        if (active && next) setDetail(next)
-      })
-      .catch((error) =>
-        toast.error(error instanceof Error ? error.message : "读取 Issue 失败")
-      )
+    const timer = window.setTimeout(
+      () => {
+        void load()
+          .then((next) => {
+            if (active && request === detailRequestRef.current && next) {
+              setDetail(next)
+            }
+          })
+          .catch((error) => {
+            if (active && request === detailRequestRef.current) {
+              toast.error(
+                error instanceof Error ? error.message : "读取 Issue 失败"
+              )
+            }
+          })
+      },
+      detail ? 150 : 0
+    )
     return () => {
       active = false
+      window.clearTimeout(timer)
     }
-  }, [load, stateIssue?.updatedAt, stateRuntime?.updatedAt])
+  }, [load, stateIssue?.updatedAt, stateRuntime?.updatedAt, detailRevision])
   if (!detail)
     return (
       <div className="flex size-full items-center justify-center">

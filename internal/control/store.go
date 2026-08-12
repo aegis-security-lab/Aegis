@@ -23,18 +23,24 @@ import (
 var sequence atomic.Uint64
 
 type Store struct {
-	mu               sync.RWMutex
-	dataDir          string
-	db               *gorm.DB
-	config           Config
-	agents           []AgentDefinition
-	skills           []SkillDefinition
-	updatedAt        time.Time
-	subscribers      map[chan StateView]struct{}
-	broadcastPending bool
-	cachedState      *StateView
-	observabilityMu  sync.RWMutex
-	observability    *SystemObservability
+	mu                   sync.RWMutex
+	issueDetailMu        sync.RWMutex
+	dataDir              string
+	db                   *gorm.DB
+	config               Config
+	agents               []AgentDefinition
+	skills               []SkillDefinition
+	updatedAt            time.Time
+	subscribers          map[chan StateView]struct{}
+	broadcastPending     bool
+	cachedState          *StateView
+	issueDetailRevisions map[string]uint64
+	observabilityMu      sync.RWMutex
+	observability        *SystemObservability
+	containerRuntimeMu   sync.Mutex
+	containerStatuses    map[string]string
+	containerStatusAt    time.Time
+	containerRefreshing  bool
 }
 
 func withSQLiteRetry(operation func() error) error {
@@ -322,9 +328,7 @@ func (s *Store) stateViewLocked() StateView {
 	s.db.Order("created_at asc").Find(&containerProfiles)
 	s.db.Order("created_at desc").Find(&containers)
 	s.db.Order("updated_at desc").Find(&tasks)
-	for index := range containers {
-		containers[index] = containerRuntimeState(containers[index])
-	}
+	containers = s.containerRuntimeStates(containers)
 	s.db.Where("hidden = ?", false).Order("updated_at desc").Find(&issues)
 	s.db.Order("created_at asc").Find(&relations)
 	s.db.Where("issue_id IN (?)", s.db.Model(&Issue{}).Select("id").Where("hidden = ?", false)).Order("started_at desc").Limit(300).Find(&executions)
@@ -347,7 +351,7 @@ func (s *Store) stateViewLocked() StateView {
 			updatedAt = execution.UpdatedAt
 		}
 	}
-	return StateView{Configured: s.config.Configured, Config: configView(s.config), Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, IssueRuntimes: s.issueRuntimeViews(issues), Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), TaskAgents: taskAgents, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: updatedAt}
+	return StateView{Configured: s.config.Configured, Config: configView(s.config), Projects: projects, ContainerProfiles: containerProfiles, Containers: containers, Tasks: tasks, Issues: issues, IssueRuntimes: s.issueRuntimeViews(issues), IssueDetailRevisions: s.issueDetailRevisionSnapshot(), Relations: relations, Executions: executions, Approvals: approvals, Agents: cloneAgents(s.agents), TaskAgents: taskAgents, Skills: cloneSkills(s.skills), KnowledgeBases: knowledgeBases, Sessions: s.sessionSummariesLocked(executions, issues), UpdatedAt: updatedAt}
 }
 func (s *Store) Subscribe() (<-chan StateView, func()) {
 	// StateView is a full snapshot, so intermediate values have no semantic
@@ -878,8 +882,19 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if err != nil {
 		return Issue{}, err
 	}
-	if input.Status != nil && *input.Status != "cancelled" && s.belongsToCancelledTask(issue) {
-		return Issue{}, errors.New("所属任务已取消，不能重新打开 Issue")
+	reopenCancelledTask := false
+	if input.Status != nil && strings.TrimSpace(*input.Status) != "cancelled" {
+		root, rootErr := s.taskRoot(issue)
+		if rootErr != nil {
+			return Issue{}, rootErr
+		}
+		if root.Status == "cancelled" {
+			target := strings.TrimSpace(*input.Status)
+			if !input.ReopenCancelledTask || (target != "todo" && target != "in_progress") {
+				return Issue{}, errors.New("所属任务已取消，不能由后台状态更新重新打开 Issue")
+			}
+			reopenCancelledTask = true
+		}
 	}
 	effectiveStatus, effectiveAssignee := issue.Status, issue.AssigneeAgentID
 	if input.Status != nil {
@@ -1013,6 +1028,11 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		updates["labels"] = issueLabelsColumn(labels)
 	}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if reopenCancelledTask {
+			if _, _, err := reopenCancelledTaskAncestorsTx(tx, issue, time.Now(), "操作员通过 Board 重新启动了 "+issue.Identifier+"，同步解除任务取消状态"); err != nil {
+				return err
+			}
+		}
 		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
 			return err
 		}
@@ -1437,7 +1457,7 @@ func (s *Store) addEvent(executionID, issueID, kind, title, detail string) {
 	}
 	observability.Default().Log(ctx, level, "control.execution_event", slog.String("event_type", kind), slog.String("title", title), slog.String("detail", truncate(detail, 4000)))
 	observability.DefaultMetrics().AddCounter("control_execution_events_total", 1, observability.Labels{"type": kind})
-	s.notify()
+	s.notifyIssueDetail(issueID)
 }
 
 func (s *Store) addToolEvent(executionID, issueID, toolName, arguments string) {
@@ -1450,8 +1470,32 @@ func (s *Store) addToolEvent(executionID, issueID, toolName, arguments string) {
 	ctx := observability.WithScope(context.Background(), observability.Scope{IssueID: issueID, ExecutionID: executionID, Component: "control.domain"})
 	observability.Default().Log(ctx, slog.LevelInfo, "control.execution_event", slog.String("event_type", "tool"), slog.String("tool_name", toolName), slog.String("detail", truncate(arguments, 4000)))
 	observability.DefaultMetrics().AddCounter("control_execution_events_total", 1, observability.Labels{"type": "tool"})
+	s.notifyIssueDetail(issueID)
+}
+
+func (s *Store) issueDetailRevisionSnapshot() map[string]uint64 {
+	s.issueDetailMu.RLock()
+	defer s.issueDetailMu.RUnlock()
+	revisions := make(map[string]uint64, len(s.issueDetailRevisions))
+	for issueID, revision := range s.issueDetailRevisions {
+		revisions[issueID] = revision
+	}
+	return revisions
+}
+
+func (s *Store) notifyIssueDetail(issueID string) {
+	issueID = strings.TrimSpace(issueID)
+	if issueID != "" {
+		s.issueDetailMu.Lock()
+		if s.issueDetailRevisions == nil {
+			s.issueDetailRevisions = make(map[string]uint64)
+		}
+		s.issueDetailRevisions[issueID]++
+		s.issueDetailMu.Unlock()
+	}
 	s.notify()
 }
+
 func (s *Store) notify() {
 	s.mu.Lock()
 	s.touchLocked()

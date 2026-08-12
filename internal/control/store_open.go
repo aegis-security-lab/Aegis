@@ -36,7 +36,7 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := ensureDefaultTaskTemplates(db, time.Now()); err != nil {
 		return nil, err
 	}
-	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), updatedAt: time.Now()}
+	s := &Store{dataDir: abs, db: db, subscribers: make(map[chan StateView]struct{}), issueDetailRevisions: make(map[string]uint64), updatedAt: time.Now()}
 	if err := s.loadConfig(); err != nil {
 		return nil, err
 	}

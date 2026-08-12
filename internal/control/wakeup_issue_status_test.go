@@ -81,6 +81,45 @@ func TestOperatorCommentResumePermanentlyReopensInactiveIssue(t *testing.T) {
 	}
 }
 
+func TestOperatorCommentResumeClearsCancelledTaskState(t *testing.T) {
+	store := configuredStore(t)
+	root, err := store.CreateIssue(CreateIssueInput{Title: "Cancelled task", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Resume from comment", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err = store.cancelTaskTree(root.TaskSourceID, "operator cancelled"); err != nil {
+		t.Fatal(err)
+	}
+	child, _ = store.GetIssue(child.ID)
+	now := time.Now()
+	wakeup := AgentWakeup{ID: nextID("wakeup"), IssueID: child.ID, AgentID: child.AssigneeAgentID, Reason: "issue_comment_resume", Status: "queued", CreatedAt: now}
+	if err = store.db.Create(&wakeup).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: store, sessions: map[string]*PiSession{}}
+	if err = manager.markIssueForWakeup(&wakeup, child, "execution-continuation", now); err != nil {
+		t.Fatal(err)
+	}
+
+	reopenedRoot, _ := store.GetIssue(root.ID)
+	reopenedChild, _ := store.GetIssue(child.ID)
+	if reopenedRoot.Status != "todo" || reopenedRoot.CancelledAt != nil {
+		t.Fatalf("comment resume did not clear root task cancellation: %+v", reopenedRoot)
+	}
+	if reopenedChild.Status != "in_progress" || reopenedChild.CancelledAt != nil || store.belongsToCancelledTask(reopenedChild) {
+		t.Fatalf("comment resume did not activate child consistently: %+v", reopenedChild)
+	}
+	manager.restoreIssueAfterWakeup(child.ID, "execution-continuation")
+	stillActive, _ := store.GetIssue(child.ID)
+	if stillActive.Status != "in_progress" {
+		t.Fatalf("comment resume was incorrectly restored to cancelled: %+v", stillActive)
+	}
+}
+
 func TestWakeupPromptRequiresVisibleReplyOnCurrentIssue(t *testing.T) {
 	store := configuredStore(t)
 	issue, err := store.CreateIssue(CreateIssueInput{Title: "Follow-up", Objective: "Answer the operator.", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})

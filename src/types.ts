@@ -853,6 +853,7 @@ export interface AppState {
   tasks: Task[]
   issues: Issue[]
   issueRuntimes: IssueRuntimeView[]
+  issueDetailRevisions: Record<string, number>
   relations: IssueRelation[]
   executions: Execution[]
   approvals: Approval[]

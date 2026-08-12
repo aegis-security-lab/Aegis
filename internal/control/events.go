@@ -51,7 +51,7 @@ func (s *Store) startToolEvent(executionID, issueID, toolCallID, toolName string
 		CreatedAt: now, UpdatedAt: now,
 	}
 	_ = s.db.Create(&event).Error
-	s.notify()
+	s.notifyIssueDetail(issueID)
 }
 
 func (s *Store) finishToolEvent(executionID, issueID, toolCallID, toolName string, output any, isError bool) {
@@ -75,5 +75,5 @@ func (s *Store) finishToolEvent(executionID, issueID, toolCallID, toolName strin
 			IsError: isError, CreatedAt: now, UpdatedAt: now,
 		}).Error
 	}
-	s.notify()
+	s.notifyIssueDetail(issueID)
 }

@@ -21,6 +21,11 @@ var ErrContainerProfileReferenced = errors.New("容器执行环境已被引用")
 
 const WorkerContainerImage = "aegis-worker:latest"
 
+const (
+	containerStatusTimeout = 2 * time.Second
+	containerStatusTTL     = 5 * time.Second
+)
+
 // TaskWorkspacePath is the only model-visible filesystem root. Every Task owns
 // one Docker volume mounted here; Issues and executions never receive a host
 // path or a private workspace root of their own.
@@ -92,7 +97,11 @@ func containerRuntimeStatus(name string) string {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "unavailable"
 	}
-	output, err := exec.Command("docker", "inspect", "--format", "{{.State.Status}}", name).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), containerStatusTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Status}}", name)
+	command.WaitDelay = 100 * time.Millisecond
+	output, err := command.CombinedOutput()
 	if err != nil {
 		if strings.Contains(strings.ToLower(string(output)), "no such") {
 			return "missing"
@@ -106,6 +115,81 @@ func containerRuntimeStatus(name string) string {
 	return status
 }
 
+// containerRuntimeStates serves the last known Docker state immediately and
+// refreshes all containers with one bounded command. State snapshots are built
+// while the Store mutex is held, so they must never wait on Docker Desktop.
+func (s *Store) containerRuntimeStates(containers []ContainerInstance) []ContainerInstance {
+	s.containerRuntimeMu.Lock()
+	statuses := make(map[string]string, len(s.containerStatuses))
+	for name, status := range s.containerStatuses {
+		statuses[name] = status
+	}
+	stale := time.Since(s.containerStatusAt) >= containerStatusTTL
+	if stale && !s.containerRefreshing && len(containers) > 0 {
+		s.containerRefreshing = true
+		names := make([]string, 0, len(containers))
+		for _, container := range containers {
+			names = append(names, container.Name)
+		}
+		go s.refreshContainerRuntimeStates(names)
+	}
+	s.containerRuntimeMu.Unlock()
+
+	for index := range containers {
+		status := statuses[containers[index].Name]
+		if status == "" {
+			status = "missing"
+		}
+		containers[index].RuntimeStatus = status
+	}
+	return containers
+}
+
+func (s *Store) refreshContainerRuntimeStates(names []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), containerStatusTimeout)
+	defer cancel()
+	statuses := queryContainerRuntimeStatuses(ctx, names)
+	s.containerRuntimeMu.Lock()
+	s.containerStatuses = statuses
+	s.containerStatusAt = time.Now()
+	s.containerRefreshing = false
+	s.containerRuntimeMu.Unlock()
+	s.notify()
+}
+
+func queryContainerRuntimeStatuses(ctx context.Context, names []string) map[string]string {
+	statuses := make(map[string]string, len(names))
+	for _, name := range names {
+		statuses[name] = "missing"
+	}
+	path, err := exec.LookPath("docker")
+	if err != nil {
+		for _, name := range names {
+			statuses[name] = "unavailable"
+		}
+		return statuses
+	}
+	command := exec.CommandContext(ctx, path, "ps", "--all", "--format", "{{.Names}}|{{.State}}")
+	command.WaitDelay = 100 * time.Millisecond
+	output, err := command.Output()
+	if err != nil {
+		for _, name := range names {
+			statuses[name] = "unavailable"
+		}
+		return statuses
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if _, tracked := statuses[parts[0]]; tracked {
+			statuses[parts[0]] = strings.ToLower(strings.TrimSpace(parts[1]))
+		}
+	}
+	return statuses
+}
+
 func containerRuntimeState(container ContainerInstance) ContainerInstance {
 	container.RuntimeStatus = containerRuntimeStatus(container.Name)
 	return container
@@ -114,10 +198,7 @@ func containerRuntimeState(container ContainerInstance) ContainerInstance {
 func (s *Store) Containers() []ContainerInstance {
 	var containers []ContainerInstance
 	s.db.Order("created_at desc").Find(&containers)
-	for index := range containers {
-		containers[index] = containerRuntimeState(containers[index])
-	}
-	return containers
+	return s.containerRuntimeStates(containers)
 }
 
 func (s *Store) GetContainer(id string) (ContainerInstance, error) {

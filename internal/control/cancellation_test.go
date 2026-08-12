@@ -151,10 +151,6 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 		t.Fatalf("wakeup not cancelled: %+v", wakeup)
 	}
 
-	todo := "todo"
-	if _, err = store.UpdateIssue(child.ID, UpdateIssueInput{Status: &todo}); err == nil {
-		t.Fatal("cancelled task child should not be reopenable")
-	}
 	if _, err = manager.CancelTask(child.ID, "invalid"); err == nil {
 		t.Fatal("child Issue must not be accepted as a task")
 	}
@@ -164,5 +160,55 @@ func TestCancelTaskStopsEntireUnfinishedTree(t *testing.T) {
 	}
 	if second.CancelledIssues != 0 || second.CancelledExecutions != 0 {
 		t.Fatalf("idempotent retry changed terminal records: %+v", second)
+	}
+
+	todo := "todo"
+	if _, err = store.UpdateIssue(child.ID, UpdateIssueInput{Status: &todo}); err == nil {
+		t.Fatal("background store update should not reopen a cancelled task")
+	}
+}
+
+func TestBoardStartReopensCancelledTaskBeforeDispatch(t *testing.T) {
+	store := configuredStore(t)
+	root, err := store.CreateIssue(CreateIssueInput{Title: "Cancelled task", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Restart explicitly", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Remain cancelled", Priority: "low", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err = manager.CancelTask(root.TaskSourceID, "pause work"); err != nil {
+		t.Fatal(err)
+	}
+
+	inProgress := "in_progress"
+	restarted, err := manager.UpdateBoardIssue(child.ID, UpdateIssueInput{Status: &inProgress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopenedRoot, _ := store.GetIssue(root.ID)
+	if restarted.Status != "todo" || reopenedRoot.Status != "todo" || store.belongsToCancelledTask(restarted) {
+		t.Fatalf("Board start did not reopen cancelled task: root=%+v child=%+v", reopenedRoot, restarted)
+	}
+	stillCancelled, _ := store.GetIssue(sibling.ID)
+	if stillCancelled.Status != "cancelled" {
+		t.Fatalf("restarting one Issue unexpectedly reopened a sibling: %+v", stillCancelled)
+	}
+	var recoveryEvents int64
+	if err = store.db.Model(&ExecutionEvent{}).Where("issue_id = ? AND type = ? AND title = ?", root.ID, "recovery", "任务已重新打开").Count(&recoveryEvents).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoveryEvents != 1 {
+		t.Fatalf("task reopen recovery events=%d, want 1", recoveryEvents)
 	}
 }
