@@ -175,7 +175,8 @@ func ensureDefaultContainerProfile(db *gorm.DB, now time.Time) error {
 	profile := ContainerProfile{
 		ID: "container-profile-default", Name: "default", Description: "Aegis 默认 Docker 隔离环境",
 		Image: WorkerContainerImage, WorkspacePath: TaskWorkspacePath,
-		NetworkMode: "bridge", Enabled: true, CreatedAt: now, UpdatedAt: now,
+		NetworkMode: "bridge", MemoryMB: defaultContainerMemory, CPUs: defaultContainerCPUs,
+		Enabled: true, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&profile).Error; err != nil {
 		return fmt.Errorf("create default container profile: %w", err)

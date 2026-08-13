@@ -9,6 +9,7 @@ import {
   MessageSquareWarning,
   Pencil,
   Plus,
+  RefreshCw,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react"
@@ -35,6 +36,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import {
   Dialog,
   DialogContent,
@@ -137,6 +146,8 @@ export function BoardIssueDetailPage() {
   const { state } = useAppState()
   const fromBoard = new URLSearchParams(location.search).get("view") === "board"
   const [detail, setDetail] = React.useState<IssueDetail | null>(null)
+  const [loadError, setLoadError] = React.useState("")
+  const [retryRevision, setRetryRevision] = React.useState(0)
   const [comment, setComment] = React.useState("")
   const [newObjectiveEnabled, setNewObjectiveEnabled] = React.useState(false)
   const [newObjective, setNewObjective] = React.useState("")
@@ -171,6 +182,7 @@ export function BoardIssueDetailPage() {
   const detailRevision = issueId
     ? state?.issueDetailRevisions?.[issueId]
     : undefined
+  const hasDetail = detail !== null
   React.useEffect(() => {
     const request = ++detailRequestRef.current
     let active = true
@@ -179,24 +191,53 @@ export function BoardIssueDetailPage() {
         void load()
           .then((next) => {
             if (active && request === detailRequestRef.current && next) {
+              setLoadError("")
               setDetail(next)
             }
           })
           .catch((error) => {
             if (active && request === detailRequestRef.current) {
-              toast.error(
+              setLoadError(
                 error instanceof Error ? error.message : "读取 Issue 失败"
               )
             }
           })
       },
-      detail ? 150 : 0
+      hasDetail ? 150 : 0
     )
     return () => {
       active = false
       window.clearTimeout(timer)
     }
-  }, [load, stateIssue?.updatedAt, stateRuntime?.updatedAt, detailRevision])
+  }, [
+    load,
+    stateIssue?.updatedAt,
+    stateRuntime?.updatedAt,
+    detailRevision,
+    retryRevision,
+    hasDetail,
+  ])
+  if (!detail && loadError)
+    return (
+      <Empty className="size-full border-0">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <MessageSquareWarning />
+          </EmptyMedia>
+          <EmptyTitle>Issue 读取失败</EmptyTitle>
+          <EmptyDescription>{loadError}。检查服务连接后重试。</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button
+            variant="outline"
+            onClick={() => setRetryRevision((current) => current + 1)}
+          >
+            <RefreshCw data-icon="inline-start" />
+            重新加载
+          </Button>
+        </EmptyContent>
+      </Empty>
+    )
   if (!detail)
     return (
       <div className="flex size-full items-center justify-center">

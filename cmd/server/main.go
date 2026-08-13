@@ -33,6 +33,7 @@ import (
 var version = "dev"
 
 func main() {
+	listenHost := flag.String("host", envOr("AEGIS_HOST", "127.0.0.1"), "HTTP 监听地址")
 	port := flag.Int("port", envInt("PORT", 8080), "HTTP 服务端口")
 	password := flag.String("password", strings.TrimSpace(os.Getenv("AEGIS_PASSWORD")), "Web 访问密码（也可使用 AEGIS_PASSWORD）")
 	dataDir := flag.String("data-dir", envOr("AEGIS_DATA_DIR", "data"), "数据目录")
@@ -44,6 +45,9 @@ func main() {
 	}
 	if *port < 1 || *port > 65535 {
 		log.Fatal("port must be between 1 and 65535")
+	}
+	if strings.TrimSpace(*listenHost) == "" {
+		log.Fatal("host cannot be empty")
 	}
 	auth, err := newAuthService(*password, 24*time.Hour)
 	if err != nil {
@@ -114,7 +118,7 @@ func main() {
 	router := buildRouterWithAuth(store, manager, envOr("AEGIS_DIST", "dist"), auth)
 	// Input attachments can be multi-gigabyte audit images. Keep the header
 	// timeout, but do not terminate a healthy streaming request after 30 seconds.
-	server := &http.Server{Addr: fmt.Sprintf(":%d", *port), Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
+	server := &http.Server{Addr: fmt.Sprintf("%s:%d", *listenHost, *port), Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	go func() {
 		systemObservability.Logger.Info(ctx, "server.listen", slog.String("address", server.Addr))
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -180,7 +184,7 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 
 func buildRouterWithAuth(store *control.Store, manager *control.Manager, dist string, auth *authService) *gin.Engine {
 	r := gin.New()
-	r.Use(observabilityMiddleware(store), gin.Recovery())
+	r.Use(securityHeadersMiddleware(), observabilityMiddleware(store), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
 	if auth != nil {
 		r.POST("/auth/login", auth.login)
@@ -1781,6 +1785,17 @@ func buildRouterWithAuth(store *control.Store, manager *control.Manager, dist st
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "frontend assets are unavailable"})
 	})
 	return r
+}
+
+func securityHeadersMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		c.Header("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		c.Next()
+	}
 }
 
 func serveFrontendFile(c *gin.Context, frontend http.FileSystem, name string) bool {

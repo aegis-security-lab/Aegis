@@ -33,6 +33,7 @@ export function InterruptToolButton({
   const supported =
     execution.status === "running" &&
     Boolean(tool) &&
+    execution.runtimeType !== "agentcore" &&
     !["validation", "concierge"].includes(execution.kind)
 
   if (!supported || !tool) return null

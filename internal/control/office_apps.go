@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"aegis/coordination"
 	"gorm.io/gorm"
 )
 
@@ -249,6 +250,19 @@ func (m *Manager) archiveBoardIssue(issueID, reason string) (archived Issue, err
 	m.mu.RUnlock()
 	for _, session := range sessions {
 		session.Close()
+	}
+	if bridge := m.Coordination(); bridge != nil {
+		for _, execution := range activeExecutions {
+			if strings.TrimSpace(execution.CoordinationExecutionID) == "" {
+				continue
+			}
+			if cancelErr := bridge.CancelExecution(context.Background(), execution.CoordinationExecutionID, reason); cancelErr != nil && !errors.Is(cancelErr, coordination.ErrExecutionNotFound) {
+				return Issue{}, cancelErr
+			}
+		}
+	}
+	for _, archivedID := range issueIDs {
+		m.abortNativeIssue(archivedID)
 	}
 	m.store.notify()
 	for _, archivedID := range issueIDs {

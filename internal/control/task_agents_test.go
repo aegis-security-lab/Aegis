@@ -119,6 +119,33 @@ func TestExistingTaskAgentAliasesAreReplacedByAgentTypeNames(t *testing.T) {
 	}
 }
 
+func TestUpdatingIssueWithSameAssigneePreservesTaskAgentIdentity(t *testing.T) {
+	store := configuredStore(t)
+	issue, err := store.CreateIssue(CreateIssueInput{
+		Title: "Keep identity", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID := issue.AssigneeTaskAgentID
+	assignee := issue.AssigneeAgentID
+	title := "Keep the same runtime identity"
+	updated, err := store.UpdateIssue(issue.ID, UpdateIssueInput{Title: &title, AssigneeAgentID: &assignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.AssigneeTaskAgentID != originalID {
+		t.Fatalf("same-assignee update replaced identity: got %q want %q", updated.AssigneeTaskAgentID, originalID)
+	}
+	var active int64
+	if err = store.db.Model(&TaskAgent{}).Where("task_id = ? AND status = ?", issue.ID, "active").Count(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("active task identities=%d, want 1", active)
+	}
+}
+
 func TestRelayInboxIsolatedByTaskAgentIdentity(t *testing.T) {
 	store := configuredStore(t)
 	root, err := store.CreateIssue(CreateIssueInput{Title: "Coordinate audit", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "red-team-lead"})

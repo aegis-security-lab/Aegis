@@ -906,7 +906,7 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 	if effectiveStatus == "in_progress" && effectiveAssignee == "" {
 		return Issue{}, errors.New("in_progress Issue 必须有负责人")
 	}
-	if input.AssigneeAgentID != nil && *input.AssigneeAgentID != issue.AssigneeAgentID {
+	if input.AssigneeAgentID != nil && strings.TrimSpace(*input.AssigneeAgentID) != issue.AssigneeAgentID {
 		var active int64
 		if err := s.db.Model(&Execution{}).Where("issue_id = ? AND status IN ?", issue.ID, activeExecutionStatuses).Count(&active).Error; err != nil {
 			return Issue{}, err
@@ -945,23 +945,10 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		}
 		updates["priority"] = value
 	}
-	if input.AssigneeAgentID != nil {
-		if issue.AssigneeTaskAgentID != "" && *input.AssigneeAgentID != issue.AssigneeAgentID {
-			_ = s.db.Model(&TaskAgent{}).Where("id = ?", issue.AssigneeTaskAgentID).Updates(map[string]any{"status": "released", "updated_at": time.Now().UTC()}).Error
-		}
-		updates["assignee_agent_id"] = *input.AssigneeAgentID
+	assigneeChanged := input.AssigneeAgentID != nil && strings.TrimSpace(*input.AssigneeAgentID) != issue.AssigneeAgentID
+	if assigneeChanged {
+		updates["assignee_agent_id"] = strings.TrimSpace(*input.AssigneeAgentID)
 		updates["assignee_task_agent_id"] = ""
-		if *input.AssigneeAgentID != "" {
-			root, rootErr := taskRootWithDB(s.db, issue)
-			if rootErr != nil {
-				return Issue{}, rootErr
-			}
-			identity, identityErr := claimTaskAgentTx(s.db, root.ID, *input.AssigneeAgentID, assigneeAgentName, "")
-			if identityErr != nil {
-				return Issue{}, identityErr
-			}
-			updates["assignee_task_agent_id"] = identity.ID
-		}
 	}
 	if input.ParentID != nil {
 		if *input.ParentID == issue.ID {
@@ -1031,6 +1018,24 @@ func (s *Store) UpdateIssue(id string, input UpdateIssueInput) (Issue, error) {
 		if reopenCancelledTask {
 			if _, _, err := reopenCancelledTaskAncestorsTx(tx, issue, time.Now(), "操作员通过 Board 重新启动了 "+issue.Identifier+"，同步解除任务取消状态"); err != nil {
 				return err
+			}
+		}
+		if assigneeChanged {
+			if issue.AssigneeTaskAgentID != "" {
+				if err := tx.Model(&TaskAgent{}).Where("id = ?", issue.AssigneeTaskAgentID).Updates(map[string]any{"status": "released", "updated_at": time.Now().UTC()}).Error; err != nil {
+					return err
+				}
+			}
+			if nextAgentID := strings.TrimSpace(*input.AssigneeAgentID); nextAgentID != "" {
+				root, rootErr := taskRootWithDB(tx, issue)
+				if rootErr != nil {
+					return rootErr
+				}
+				identity, identityErr := claimTaskAgentTx(tx, root.ID, nextAgentID, assigneeAgentName, "")
+				if identityErr != nil {
+					return identityErr
+				}
+				updates["assignee_task_agent_id"] = identity.ID
 			}
 		}
 		if err := tx.Model(&Issue{}).Where("id = ?", issue.ID).Updates(updates).Error; err != nil {
@@ -1443,8 +1448,9 @@ func (s *Store) updateExecution(id string, updates map[string]any) error {
 	}
 	updates["updated_at"] = time.Now()
 	query := s.db.Model(&Execution{}).Where("id = ?", id)
-	if status, ok := updates["status"]; ok && status != "cancelled" {
-		query = query.Where("status <> ?", "cancelled")
+	status, changesTerminalState := updates["status"]
+	if !changesTerminalState || (status != "cancelled" && status != "stopped") {
+		query = query.Where("status NOT IN ?", []string{"cancelled", "stopped"})
 	}
 	return query.Updates(updates).Error
 }

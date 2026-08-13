@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "serve": "go run ./cmd/server",
     "start": "npm run build && go run ./cmd/server",
-    "test": "go test ./cmd/... ./internal/..."
+    "test": "go test $(go list ./... | grep -v '/node_modules/')"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -30,7 +30,6 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.1",
     "remark-gfm": "^4.0.1",
-    "shadcn": "^4.13.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4",
@@ -50,6 +49,7 @@
     "prettier-plugin-tailwindcss": "^0.8.0",
     "typescript": "~6",
     "typescript-eslint": "^8",
-    "vite": "^8"
+    "vite": "^8",
+    "shadcn": "^4.13.0"
   }
 }

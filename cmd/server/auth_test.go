@@ -27,6 +27,17 @@ func TestAuthenticatedRouterProtectsEveryAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := buildRouterWithAuth(store, manager, t.TempDir(), auth)
+	headerProbe := httptest.NewRecorder()
+	router.ServeHTTP(headerProbe, httptest.NewRequest(http.MethodGet, "/", nil))
+	for name, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+	} {
+		if got := headerProbe.Header().Get(name); got != want {
+			t.Fatalf("%s=%q, want %q", name, got, want)
+		}
+	}
 
 	unauthorized := httptest.NewRecorder()
 	router.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/health", nil))
@@ -51,22 +62,12 @@ func TestAuthenticatedRouterProtectsEveryAPI(t *testing.T) {
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d: %s", login.Code, login.Body.String())
 	}
-	var session struct {
-		Token string `json:"token"`
-	}
+	var session map[string]any
 	if err := json.Unmarshal(login.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	if session.Token == "" {
-		t.Fatal("login did not return a token")
-	}
-
-	authorized := httptest.NewRecorder()
-	authorizedRequest := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	authorizedRequest.Header.Set("Authorization", "Bearer "+session.Token)
-	router.ServeHTTP(authorized, authorizedRequest)
-	if authorized.Code != http.StatusOK {
-		t.Fatalf("bearer-authenticated API status = %d", authorized.Code)
+	if _, exposed := session["token"]; exposed {
+		t.Fatal("login exposed the session token to JavaScript")
 	}
 
 	cookies := login.Result().Cookies()
@@ -79,6 +80,20 @@ func TestAuthenticatedRouterProtectsEveryAPI(t *testing.T) {
 	router.ServeHTTP(cookieAuthorized, cookieRequest)
 	if cookieAuthorized.Code != http.StatusOK {
 		t.Fatalf("cookie-authenticated API status = %d", cookieAuthorized.Code)
+	}
+	logout := httptest.NewRecorder()
+	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutRequest.AddCookie(cookies[0])
+	router.ServeHTTP(logout, logoutRequest)
+	if logout.Code != http.StatusNoContent {
+		t.Fatalf("logout status = %d", logout.Code)
+	}
+	loggedOut := httptest.NewRecorder()
+	loggedOutRequest := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	loggedOutRequest.AddCookie(cookies[0])
+	router.ServeHTTP(loggedOut, loggedOutRequest)
+	if loggedOut.Code != http.StatusUnauthorized {
+		t.Fatalf("server session survived logout: status = %d", loggedOut.Code)
 	}
 }
 

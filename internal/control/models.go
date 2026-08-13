@@ -425,52 +425,53 @@ type IssueRelation struct {
 }
 
 type Execution struct {
-	ID                   string                `json:"id" gorm:"primaryKey"`
-	IssueID              string                `json:"issueId" gorm:"index;index:idx_executions_issue_started,priority:1"`
-	AgentID              string                `json:"agentId" gorm:"index"`
-	TaskAgentID          string                `json:"taskAgentId,omitempty" gorm:"index"`
-	Kind                 string                `json:"kind"`
-	Status               string                `json:"status" gorm:"index"`
-	Provider             string                `json:"provider"`
-	Model                string                `json:"model"`
-	Pricing              ModelPricing          `json:"pricing" gorm:"serializer:json;type:text"`
-	Thinking             string                `json:"thinking"`
-	SessionID            string                `json:"sessionId" gorm:"index"`
-	PID                  int                   `json:"pid,omitempty" gorm:"column:pid"`
-	RuntimeType          string                `json:"runtimeType" gorm:"index"`
-	RuntimeID            string                `json:"runtimeId,omitempty"`
-	ContainerProfileID   string                `json:"containerProfileId,omitempty" gorm:"index"`
-	ContainerImage       string                `json:"containerImage,omitempty"`
-	CurrentTool          string                `json:"currentTool,omitempty"`
-	Checkpoint           string                `json:"checkpoint,omitempty" gorm:"type:text"`
-	CheckpointAt         *time.Time            `json:"checkpointAt,omitempty"`
-	InitialPrompt        string                `json:"initialPrompt,omitempty" gorm:"type:text"`
-	SystemPrompt         string                `json:"systemPrompt,omitempty" gorm:"type:text"`
-	ToolsSnapshot        []ToolSnapshot        `json:"toolsSnapshot" gorm:"serializer:json;type:text"`
-	CapabilitiesSnapshot []capability.Snapshot `json:"capabilitiesSnapshot,omitempty" gorm:"serializer:json;type:text"`
-	Result               string                `json:"result,omitempty"`
-	FinalResult          string                `json:"finalResult,omitempty" gorm:"type:text"`
-	FinalResultSubmitted bool                  `json:"finalResultSubmitted"`
-	Error                string                `json:"error,omitempty"`
-	Cost                 float64               `json:"cost"`
-	Tokens               int64                 `json:"tokens"`
-	InputTokens          int64                 `json:"inputTokens"`
-	OutputTokens         int64                 `json:"outputTokens"`
-	CacheReadTokens      int64                 `json:"cacheReadTokens"`
-	CacheWriteTokens     int64                 `json:"cacheWriteTokens"`
-	MessageCount         int                   `json:"messageCount"`
-	BudgetMaxTurns       int                   `json:"budgetMaxTurns"`
-	BudgetActiveMinutes  int                   `json:"budgetActiveMinutes"`
-	BudgetSummaryTurns   int                   `json:"budgetSummaryTurns"`
-	BudgetSummaryMinutes int                   `json:"budgetSummaryMinutes"`
-	BudgetPhase          string                `json:"budgetPhase,omitempty" gorm:"index"`
-	BudgetTurnsUsed      int                   `json:"budgetTurnsUsed"`
-	BudgetSummaryUsed    int                   `json:"budgetSummaryUsed"`
-	BudgetExceededReason string                `json:"budgetExceededReason,omitempty" gorm:"type:text"`
-	BudgetExceededAt     *time.Time            `json:"budgetExceededAt,omitempty"`
-	StartedAt            time.Time             `json:"startedAt" gorm:"index:idx_executions_issue_started,priority:2"`
-	UpdatedAt            time.Time             `json:"updatedAt"`
-	FinishedAt           *time.Time            `json:"finishedAt,omitempty"`
+	ID                      string                `json:"id" gorm:"primaryKey"`
+	IssueID                 string                `json:"issueId" gorm:"index;index:idx_executions_issue_started,priority:1"`
+	AgentID                 string                `json:"agentId" gorm:"index"`
+	TaskAgentID             string                `json:"taskAgentId,omitempty" gorm:"index"`
+	Kind                    string                `json:"kind"`
+	Status                  string                `json:"status" gorm:"index"`
+	Provider                string                `json:"provider"`
+	Model                   string                `json:"model"`
+	Pricing                 ModelPricing          `json:"pricing" gorm:"serializer:json;type:text"`
+	Thinking                string                `json:"thinking"`
+	SessionID               string                `json:"sessionId" gorm:"index"`
+	PID                     int                   `json:"pid,omitempty" gorm:"column:pid"`
+	RuntimeType             string                `json:"runtimeType" gorm:"index"`
+	RuntimeID               string                `json:"runtimeId,omitempty"`
+	CoordinationExecutionID string                `json:"coordinationExecutionId,omitempty" gorm:"index"`
+	ContainerProfileID      string                `json:"containerProfileId,omitempty" gorm:"index"`
+	ContainerImage          string                `json:"containerImage,omitempty"`
+	CurrentTool             string                `json:"currentTool,omitempty"`
+	Checkpoint              string                `json:"checkpoint,omitempty" gorm:"type:text"`
+	CheckpointAt            *time.Time            `json:"checkpointAt,omitempty"`
+	InitialPrompt           string                `json:"initialPrompt,omitempty" gorm:"type:text"`
+	SystemPrompt            string                `json:"systemPrompt,omitempty" gorm:"type:text"`
+	ToolsSnapshot           []ToolSnapshot        `json:"toolsSnapshot" gorm:"serializer:json;type:text"`
+	CapabilitiesSnapshot    []capability.Snapshot `json:"capabilitiesSnapshot,omitempty" gorm:"serializer:json;type:text"`
+	Result                  string                `json:"result,omitempty"`
+	FinalResult             string                `json:"finalResult,omitempty" gorm:"type:text"`
+	FinalResultSubmitted    bool                  `json:"finalResultSubmitted"`
+	Error                   string                `json:"error,omitempty"`
+	Cost                    float64               `json:"cost"`
+	Tokens                  int64                 `json:"tokens"`
+	InputTokens             int64                 `json:"inputTokens"`
+	OutputTokens            int64                 `json:"outputTokens"`
+	CacheReadTokens         int64                 `json:"cacheReadTokens"`
+	CacheWriteTokens        int64                 `json:"cacheWriteTokens"`
+	MessageCount            int                   `json:"messageCount"`
+	BudgetMaxTurns          int                   `json:"budgetMaxTurns"`
+	BudgetActiveMinutes     int                   `json:"budgetActiveMinutes"`
+	BudgetSummaryTurns      int                   `json:"budgetSummaryTurns"`
+	BudgetSummaryMinutes    int                   `json:"budgetSummaryMinutes"`
+	BudgetPhase             string                `json:"budgetPhase,omitempty" gorm:"index"`
+	BudgetTurnsUsed         int                   `json:"budgetTurnsUsed"`
+	BudgetSummaryUsed       int                   `json:"budgetSummaryUsed"`
+	BudgetExceededReason    string                `json:"budgetExceededReason,omitempty" gorm:"type:text"`
+	BudgetExceededAt        *time.Time            `json:"budgetExceededAt,omitempty"`
+	StartedAt               time.Time             `json:"startedAt" gorm:"index:idx_executions_issue_started,priority:2"`
+	UpdatedAt               time.Time             `json:"updatedAt"`
+	FinishedAt              *time.Time            `json:"finishedAt,omitempty"`
 }
 
 // TaskAgent is one task-scoped runtime identity leased from an Agent

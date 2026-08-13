@@ -32,12 +32,15 @@ run:
 	go run ./cmd/server
 
 test:
-	go test ./cmd/... ./internal/...
+	go test $$(go list ./... | grep -v '/node_modules/')
 	npm run typecheck
-	npm run lint
+	npm run lint -- --max-warnings=0
 
 build:
 	npm run build
+	@rm -rf internal/webui/dist
+	@mkdir -p internal/webui/dist
+	@cp -R dist/. internal/webui/dist/
 	@mkdir -p bin
 	go build -o bin/aegis ./cmd/server
 

@@ -378,8 +378,9 @@ export interface Execution {
   thinking: string
   sessionId: string
   pid?: number
-  runtimeType: "host" | "container"
+  runtimeType: "host" | "container" | "agentcore"
   runtimeId?: string
+  coordinationExecutionId?: string
   containerProfileId?: string
   containerImage?: string
   currentTool?: string

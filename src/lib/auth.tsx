@@ -2,15 +2,13 @@
 import * as React from "react"
 
 import {
-  accessToken,
   authorizationHeaders,
   clearAccessToken,
   onUnauthorized,
-  saveAccessToken,
 } from "@/lib/auth-session"
 
 type AuthValue = {
-  authenticated: boolean
+  authenticated: boolean | null
   login: (password: string) => Promise<void>
   logout: () => Promise<void>
 }
@@ -18,9 +16,13 @@ type AuthValue = {
 const AuthContext = React.createContext<AuthValue | null>(null)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [authenticated, setAuthenticated] = React.useState(() =>
-    Boolean(accessToken())
-  )
+  const [authenticated, setAuthenticated] = React.useState<boolean | null>(null)
+
+  React.useEffect(() => {
+    void fetch("/api/auth/session")
+      .then((response) => setAuthenticated(response.ok))
+      .catch(() => setAuthenticated(false))
+  }, [])
 
   React.useEffect(() => {
     const unauthorized = () => setAuthenticated(false)
@@ -34,13 +36,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ password }),
     })
     const body = (await response.json().catch(() => null)) as {
-      token?: string
       error?: string
     } | null
-    if (!response.ok || !body?.token) {
+    if (!response.ok) {
       throw new Error(body?.error ?? "登录失败")
     }
-    saveAccessToken(body.token)
     setAuthenticated(true)
   }, [])
 

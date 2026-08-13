@@ -79,7 +79,7 @@ go run ./cmd/agentapp
 
 Aegis 通过独立 Go module `github.com/z3r2ne/agentcore` 使用 Agent loop；本仓库只保留 `agenthost`、`capability`、`coordination`、`storage`、`skill`、`mcp`、`web`、`provider/openai` 与业务适配器。完整边界见 [`docs/architecture/agent-runtime-modules.md`](docs/architecture/agent-runtime-modules.md)。
 
-当前固定依赖 `agentcore v0.2.1`，不再使用本地 `replace`。如果仓库保持私有，新的开发机或 CI 需要配置私有 module 与 GitHub SSH：
+当前固定依赖 `agentcore v0.2.2`，不再使用本地 `replace`。如果仓库保持私有，新的开发机或 CI 需要配置私有 module 与 GitHub SSH：
 
 ```bash
 go env -w GOPRIVATE=github.com/z3r2ne/*

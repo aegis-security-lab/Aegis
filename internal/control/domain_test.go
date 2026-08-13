@@ -782,6 +782,40 @@ func TestSecurityOutcomeGradeContractOnlyAppliesToSecurityAgents(t *testing.T) {
 	}
 }
 
+func TestLegacyBlanketBuiltinPermissionsAreNarrowedWithoutTouchingCustomBoundaries(t *testing.T) {
+	s := configuredStore(t)
+	legacy := PermissionBoundary{WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: true, ApprovalMode: "none", ReworkApprovalMode: "none"}
+	for _, id := range []string{"backend-engineer", "red-team-engineer"} {
+		index, _ := agentIndex(s.agents, id)
+		s.agents[index].Permissions = legacy
+		var record agentRecord
+		if err := s.db.First(&record, "id = ?", id).Error; err != nil {
+			t.Fatal(err)
+		}
+		record.Definition = s.agents[index]
+		if err := s.db.Save(&record).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	customIndex, _ := agentIndex(s.agents, "frontend-engineer")
+	s.agents[customIndex].Permissions = PermissionBoundary{WorkspaceScope: "run_workspace", AllowShell: true, AllowWrite: true, ApprovalMode: "all", ReworkApprovalMode: "all"}
+	if err := s.repairLegacyExpandedBuiltinPermissions(); err != nil {
+		t.Fatal(err)
+	}
+	backend, _ := s.GetAgent("backend-engineer")
+	if backend.Permissions.AllowNetwork || backend.Permissions.ApprovalMode != "risky" {
+		t.Fatalf("backend permissions were not narrowed: %+v", backend.Permissions)
+	}
+	redTeam, _ := s.GetAgent("red-team-engineer")
+	if !redTeam.Permissions.AllowNetwork || redTeam.Permissions.AllowWrite || redTeam.Permissions.ApprovalMode != "all" {
+		t.Fatalf("red-team permissions were not restored: %+v", redTeam.Permissions)
+	}
+	frontend, _ := s.GetAgent("frontend-engineer")
+	if frontend.Permissions.ApprovalMode != "all" || frontend.Permissions.AllowNetwork {
+		t.Fatalf("custom permissions were overwritten: %+v", frontend.Permissions)
+	}
+}
+
 func TestVulnerabilityReportAgentUsesRequiredFormatAndReceivesReportIssues(t *testing.T) {
 	s := configuredStore(t)
 	agent, err := s.GetAgent("vulnerability-report-engineer")
@@ -793,7 +827,7 @@ func TestVulnerabilityReportAgentUsesRequiredFormatAndReceivesReportIssues(t *te
 			t.Fatalf("report system prompt missing %q", required)
 		}
 	}
-	if !agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite || agent.Permissions.ApprovalMode != "none" || agent.Permissions.ReworkApprovalMode != "none" {
+	if agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite || agent.Permissions.ApprovalMode != "risky" || agent.Permissions.ReworkApprovalMode != "all" {
 		t.Fatalf("unexpected report permissions: %+v", agent.Permissions)
 	}
 	issue, err := s.CreateIssue(CreateIssueInput{
@@ -822,7 +856,7 @@ func TestReconAgentUsesFixedWorkflowAndReceivesReconIssues(t *testing.T) {
 			t.Fatalf("recon system prompt missing %q", required)
 		}
 	}
-	if !agent.Permissions.AllowNetwork || !agent.Permissions.AllowWrite || agent.Permissions.ApprovalMode != "none" || agent.Permissions.ReworkApprovalMode != "none" {
+	if !agent.Permissions.AllowNetwork || agent.Permissions.AllowWrite || agent.Permissions.ApprovalMode != "all" || agent.Permissions.ReworkApprovalMode != "all" {
 		t.Fatalf("unexpected recon permissions: %+v", agent.Permissions)
 	}
 	issue, err := s.CreateIssue(CreateIssueInput{
@@ -855,7 +889,7 @@ func TestSecurityAgentRoutingUsesLeadForTopLevelAndWorkerForChildren(t *testing.
 	if lead.ID != "red-team-lead" {
 		t.Fatalf("top-level security task agent=%s, want red-team-lead", lead.ID)
 	}
-	if !lead.Permissions.AllowNetwork || !lead.Permissions.AllowWrite || lead.Permissions.ApprovalMode != "none" || lead.Permissions.ReworkApprovalMode != "none" {
+	if !lead.Permissions.AllowNetwork || lead.Permissions.AllowWrite || lead.Permissions.ApprovalMode != "all" || lead.Permissions.ReworkApprovalMode != "all" {
 		t.Fatalf("unexpected red-team lead permissions: %+v", lead.Permissions)
 	}
 	if slices.Contains(lead.Tools, "aegis_create_subissues") || slices.Contains(lead.Tools, "aegis_wait_for_child_issues") {

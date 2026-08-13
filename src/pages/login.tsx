@@ -3,6 +3,12 @@ import { KeyRound, LogIn } from "lucide-react"
 
 import { AegisLogo } from "@/components/aegis-logo"
 import { Button } from "@/components/ui/button"
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useAuth } from "@/lib/auth"
@@ -39,33 +45,35 @@ export function LoginPage() {
             输入服务启动时设置的访问密码
           </p>
         </div>
-        <form onSubmit={submit} className="space-y-3">
-          <div className="relative">
-            <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              autoFocus
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="访问密码"
-              autoComplete="current-password"
-              className="h-11 pl-10"
-              aria-invalid={Boolean(error) || undefined}
-            />
-          </div>
-          {error ? (
-            <p className="px-1 text-xs text-destructive" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <Button
-            className="h-11 w-full"
-            type="submit"
-            disabled={!password || busy}
-          >
-            {busy ? <Spinner /> : <LogIn />}
-            登录
-          </Button>
+        <form onSubmit={submit}>
+          <FieldGroup>
+            <Field data-invalid={Boolean(error) || undefined}>
+              <FieldLabel htmlFor="aegis-password">访问密码</FieldLabel>
+              <div className="relative">
+                <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="aegis-password"
+                  name="password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="输入访问密码…"
+                  autoComplete="current-password"
+                  className="h-11 pl-10"
+                  aria-invalid={Boolean(error) || undefined}
+                />
+              </div>
+              {error ? <FieldError>{error}</FieldError> : null}
+            </Field>
+            <Button
+              className="h-11 w-full"
+              type="submit"
+              disabled={!password || busy}
+            >
+              {busy ? <Spinner /> : <LogIn />}
+              登录
+            </Button>
+          </FieldGroup>
         </form>
       </section>
     </main>

@@ -98,6 +98,19 @@ func (m *Manager) abortNativeIssue(issueID string) {
 	}
 }
 
+func (m *Manager) abortNativeExecution(executionID string) bool {
+	if m == nil {
+		return false
+	}
+	m.nativeMu.RLock()
+	delivery := m.nativeSessions
+	m.nativeMu.RUnlock()
+	if controller, ok := delivery.(interface{ AbortExecution(string) bool }); ok {
+		return controller.AbortExecution(executionID)
+	}
+	return false
+}
+
 type PiSession struct {
 	manager                                                          *Manager
 	key, executionID, issueID, agentID, kind, wakeupID, controlToken string
@@ -2308,32 +2321,55 @@ func (m *Manager) sendSessionPrompt(s *PiSession, message string) (Message, erro
 	return msg, nil
 }
 func (m *Manager) StopExecution(id string) error {
+	var execution Execution
+	if err := m.store.db.First(&execution, "id = ?", id).Error; err != nil {
+		return errors.New("Execution 不存在")
+	}
+	if !slices.Contains(activeExecutionStatuses, execution.Status) {
+		return errors.New("Execution 当前不在运行")
+	}
+	now := time.Now()
+	stopped := m.store.db.Model(&Execution{}).Where("id = ? AND status IN ?", id, activeExecutionStatuses).Updates(map[string]any{
+		"status": "stopped", "finished_at": now, "pid": 0, "current_tool": "", "updated_at": now,
+	})
+	if stopped.Error != nil {
+		return stopped.Error
+	}
+	if stopped.RowsAffected != 1 {
+		return errors.New("Execution 当前不在运行")
+	}
+	_ = m.store.db.Where("execution_id = ? AND status = ? AND type = ?", id, "pending", "tool_call").Delete(&Approval{}).Error
+	_ = m.store.db.Model(&Issue{}).Where("checkout_execution_id = ?", id).Updates(map[string]any{"status": "todo", "execution_phase": "active", "checkout_execution_id": "", "updated_at": now}).Error
 	s := m.getSession(id)
 	if s != nil {
 		_ = s.Send(map[string]any{"type": "abort"})
 		s.Close()
 	}
-	now := time.Now()
-	if err := m.store.updateExecution(id, map[string]any{"status": "stopped", "finished_at": now, "pid": 0}); err != nil {
-		return err
+	m.abortNativeExecution(id)
+	if bridge := m.Coordination(); bridge != nil && strings.TrimSpace(execution.CoordinationExecutionID) != "" {
+		if err := bridge.CancelExecution(context.Background(), execution.CoordinationExecutionID, "操作员停止了执行"); err != nil && !errors.Is(err, coordination.ErrExecutionNotFound) {
+			m.store.addEvent(id, execution.IssueID, "error", "停止执行后的 Coordination 清理失败", err.Error())
+		}
 	}
-	_ = m.store.db.Where("execution_id = ? AND status = ? AND type = ?", id, "pending", "tool_call").Delete(&Approval{}).Error
-	_ = m.store.db.Model(&Issue{}).Where("checkout_execution_id = ?", id).Updates(map[string]any{"status": "todo", "execution_phase": "active", "checkout_execution_id": "", "updated_at": now}).Error
 	m.store.notify()
 	return nil
 }
 
 func (m *Manager) InterruptCurrentTool(id string) (ToolInterruptResult, error) {
 	s := m.getSession(id)
-	if s == nil || s.closed.Load() {
-		return ToolInterruptResult{}, errors.New("Pi Session 当前未连接")
-	}
-	if s.kind == "validation" || s.kind == "concierge" {
+	if s != nil && (s.kind == "validation" || s.kind == "concierge") {
 		return ToolInterruptResult{}, errors.New("当前 Session 不支持人工中断工具")
 	}
 	var execution Execution
 	if err := m.store.db.First(&execution, "id = ?", id).Error; err != nil {
-		return ToolInterruptResult{}, errors.New("Execution 不存在")
+		if s == nil {
+			return ToolInterruptResult{}, errors.New("Execution 不存在")
+		}
+	} else if execution.RuntimeType == "agentcore" {
+		return ToolInterruptResult{}, errors.New("AgentCore 当前仅支持停止整个执行，不支持只中断单个工具")
+	}
+	if s == nil || s.closed.Load() {
+		return ToolInterruptResult{}, errors.New("Pi Session 当前未连接")
 	}
 	if execution.Status != "running" || !s.busy.Load() {
 		return ToolInterruptResult{}, errors.New("当前没有正在执行的工具")

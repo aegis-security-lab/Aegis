@@ -15,6 +15,7 @@ import (
 )
 
 type nativeSessionEntry struct {
+	executionID string
 	agentID     string
 	taskAgentID string
 	session     *agenthost.Session
@@ -60,6 +61,30 @@ func (d *NativeSessionDelivery) AbortIssue(issueID string) {
 	}
 }
 
+// AbortExecution stops only the live native loop owned by the requested
+// domain Execution. The exact match prevents a stale stop request from
+// aborting a newer continuation that happens to reuse the same Issue.
+func (d *NativeSessionDelivery) AbortExecution(executionID string) bool {
+	if d == nil {
+		return false
+	}
+	executionID = strings.TrimSpace(executionID)
+	d.mu.RLock()
+	var session *agenthost.Session
+	for _, entry := range d.entries {
+		if entry.executionID == executionID {
+			session = entry.session
+			break
+		}
+	}
+	d.mu.RUnlock()
+	if session == nil {
+		return false
+	}
+	_ = session.Abort()
+	return true
+}
+
 // SteerLiveIssue injects a user message only when the exact in-process
 // AgentCore session is currently running. It never creates a Coordination
 // wakeup, which makes it suitable for the hidden concierge conversation.
@@ -101,7 +126,7 @@ func (d *NativeSessionDelivery) Run(ctx context.Context, host *agenthost.Host, i
 	}
 	d.mu.Lock()
 	taskAgentID, _ := spec.Values["control.taskAgentId"].(string)
-	d.entries[issueID] = nativeSessionEntry{agentID: spec.AgentID, taskAgentID: taskAgentID, session: session}
+	d.entries[issueID] = nativeSessionEntry{executionID: spec.ExecutionID, agentID: spec.AgentID, taskAgentID: taskAgentID, session: session}
 	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()

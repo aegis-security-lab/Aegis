@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+.vscode
+data
+tmp
+node_modules
+dist
+bin
+release
+internal/webui/dist
+*.log
+*.local
+.DS_Store

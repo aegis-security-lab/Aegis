@@ -97,7 +97,8 @@ func (r NativeIssueRunner) Run(ctx context.Context, scheduled agenthost.Executio
 	}
 	if err := r.Manager.store.updateExecution(prepared.execution.ID, map[string]any{
 		"status": "running", "runtime_type": "agentcore", "runtime_id": runtimeID,
-		"initial_prompt": nativeSpec.Prompt, "system_prompt": nativeSpec.SystemPrompt, "pid": 0,
+		"coordination_execution_id": scheduled.ExecutionID,
+		"initial_prompt":            nativeSpec.Prompt, "system_prompt": nativeSpec.SystemPrompt, "pid": 0,
 	}); err != nil {
 		r.reconcilePreparedExecutionFailure(prepared.issue, prepared.execution.ID, err)
 		return agenthost.Result{}, err
@@ -121,14 +122,19 @@ func (r NativeIssueRunner) Run(ctx context.Context, scheduled agenthost.Executio
 		result, runErr = r.Host.Run(ctx, nativeSpec, combinedSink)
 	}
 	budgetController.Finish()
+	var completedExecution Execution
+	if lookupErr := r.Manager.store.db.First(&completedExecution, "id = ?", prepared.execution.ID).Error; lookupErr == nil && slices.Contains([]string{"stopped", "cancelled"}, completedExecution.Status) {
+		return result, nil
+	}
 	persistErr := r.persistMessages(prepared, result.Core.NewMessages)
 	if persistErr != nil {
 		runErr = errors.Join(runErr, persistErr)
 	}
 	resultText := lastAssistantText(result.Core.State.Messages)
-	var completedExecution Execution
-	if lookupErr := r.Manager.store.db.First(&completedExecution, "id = ?", prepared.execution.ID).Error; lookupErr == nil && completedExecution.FinalResultSubmitted {
-		resultText = completedExecution.FinalResult
+	if lookupErr := r.Manager.store.db.First(&completedExecution, "id = ?", prepared.execution.ID).Error; lookupErr == nil {
+		if completedExecution.FinalResultSubmitted {
+			resultText = completedExecution.FinalResult
+		}
 	}
 	finishedAt := time.Now()
 	updates := map[string]any{
@@ -177,6 +183,10 @@ func (r NativeIssueRunner) Run(ctx context.Context, scheduled agenthost.Executio
 		return result, errors.Join(runErr, persistErr, ctx.Err())
 	}
 	if runErr != nil {
+		var currentExecution Execution
+		if lookupErr := r.Manager.store.db.First(&currentExecution, "id = ?", prepared.execution.ID).Error; lookupErr == nil && slices.Contains([]string{"stopped", "cancelled"}, currentExecution.Status) {
+			return result, nil
+		}
 		if current, lookupErr := r.Manager.store.GetIssue(prepared.issue.ID); lookupErr == nil && issueStatusTerminal(current.Status) {
 			// An operator cancellation or Task wall-clock expiry may abort the
 			// native session after the durable Issue was already finalized.

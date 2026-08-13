@@ -24,6 +24,9 @@ const WorkerContainerImage = "aegis-worker:latest"
 const (
 	containerStatusTimeout = 2 * time.Second
 	containerStatusTTL     = 5 * time.Second
+	defaultContainerMemory = 2048
+	defaultContainerCPUs   = 2
+	defaultContainerPIDs   = 512
 )
 
 // TaskWorkspacePath is the only model-visible filesystem root. Every Task owns
@@ -70,6 +73,12 @@ func (s *Store) SaveContainerProfile(id string, input SaveContainerProfileInput)
 	}
 	if input.MemoryMB < 0 || input.MemoryMB > 262144 || input.CPUs < 0 || input.CPUs > 128 {
 		return ContainerProfile{}, errors.New("容器资源限制无效")
+	}
+	if input.MemoryMB == 0 {
+		input.MemoryMB = defaultContainerMemory
+	}
+	if input.CPUs == 0 {
+		input.CPUs = defaultContainerCPUs
 	}
 	now := time.Now()
 	profile := ContainerProfile{ID: id, Name: input.Name, Description: input.Description, Image: input.Image, WorkspacePath: input.WorkspacePath, NetworkMode: input.NetworkMode, MemoryMB: input.MemoryMB, CPUs: input.CPUs, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
@@ -382,6 +391,18 @@ func (s *Store) ensureTaskVolume(container ContainerInstance) error {
 	if err != nil {
 		return fmt.Errorf("创建任务 Workspace 失败: %s", strings.TrimSpace(string(output)))
 	}
+	// Named volumes are initialized as root by Docker. Seed ownership once so
+	// the non-root worker can write the task workspace on first start.
+	permissionOutput, permissionErr := exec.Command(
+		"docker", "run", "--rm", "--user", "0:0",
+		"--cap-drop", "ALL", "--cap-add", "CHOWN",
+		"--security-opt", "no-new-privileges=true", "--network", "none",
+		"--volume", name+":"+TaskWorkspacePath,
+		WorkerContainerImage, "chown", "10001:10001", TaskWorkspacePath,
+	).CombinedOutput()
+	if permissionErr != nil {
+		return fmt.Errorf("初始化任务 Workspace 权限失败: %s", strings.TrimSpace(string(permissionOutput)))
+	}
 	return nil
 }
 
@@ -475,19 +496,26 @@ func (s *Store) StartContainer(id string) (ContainerInstance, error) {
 func (s *Store) createContainerRuntime(container ContainerInstance) error {
 	args := []string{
 		"run", "--detach", "--name", container.Name,
+		"--user", "10001:10001",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges=true",
+		"--pids-limit", strconv.Itoa(defaultContainerPIDs),
 		"--label", "aegis.managed=true",
 		"--label", "aegis.container-id=" + container.ID,
 		"--label", "aegis.profile-id=" + container.ContainerProfileID,
 		"--label", "aegis.task-id=" + container.TaskID,
 		"--workdir", container.WorkspacePath, "--network", container.NetworkMode,
-		"--add-host", "host.docker.internal:host-gateway",
 	}
-	if container.MemoryMB > 0 {
-		args = append(args, "--memory", fmt.Sprintf("%dm", container.MemoryMB))
+	memoryMB := container.MemoryMB
+	if memoryMB <= 0 {
+		memoryMB = defaultContainerMemory
 	}
-	if container.CPUs > 0 {
-		args = append(args, "--cpus", strconv.FormatFloat(container.CPUs, 'f', -1, 64))
+	cpus := container.CPUs
+	if cpus <= 0 {
+		cpus = defaultContainerCPUs
 	}
+	args = append(args, "--memory", fmt.Sprintf("%dm", memoryMB))
+	args = append(args, "--cpus", strconv.FormatFloat(cpus, 'f', -1, 64))
 	args = append(args,
 		"--volume", taskContainerVolumeName(container.ID)+":"+container.WorkspacePath,
 	)

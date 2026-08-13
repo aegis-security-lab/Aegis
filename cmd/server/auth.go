@@ -62,11 +62,17 @@ func (a *authService) login(c *gin.Context) {
 	a.mu.Unlock()
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(sessionCookieName, token, int(a.ttl.Seconds()), "/", "", c.Request.TLS != nil, true)
-	c.JSON(http.StatusOK, gin.H{"token": token, "expiresAt": expiresAt})
+	c.JSON(http.StatusOK, gin.H{"expiresAt": expiresAt})
 }
 
 func (a *authService) logout(c *gin.Context) {
-	if token := accessToken(c.Request); token != "" {
+	token := accessToken(c.Request)
+	if token == "" {
+		if cookie, err := c.Cookie(sessionCookieName); err == nil {
+			token = strings.TrimSpace(cookie)
+		}
+	}
+	if token != "" {
 		a.mu.Lock()
 		delete(a.sessions, sha256.Sum256([]byte(token)))
 		a.mu.Unlock()

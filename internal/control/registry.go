@@ -301,7 +301,7 @@ For quake, hunter, publicwww, odin, binaryedge, onyphe, driftnet, greynoise, day
 func defaultAgents(now time.Time) []AgentDefinition {
 	sharedPermissions := PermissionBoundary{
 		WorkspaceScope: "run_workspace", AllowNetwork: false, AllowShell: true,
-		AllowWrite: true, ApprovalMode: "",
+		AllowWrite: true, ApprovalMode: "risky", ReworkApprovalMode: "all",
 	}
 	agents := []AgentDefinition{
 		{
@@ -648,12 +648,14 @@ OUTPUT RULES
 		},
 	}
 	for index := range agents {
-		if agents[index].Internal || agents[index].ID == conciergeAgentID || agents[index].ID == exploreAgentID {
-			continue
+		if agents[index].Permissions.WorkspaceScope == "" {
+			agents[index].Permissions.WorkspaceScope = "run_workspace"
 		}
-		agents[index].Permissions = PermissionBoundary{
-			WorkspaceScope: "run_workspace", AllowNetwork: true, AllowShell: true, AllowWrite: true,
-			ApprovalMode: "none", ReworkApprovalMode: "none",
+		if agents[index].Permissions.ApprovalMode == "" {
+			agents[index].Permissions.ApprovalMode = "risky"
+		}
+		if agents[index].Permissions.ReworkApprovalMode == "" {
+			agents[index].Permissions.ReworkApprovalMode = "all"
 		}
 	}
 	return agents
@@ -677,12 +679,48 @@ func (s *Store) loadRegistry() error {
 	if err := s.seedRegistry(); err != nil {
 		return err
 	}
+	if err := s.repairLegacyExpandedBuiltinPermissions(); err != nil {
+		return err
+	}
 	if err := s.syncTaskAgentNames(); err != nil {
 		return fmt.Errorf("sync task Agent display names: %w", err)
 	}
 	for _, skill := range s.skills {
 		if err := s.materializeSkill(skill); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// repairLegacyExpandedBuiltinPermissions narrows only the exact blanket
+// permission shape written by the retired seed override. Any user-edited
+// permission boundary is preserved verbatim.
+func (s *Store) repairLegacyExpandedBuiltinPermissions() error {
+	defaults := defaultAgents(time.Now())
+	for index := range s.agents {
+		agent := &s.agents[index]
+		if !agent.Builtin || agent.Internal || agent.ID == conciergeAgentID || agent.ID == exploreAgentID {
+			continue
+		}
+		legacy := agent.Permissions
+		if legacy.WorkspaceScope != "run_workspace" || !legacy.AllowNetwork || !legacy.AllowShell || !legacy.AllowWrite || legacy.ApprovalMode != "none" || legacy.ReworkApprovalMode != "none" {
+			continue
+		}
+		defaultIndex, exists := agentIndex(defaults, agent.ID)
+		if !exists {
+			continue
+		}
+		agent.Permissions = defaults[defaultIndex].Permissions
+		agent.UpdatedAt = time.Now().UTC()
+		var record agentRecord
+		if err := s.db.First(&record, "id = ?", agent.ID).Error; err != nil {
+			return err
+		}
+		record.Definition = *agent
+		record.UpdatedAt = agent.UpdatedAt
+		if err := s.db.Save(&record).Error; err != nil {
+			return fmt.Errorf("repair legacy builtin permissions for %s: %w", agent.ID, err)
 		}
 	}
 	return nil

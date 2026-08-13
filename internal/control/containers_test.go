@@ -29,7 +29,11 @@ case "$1" in
   version)
     printf '25.0.0\n'
     ;;
-  run|start)
+  run)
+    if [ "$2" != "--rm" ]; then printf 'running\n' > "$FAKE_DOCKER_STATE"; fi
+    printf 'fake-container-id\n'
+    ;;
+  start)
     printf 'running\n' > "$FAKE_DOCKER_STATE"
     printf 'fake-container-id\n'
     ;;
@@ -186,6 +190,46 @@ func TestSavingContainerProfileOnlyPersistsConfiguration(t *testing.T) {
 	}
 	if data, readErr := os.ReadFile(logPath); readErr == nil && strings.TrimSpace(string(data)) != "" {
 		t.Fatalf("saving a profile called Docker:\n%s", data)
+	}
+}
+
+func TestContainerRuntimeUsesHardenedDefaults(t *testing.T) {
+	logPath, _ := installFakeDocker(t)
+	store := configuredStore(t)
+	profile, err := store.SaveContainerProfile("", SaveContainerProfileInput{Name: "hardened", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.MemoryMB != defaultContainerMemory || profile.CPUs != defaultContainerCPUs {
+		t.Fatalf("profile defaults=%+v", profile)
+	}
+	task, issue, err := store.CreateTask(CreateIssueInput{
+		Title: "hardened runtime", Priority: "middle", WorkMode: "autonomous", ContainerProfileID: profile.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ensureTaskContainer(issue); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(data)
+	for _, required := range []string{"--user 10001:10001", "--cap-drop ALL", "--security-opt no-new-privileges=true", "--pids-limit 512", "--memory 2048m", "--cpus 2"} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("container %s missing from command:\n%s", required, command)
+		}
+	}
+	if !strings.Contains(command, "--user 0:0 --cap-drop ALL --cap-add CHOWN") || !strings.Contains(command, "chown 10001:10001 /workspace") {
+		t.Fatalf("workspace ownership was not initialized safely:\n%s", command)
+	}
+	if strings.Contains(command, "host.docker.internal") {
+		t.Fatalf("container exposed host gateway:\n%s", command)
+	}
+	if task.ContainerID == "" {
+		t.Fatal("task did not retain the hardened container binding")
 	}
 }
 

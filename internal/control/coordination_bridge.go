@@ -1099,6 +1099,13 @@ func (b *CoordinationBridge) CancelCoordinationExecutions(ctx context.Context, c
 	return b.executions.CancelCoordination(ctx, coordinationID, reason)
 }
 
+func (b *CoordinationBridge) CancelExecution(ctx context.Context, executionID, reason string) error {
+	if b == nil || b.executions == nil {
+		return errors.New("control coordination: execution runtime is unavailable")
+	}
+	return b.executions.Cancel(ctx, executionID, reason)
+}
+
 func (b *CoordinationBridge) createIssue(ctx context.Context, effect coordination.Effect) error {
 	var command coordination.CreateIssueCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {

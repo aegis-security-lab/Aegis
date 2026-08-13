@@ -1,23 +1,11 @@
-const storageKey = "aegis-access-token"
 const unauthorizedEvent = "aegis:unauthorized"
 
-export function accessToken() {
-  return window.localStorage.getItem(storageKey) ?? ""
-}
-
 export function authorizationHeaders(headers?: HeadersInit) {
-  const result = new Headers(headers)
-  const token = accessToken()
-  if (token) result.set("Authorization", `Bearer ${token}`)
-  return result
-}
-
-export function saveAccessToken(token: string) {
-  window.localStorage.setItem(storageKey, token)
+  return new Headers(headers)
 }
 
 export function clearAccessToken() {
-  window.localStorage.removeItem(storageKey)
+  // Compatibility no-op: sessions are held only in the HttpOnly cookie.
 }
 
 export function reportUnauthorized() {
