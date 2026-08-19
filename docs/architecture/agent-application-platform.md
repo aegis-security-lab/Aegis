@@ -797,3 +797,24 @@ V1 使用 Go module 版本引用，不使用源码复制。开发期可临时使
 10. Prompt 不能代替权限、预算、审批或业务状态机。
 
 这十条约束比目录名称更重要。只有依赖方向和状态所有权真实成立，代码移动才算完成应用化和框架化。
+
+## 20. 首次拆分落地状态（2026-08-19）
+
+已完成：
+
+- 原仓库已把 Board 领域、协同策略、Agent/Prompt、Board/Relay Phone 和 UI 明确归入 `apps/board`；
+- 通用核心已成为独立 Go module `github.com/aegis-security-lab/agentplatform`，本地版本为 `v0.1.0`；
+- Board 已成为独立 Go module `github.com/aegis-security-lab/aegis-board`，通过 module 依赖核心，未复制核心源码；
+- Board 通过 Agent Work Gateway 发出异步请求，并消费 `requested → accepted → queued → scheduled → claimed → started → terminal` 持久化事件；
+- App Inbox 支持 pull、Ack、持久化 cursor 和服务重启续传；
+- Application Catalog 能注册应用清单及其 DataSpace、Agent、Prompt、Controller、Capability 和 Phone 模块声明；
+- 核心全量测试、Board 非 Docker 全量测试、Go vet、React typecheck 和 production build 已通过；
+- SQLite 旧表名、JSON 字段、Board HTTP API 和前端源码保持兼容。
+
+V1 的刻意边界：
+
+- Board 开发期使用 `replace github.com/aegis-security-lab/agentplatform => ../agentplatform`；发布到远端后必须删除 `replace`，由 CI 验证正式版本依赖；
+- DataSpace 当前实现声明注册、命名空间和 Execution Grant 合同。物理 SQL/KV/Document/Blob/Vector provider 与 migration runner 仍由应用或部署 adapter 提供；不能把“注册成功”理解为平台已经自动创建所有存储后端；
+- `Steer/Suspend/Resume/Cancel` 已进入公开 SDK 合同，但默认 Gateway 在未安装控制 adapter 时明确返回“不支持”，不会伪造成功事件；
+- 两个 Issue 删除测试需要 Docker daemon；无 Docker 环境下其余 Go 测试全部通过；
+- 实时音视频、电话线路和媒体渲染应作为专用 Runtime/Capability 接入，普通异步 Agent Work 负责控制流，不承载媒体数据面。
