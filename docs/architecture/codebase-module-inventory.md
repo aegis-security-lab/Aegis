@@ -14,34 +14,40 @@
 
 ## 生产代码分布
 
-生产源码合计 **67,418 LOC**。
+生产源码合计 **68,336 LOC**。
 
 | 模块 | 职责 | LOC | 占比 | 目标归属 |
 | --- | --- | ---: | ---: | --- |
-| `src` | Board Web UI、状态与交互 | 28,538 | 42.33% | Board 应用 |
-| `apps/board` | Board 领域、验收、协同、Agent/Prompt、Phone | 26,821 | 39.78% | Board 应用 |
-| `coordination` | 通用事件决策、outbox、timer、Execution queue/worker | 3,019 | 4.48% | 平台核心 |
-| `agentapp` | 通用 Phone Kernel、Session、导航、审计与 transport | 2,367 | 3.51% | 平台核心 |
-| `cmd/server` | 当前组合根、Board HTTP API、认证与静态资源 | 2,101 | 3.12% | Board host；通用启动部分后续下沉平台 |
-| `platform` | Application、DataSpace、Agent Work、Event Inbox SDK | 1,364 | 2.02% | 平台核心 |
-| `observability` | 日志、指标、trace 与持久化查询 | 862 | 1.28% | 平台核心 |
-| `agenthost` | AgentCore 物化、模型/能力解析和执行 Session | 856 | 1.27% | 平台核心 |
-| `internal/security` | 服务端安全、密钥与脱敏 | 390 | 0.58% | 平台核心 |
+| `src` | Board Web UI、状态与交互 | 28,538 | 41.76% | Board 应用 |
+| `apps/board` | Board 领域、验收、协同、Agent/Prompt、Phone | 26,821 | 39.25% | Board 应用 |
+| `coordination` | 通用事件决策、outbox、timer、Execution queue/worker | 3,019 | 4.42% | 平台核心 |
+| `agentapp` | 通用 Phone Kernel、Session、导航、审计与 transport | 2,367 | 3.46% | 平台核心 |
+| `cmd/server` | 当前组合根、Board HTTP API、认证与静态资源 | 2,101 | 3.07% | Board host；通用启动部分后续下沉平台 |
+| `platform` | Application、DataSpace、Agent Work、Event Inbox SDK | 1,364 | 2.00% | 平台核心 |
+| `observability` | 日志、指标、trace 与持久化查询 | 862 | 1.26% | 平台核心 |
+| `agenthost` | AgentCore 物化、模型/能力解析和执行 Session | 856 | 1.25% | 平台核心 |
+| `workspace` | Workspace Capability 与运行目录治理 | 413 | 0.60% | 平台核心 |
+| `internal/security` | 服务端安全、密钥与脱敏 | 390 | 0.57% | 平台核心 |
 | `storage` | 通用 Agent 事件/Session 存储适配 | 340 | 0.50% | 平台核心 |
 | `provider` | 模型 Provider 适配 | 318 | 0.47% | 平台核心 |
-| `capability` | Capability 描述、注册与权限规划 | 303 | 0.45% | 平台核心 |
+| `capability` | Capability 描述、注册与权限规划 | 303 | 0.44% | 平台核心 |
+| `web` | Web Capability | 134 | 0.20% | 平台核心 |
+| `runtimeapp` | Runtime 应用入口与 API | 121 | 0.18% | 平台核心 |
 | `mcp` | MCP 通用适配 | 88 | 0.13% | 平台核心 |
-| `cmd/agentapp` | Phone 独立进程入口 | 32 | 0.05% | 平台 host |
+| `policy` | 通用执行策略 | 85 | 0.12% | 平台核心 |
+| `skill` | Skill Capability | 84 | 0.12% | 平台核心 |
+| `secret` | Secret 引用与解析 | 81 | 0.12% | 平台核心 |
+| `cmd/agentapp` | Board Phone 独立进程入口 | 32 | 0.05% | Board host |
 | `internal/webui` | Web 静态资源嵌入 | 19 | 0.03% | Board host |
 
 按最终所有权合并后：
 
 | 所有权组 | LOC | 占比 |
 | --- | ---: | ---: |
-| Board 应用：`src` + `apps/board` + 当前 `cmd/server` + `internal/webui` | 57,479 | 85.26% |
-| 可复用平台核心 | 9,939 | 14.74% |
+| Board 应用：`src` + `apps/board` + `cmd/server` + `cmd/agentapp` + `internal/webui` | 57,511 | 84.16% |
+| 可复用平台核心 | 10,825 | 15.84% |
 
-这说明拆分在设计上可行，但不是“小范围移动目录”：当前产品的大多数代码本来就应该留在 Board 项目，真正需要稳定抽出的框架约占 15%。风险主要来自 2,101 LOC 的组合/API 入口和 Board runtime 中仍需继续收窄的执行适配，而不是 Agent loop 本身。
+这说明拆分在设计上可行，但不是“小范围移动目录”：当前产品的大多数代码本来就应该留在 Board 项目，真正需要稳定抽出的框架约占 16%。风险主要来自 2,101 LOC 的组合/API 入口和 Board runtime 中仍需继续收窄的执行适配，而不是 Agent loop 本身。
 
 ## Board 内部体量
 
