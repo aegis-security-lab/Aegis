@@ -11,13 +11,13 @@ func TestRuntimeProcessesDelayedWakeupBackIntoMode(t *testing.T) {
 	repository := NewMemoryRepository()
 	registry := NewRegistry()
 	if err := registry.Register(ModeFunc{ModeName: "wake", ModeVersion: "1", DecideFunc: func(_ context.Context, event Event, _ Binding, _ Snapshot) ([]PlannedEffect, error) {
-		if event.Type == EventWaitRequested {
-			payload, _ := json.Marshal(ScheduleWakeupCommand{Event: Event{Type: EventTimerFired, CoordinationID: event.CoordinationID, AgentID: event.AgentID}})
+		if event.Type == testEventWaitRequested {
+			payload, _ := json.Marshal(ScheduleWakeupCommand{Event: Event{Type: EventTimerFired, CoordinationID: event.CoordinationID, ActorID: event.ActorID}})
 			return []PlannedEffect{{Type: EffectScheduleWakeup, AvailableAt: time.Now().UTC(), Payload: payload}}, nil
 		}
 		if event.Type == EventTimerFired {
-			payload, _ := json.Marshal(AgentCommand{AgentID: event.AgentID, Message: "wake"})
-			return []PlannedEffect{{Type: EffectResumeAgent, Payload: payload}}, nil
+			payload, _ := json.Marshal(testDeliveryCommand{ActorID: event.ActorID, Message: "wake"})
+			return []PlannedEffect{{Type: testEffectResumeActor, Payload: payload}}, nil
 		}
 		return nil, nil
 	}}); err != nil {
@@ -29,13 +29,13 @@ func TestRuntimeProcessesDelayedWakeupBackIntoMode(t *testing.T) {
 	runtime, _ := NewRuntime(RuntimeConfig{Engine: engine, Effects: &EffectWorker{Repository: repository, Handler: router, WorkerID: "effects"}})
 	_ = router.Register(EffectScheduleWakeup, WakeupHandler{Submit: runtime.Submit})
 	resumed := make(chan struct{}, 1)
-	_ = router.Register(EffectResumeAgent, EffectHandlerFunc(func(context.Context, Effect) error { resumed <- struct{}{}; return nil }))
+	_ = router.Register(testEffectResumeActor, EffectHandlerFunc(func(context.Context, Effect) error { resumed <- struct{}{}; return nil }))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime.Poll = 10 * time.Millisecond
 	runtime.Start(ctx)
 	defer runtime.Close()
-	_, err := runtime.Submit(context.Background(), Event{ID: "wait", Type: EventWaitRequested, CoordinationID: "task", AgentID: "agent"})
+	_, err := runtime.Submit(context.Background(), Event{ID: "wait", Type: testEventWaitRequested, CoordinationID: "task", ActorID: "agent"})
 	if err != nil {
 		t.Fatal(err)
 	}

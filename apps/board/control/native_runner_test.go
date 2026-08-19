@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aegis/agenthost"
+	boardcoordination "aegis/apps/board/coordination"
 	"aegis/capability"
 	"aegis/coordination"
 	"github.com/z3r2ne/agentcore"
@@ -364,7 +365,7 @@ func TestDurableSleepStartsNewCoordinationExecutionOnWake(t *testing.T) {
 		call := calls.Add(1)
 		if call == 1 {
 			client := ManagerBoardCoordinator{Manager: manager}
-			err := client.Wait(ctx, coordination.Invocation{EventID: "durable-sleep-event", IssueID: issue.ID, ExecutionID: spec.ExecutionID, AgentID: spec.AgentID}, coordination.WaitRequest{WakeAfterSeconds: 1, Message: "durable timer wake"})
+			err := client.Wait(ctx, boardcoordination.Invocation{EventID: "durable-sleep-event", IssueID: issue.ID, ExecutionID: spec.ExecutionID, AgentID: spec.AgentID}, boardcoordination.WaitRequest{WakeAfterSeconds: 1, Message: "durable timer wake"})
 			if err != nil {
 				return agenthost.Result{}, err
 			}

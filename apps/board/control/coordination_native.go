@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"aegis/agenthost"
+	boardcoordination "aegis/apps/board/coordination"
 	"aegis/coordination"
 	"github.com/z3r2ne/agentcore"
 )
@@ -50,21 +51,21 @@ type NativeCoordinationRuntime struct {
 // Coordination control plane. It is not an Agent tool surface.
 type ManagerBoardCoordinator struct{ Manager *Manager }
 
-func (c ManagerBoardCoordinator) Delegate(ctx context.Context, invocation coordination.Invocation, request coordination.DelegationRequest) error {
+func (c ManagerBoardCoordinator) Delegate(ctx context.Context, invocation boardcoordination.Invocation, request boardcoordination.DelegationRequest) error {
 	if c.Manager == nil || c.Manager.Coordination() == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
 	return c.Manager.Coordination().SubmitDelegation(ctx, invocation.EventID, invocation.IssueID, invocation.ExecutionID, invocation.AgentID, request)
 }
 
-func (c ManagerBoardCoordinator) Continue(ctx context.Context, invocation coordination.Invocation, request coordination.ContinueRequest) error {
+func (c ManagerBoardCoordinator) Continue(ctx context.Context, invocation boardcoordination.Invocation, request boardcoordination.ContinueRequest) error {
 	if c.Manager == nil || c.Manager.Coordination() == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
 	return c.Manager.Coordination().ContinueTerminalChildIssue(ctx, invocation, request)
 }
 
-func (c ManagerBoardCoordinator) Wait(ctx context.Context, invocation coordination.Invocation, request coordination.WaitRequest) error {
+func (c ManagerBoardCoordinator) Wait(ctx context.Context, invocation boardcoordination.Invocation, request boardcoordination.WaitRequest) error {
 	if c.Manager == nil || c.Manager.Coordination() == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
@@ -84,7 +85,7 @@ func (c ManagerBoardCoordinator) Wait(ctx context.Context, invocation coordinati
 	return nil
 }
 
-func (r *NativeCoordinationRuntime) StartCoordinationSubagent(ctx context.Context, command coordination.StartSubagentCommand) error {
+func (r *NativeCoordinationRuntime) StartCoordinationSubagent(ctx context.Context, command boardcoordination.StartSubagentCommand) error {
 	if r == nil || r.Manager == nil || r.Manager.store == nil || r.Host == nil || r.Bridge == nil {
 		return errors.New("control coordination: native subagent runtime is incomplete")
 	}
@@ -161,13 +162,13 @@ func (r *NativeCoordinationRuntime) Run(ctx context.Context, spec agenthost.Exec
 	}
 	result, runErr := r.Host.Run(ctx, spec, sink)
 	correlationID := stringSpecValue(spec, coordinationCorrelationValue)
-	command := coordination.StartSubagentCommand{
+	command := boardcoordination.StartSubagentCommand{
 		CoordinationID: stringSpecValue(spec, "coordination.coordinationId"),
 		ParentIssueID:  stringSpecValue(spec, "coordination.parentIssueId"), ParentExecutionID: stringSpecValue(spec, "coordination.parentExecutionId"),
 		ParentAgentID: stringSpecValue(spec, "coordination.parentAgentId"), CorrelationID: correlationID,
 		ParentBehavior: stringSpecValue(spec, "coordination.parentBehavior"), ResultDelivery: stringSpecValue(spec, "coordination.resultDelivery"),
 	}
-	completed := coordination.Completion{Result: lastAssistantText(result.Core.State.Messages), Success: runErr == nil, ChildID: spec.ExecutionID, ParentBehavior: command.ParentBehavior, ResultDelivery: command.ResultDelivery}
+	completed := boardcoordination.Completion{Result: lastAssistantText(result.Core.State.Messages), Success: runErr == nil, ChildID: spec.ExecutionID, ParentBehavior: command.ParentBehavior, ResultDelivery: command.ResultDelivery}
 	if runErr != nil {
 		completed.Error = runErr.Error()
 	}

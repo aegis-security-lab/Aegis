@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"aegis/agenthost"
+	boardcoordination "aegis/apps/board/coordination"
 	"aegis/capability"
 	"aegis/coordination"
+	platformwork "aegis/platform/work"
+	worksqlite "aegis/platform/work/sqlitestore"
 	"github.com/z3r2ne/agentcore"
 )
 
@@ -21,6 +24,82 @@ func TestIssueExecutionPriorityUsesBoardOrder(t *testing.T) {
 	}
 	if issueExecutionPriority("high") >= coordination.ExecutionPriorityWakeup {
 		t.Fatal("ordinary Issue priority must not preempt durable wakeup recovery")
+	}
+}
+
+func TestBoardSchedulesIssueThroughApplicationWorkGateway(t *testing.T) {
+	store, manager := bridgeTestManager(t)
+	bridge, err := newTestCoordinationBridge(manager, "board-work-gateway", "board_autonomy", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetCoordination(bridge)
+	t.Cleanup(func() { bridge.Close(); manager.SetCoordination(nil) })
+	issue, err := store.CreateIssue(CreateIssueInput{Title: "Application work", Objective: "prove lifecycle", Priority: "middle", WorkMode: "autonomous", AssigneeAgentID: "backend-engineer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = bridge.EnqueueIssueExecution(context.Background(), issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = bridge.RegisterAgentWorkSubscription(context.Background(), platformwork.Subscription{ID: "board-test-" + issue.ID, Filter: platformwork.EventFilter{AppID: "aegis.board", ScopeID: issue.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := bridge.PullAgentWorkEvents(context.Background(), "board-test-"+issue.ID, 20)
+	if err != nil || len(delivery.Events) != 4 {
+		t.Fatalf("Board inbox delivery=%+v err=%v", delivery, err)
+	}
+	if err = bridge.AckAgentWorkEvents(context.Background(), delivery.SubscriptionID, delivery.Next); err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, err := bridge.PullAgentWorkEvents(context.Background(), delivery.SubscriptionID, 20)
+	if err != nil || len(acknowledged.Events) != 0 {
+		t.Fatalf("acknowledged delivery=%+v err=%v", acknowledged, err)
+	}
+	events, err := worksqlite.New(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, cursor, err := events.Replay(context.Background(), platformwork.EventFilter{AppID: "aegis.board", ScopeID: issue.ID, CorrelationID: issue.ID}, platformwork.Cursor{}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []platformwork.EventType{platformwork.EventRequested, platformwork.EventAccepted, platformwork.EventQueued, platformwork.EventScheduled}
+	if len(got) != len(want) || cursor.Sequence != int64(len(want)) {
+		t.Fatalf("events=%+v cursor=%+v", got, cursor)
+	}
+	for index, eventType := range want {
+		if got[index].Type != eventType || got[index].ExecutionID == "" && index >= 2 {
+			t.Fatalf("event %d=%+v want type=%s", index, got[index], eventType)
+		}
+	}
+	if err = bridge.EnqueueIssueExecution(context.Background(), issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := events.Replay(context.Background(), platformwork.EventFilter{AppID: "aegis.board", ScopeID: issue.ID}, platformwork.Cursor{}, 20)
+	if err != nil || len(again) != len(want) {
+		t.Fatalf("idempotent events=%+v err=%v", again, err)
+	}
+	outcome, claimed, err := bridge.runtime.ExecutionWorkers[0].RunNext(context.Background())
+	if err != nil || !claimed || outcome.Status != coordination.ExecutionSucceeded {
+		t.Fatalf("execution outcome=%+v claimed=%v err=%v", outcome, claimed, err)
+	}
+	completed, _, err := events.Replay(context.Background(), platformwork.EventFilter{AppID: "aegis.board", ScopeID: issue.ID, CorrelationID: issue.ID}, platformwork.Cursor{}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, platformwork.EventClaimed, platformwork.EventStarted, platformwork.EventCompleted)
+	if len(completed) != len(want) {
+		t.Fatalf("completed events=%+v", completed)
+	}
+	for index, eventType := range want {
+		if completed[index].Type != eventType {
+			t.Fatalf("event %d=%+v want type=%s", index, completed[index], eventType)
+		}
+	}
+	view, err := bridge.works.Get(context.Background(), completed[0].WorkID)
+	if err != nil || view.Status != platformwork.StatusCompleted {
+		t.Fatalf("work view=%+v err=%v", view, err)
 	}
 }
 
@@ -75,11 +154,11 @@ func TestFailedChildImmediatelyWakesWaitingParentThroughCoordination(t *testing.
 
 type coordinationDeliveryRecorder struct {
 	mu       sync.Mutex
-	commands []coordination.AgentCommand
+	commands []boardcoordination.AgentCommand
 	notify   chan struct{}
 }
 
-func (r *coordinationDeliveryRecorder) DeliverCoordinationMessage(_ context.Context, command coordination.AgentCommand) error {
+func (r *coordinationDeliveryRecorder) DeliverCoordinationMessage(_ context.Context, command boardcoordination.AgentCommand) error {
 	r.mu.Lock()
 	r.commands = append(r.commands, command)
 	r.mu.Unlock()
@@ -91,7 +170,7 @@ func (r *coordinationDeliveryRecorder) DeliverCoordinationMessage(_ context.Cont
 }
 
 type coordinationSubagentRecorder struct {
-	commands chan coordination.StartSubagentCommand
+	commands chan boardcoordination.StartSubagentCommand
 }
 
 type coordinationFixedHost struct{}
@@ -111,7 +190,7 @@ func newTestCoordinationBridge(manager *Manager, workerID, mode string, delivery
 	})
 }
 
-func (r coordinationSubagentRecorder) StartCoordinationSubagent(_ context.Context, command coordination.StartSubagentCommand) error {
+func (r coordinationSubagentRecorder) StartCoordinationSubagent(_ context.Context, command boardcoordination.StartSubagentCommand) error {
 	r.commands <- command
 	return nil
 }
@@ -213,7 +292,7 @@ func TestPublicDispatchReservesIssueAndDeduplicatesBeforeDecisionWorker(t *testi
 		t.Fatalf("dispatch ownership was not reserved: %+v", current)
 	}
 	var count int64
-	if err = store.db.Table("coordination_events").Where("coordination_id = ? AND payload LIKE ? AND payload LIKE ?", issue.ID, "%\"type\":\"issue_assigned\"%", "%\"issueId\":\""+issue.ID+"\"%").Count(&count).Error; err != nil {
+	if err = store.db.Table("coordination_events").Where("coordination_id = ? AND payload LIKE ? AND payload LIKE ?", issue.ID, "%\"type\":\"issue_assigned\"%", "%\"subjectId\":\""+issue.ID+"\"%").Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -233,7 +312,7 @@ func TestResumeEnqueueRecoversInterruptedDurableEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := coordination.AgentCommand{CommandID: "wake-command", IssueID: issue.ID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID, Message: "continue"}
+	command := boardcoordination.AgentCommand{CommandID: "wake-command", IssueID: issue.ID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID, Message: "continue"}
 	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{
 		"status": "in_progress", "execution_phase": "resuming", "sleep_token": command.CommandID, "checkout_execution_id": "",
 	}).Error; err != nil {
@@ -266,11 +345,11 @@ func TestQueuedParentResumeMergesLaterUrgentChildOutcome(t *testing.T) {
 	if err = store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"status": "in_progress", "execution_phase": "sleeping", "checkout_execution_id": ""}).Error; err != nil {
 		t.Fatal(err)
 	}
-	first := coordination.AgentCommand{CommandID: "heartbeat-wake", IssueID: issue.ID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID, Message: "periodic check"}
+	first := boardcoordination.AgentCommand{CommandID: "heartbeat-wake", IssueID: issue.ID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID, Message: "periodic check"}
 	if err = bridge.EnqueueIssueResumeExecution(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	second := coordination.AgentCommand{CommandID: "budget-child-wake", IssueID: issue.ID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID, Message: "child budget exceeded; choose a recovery"}
+	second := boardcoordination.AgentCommand{CommandID: "budget-child-wake", IssueID: issue.ID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID, Message: "child budget exceeded; choose a recovery"}
 	if err = bridge.EnqueueIssueResumeExecution(context.Background(), second); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +449,7 @@ func TestBoardDelegationPersistsCapabilityPlanOnChildIssue(t *testing.T) {
 	if _, err = bridge.BindIssue(context.Background(), parent.ID, "board_autonomy", "1", json.RawMessage(`{"capabilityPolicy":{"allowed":[{"kind":"phone","name":"default"},{"kind":"tool","name":"workspace"},{"kind":"tool","name":"delivery"},{"kind":"tool","name":"coordination"}]}}`)); err != nil {
 		t.Fatal(err)
 	}
-	request := coordination.DelegationRequest{Children: []coordination.ChildWork{{
+	request := boardcoordination.DelegationRequest{Children: []boardcoordination.ChildWork{{
 		AgentID: "backend-engineer", Prompt: "inspect with Board only", CapabilitySelection: coordination.CapabilityReplace,
 		Capabilities: []capability.Ref{{Kind: capability.KindPhone, Name: "default", Config: map[string]any{"installedApps": []any{"aegis.board"}}}},
 	}}}
@@ -407,7 +486,7 @@ func TestDelegationRejectsUnapprovedPluginBeforeOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = bridge.SubmitDelegation(context.Background(), "unapproved-plugin", parent.ID, "parent-execution", "frontend-engineer", coordination.DelegationRequest{Children: []coordination.ChildWork{{
+	err = bridge.SubmitDelegation(context.Background(), "unapproved-plugin", parent.ID, "parent-execution", "frontend-engineer", boardcoordination.DelegationRequest{Children: []boardcoordination.ChildWork{{
 		AgentID: "backend-engineer", Prompt: "use an unapproved connector", CapabilitySelection: coordination.CapabilityMerge,
 		Capabilities: []capability.Ref{{Kind: capability.KindMCP, Name: "github"}},
 	}}})
@@ -506,8 +585,8 @@ func TestCoordinationCanProactivelyInvokeAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := bridge.InvokeAgent(context.Background(), coordination.AgentInvocation{
-		IssueID: issue.ID, ParentAgentID: "operator", Child: coordination.ChildWork{AgentID: "backend-engineer", Prompt: "Start without waiting for a parent Agent", CapabilitySelection: coordination.CapabilityReplace},
+	receipt, err := bridge.InvokeAgent(context.Background(), boardcoordination.AgentInvocation{
+		IssueID: issue.ID, ParentAgentID: "operator", Child: boardcoordination.ChildWork{AgentID: "backend-engineer", Prompt: "Start without waiting for a parent Agent", CapabilitySelection: coordination.CapabilityReplace},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -548,7 +627,7 @@ func TestBoardAutonomySleepWakesAgentAfterDurableDelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := bridge.SubmitWait(context.Background(), "wait-1", issue.ID, "execution-1", "backend-engineer", coordination.WaitRequest{WakeAfterSeconds: 1, Message: "scheduled check"}); err != nil {
+	if err := bridge.SubmitWait(context.Background(), "wait-1", issue.ID, "execution-1", "backend-engineer", boardcoordination.WaitRequest{WakeAfterSeconds: 1, Message: "scheduled check"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.db.Model(&Issue{}).Where("id = ?", issue.ID).Updates(map[string]any{"execution_phase": "sleeping", "sleep_token": "wait-1"}).Error; err != nil {
@@ -557,7 +636,7 @@ func TestBoardAutonomySleepWakesAgentAfterDurableDelay(t *testing.T) {
 	select {
 	case <-delivery.notify:
 		delivery.mu.Lock()
-		commands := append([]coordination.AgentCommand(nil), delivery.commands...)
+		commands := append([]boardcoordination.AgentCommand(nil), delivery.commands...)
 		delivery.mu.Unlock()
 		if len(commands) == 0 || commands[len(commands)-1].Message != "scheduled check" {
 			t.Fatalf("commands=%+v", commands)

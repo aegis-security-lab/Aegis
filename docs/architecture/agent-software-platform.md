@@ -1,22 +1,25 @@
-# Agent 软件平台实现设计
+# Agent Phone 与 AI UI 子协议
 
-> 状态：Draft
-> 适用范围：Aegis Board、Aegis Relay，以及后续所有供人类和 Agent 共同使用的软件
-> 核心目标：同一份业务能力同时提供人类可视 Web 前端和 AI 可操作文本前端，并可安装到每个 Agent 的“内部手机”中。
+> 状态：Accepted / 子规范
+> 适用范围：Agent Phone、双前端、页面、REF、Action、Shortcut 与 Phone 审计
+> 上位规范：[`agent-application-platform.md`](agent-application-platform.md)
+> 核心目标：同一份应用能力同时提供人类可视 Web 前端和 AI 可操作文本前端，并可安装到 Agent Phone 中。
+
+本文不再定义应用的数据所有权、Agent 调度或仓库边界。应用通过上位规范中的 Agent Work SDK 异步申请 Agent，并通过 App Inbox 消费生命周期事件。Board 是普通应用；Task、Issue、验收、返工、Relay 和 `board_autonomy` 都属于 Board。本文后续保留的 Board/Relay 分节用于描述 Phone 页面和迁移基线，其中 Relay 在 V1 是 Board 的内部子模块，不是平台强制安装的软件。
 
 ## 1. 背景与目标
 
-当前 Aegis 已经包含两类重要协作能力：
+当前 Aegis Board 已经包含两类重要协作能力：
 
 - **Board**：任务、Issue、依赖、执行、验收和状态流转；
 - **Relay**：评论、mention、广播、Agent 间异步消息和唤醒。
 
-后续不再把它们仅视为 Aegis 后台中的两个功能模块，而是将其定义为两个标准的 **Agent 软件（Agent App）**。一个 Agent 软件可以独立部署，通过 HTTP 协议与客户端通信，并且必须提供两套面向不同使用者的前端：
+目标架构把完整的 Aegis Board 定义为一个标准 **Agent Application**，Board 和 Relay 是该应用内部的两个 Phone 模块。一个应用可以与平台同进程部署，也可以通过稳定协议独立部署，并可提供两套面向不同使用者的前端：
 
 1. **Web 前端**：供人类查看和操作；
 2. **AI 文本前端**：供 Agent 读取当前页面、发现可操作对象并执行点击、输入、返回等动作。
 
-每个 Agent 拥有一台逻辑上的 **内部手机（Agent Phone）**。手机中可以安装多个 Agent 软件，内置 Board 和 Relay。Agent 可以从 Home 打开软件、浏览页面、执行操作、返回上一页或回到 Home。
+每个 Agent 拥有一台逻辑上的 **内部手机（Agent Phone）**。手机中可以安装多个应用；安装 Board 后可进入 Board 与 Relay 两个页面模块。Agent 可以从 Home 打开软件、浏览页面、执行操作、返回上一页或回到 Home。
 
 本设计希望解决以下问题：
 
@@ -43,12 +46,12 @@ Agent 软件是一个通过 HTTP 暴露业务能力的独立应用。它可以�
 - 身份认证、权限控制和审计日志；
 - 可选的事件订阅接口。
 
-首批内置软件：
+Board 应用的 Phone 模块：
 
-| appId | 名称 | 主要用途 |
+| phoneModuleId | 名称 | 主要用途 |
 | --- | --- | --- |
 | `aegis.board` | Board | 查看任务/Issues、详情、依赖、执行进度、验收与状态 |
-| `aegis.relay` | Relay | 私信、Issue 线程、群组/任务广播、mention 与消息收件箱 |
+| `aegis.board.relay` | Relay | Board 内的私信、Issue 线程、任务广播、mention 与消息收件箱 |
 
 ### 2.2 双前端
 
@@ -101,7 +104,7 @@ Agent Phone 是 Agent 访问软件的统一客户端和导航容器，不是移�
 - 将 Agent 动作转发给软件服务端；
 - 记录完整的查看与操作审计。
 
-Phone 是客户端，Board/Relay 是服务端软件。不同 Agent 可以拥有不同的软件安装列表和权限。
+Phone 是客户端，Board 是服务端应用，Relay 是 Board 的协作子模块。不同 Agent 可以拥有不同的应用安装列表和权限。
 
 ## 3. 总体架构
 
@@ -130,8 +133,8 @@ Phone 是客户端，Board/Relay 是服务端软件。不同 Agent 可以拥有�
 
 部署方式允许两种形态：
 
-- **独立部署**：Board、Relay 各自运行独立 HTTP 服务；
-- **模块化单体**：早期仍运行在 Aegis Server 内，但使用独立路由、manifest 和应用边界，后续可拆分。
+- **独立部署**：完整 Board Application 运行独立 HTTP 服务，内部同时提供 Board 与 Relay Phone 模块；
+- **模块化单体**：早期仍运行在平台 Host 内，但使用独立路由、manifest、DataSpace 和应用边界，后续可拆分。
 
 第一阶段建议使用模块化单体，先稳定协议，再根据扩展和隔离需要拆成独立服务。
 
@@ -428,11 +431,11 @@ Issue 详情页必须优先展示：目标、状态、负责人、阻塞原因�
 - 查看附件和证据清单；
 - 取消任务、批准等高风险动作的确认流程。
 
-## 7. Relay Agent App
+## 7. Board Relay Phone 模块
 
 ### 7.1 定位
 
-Relay 是 Agent 间通信服务，不负责改变 Issue 的业务状态。它传递消息、引用和通知；Board 仍是任务事实源。Relay 消息可以引用 Board 对象，点击引用通过 Phone 深链接打开 Board。
+Relay 是 Board 应用内部的 Agent 通信模块，不负责改变 Issue 的业务状态。它传递消息、引用和通知；Board domain 仍是任务事实源。Relay 消息可以引用 Board 对象，点击引用通过 Phone 深链接打开 Board。若未来 Relay 需要独立服务多个应用，必须按上位规范注册为独立 Application，并通过跨应用事件和权限合同通信。
 
 ### 7.2 通信模型
 
@@ -640,7 +643,7 @@ BoardCommandService.AddComment(actor, command)
 
 验收：Agent 不调用 Board 私有数据库或旧专用工具，也能完成“发现 Issue → 查看详情 → 评论 → 提交结果”的闭环。
 
-### Phase 2：Relay App
+### Phase 2：Board Relay 模块
 
 - 将现有 Comment、Broadcast、Mention、Wakeup 暴露为 Relay 页面和动作；
 - 实现 Inbox、Direct Thread、Issue Thread、Task Channel；
@@ -660,7 +663,7 @@ BoardCommandService.AddComment(actor, command)
 
 验收：不同 Agent 拥有不同软件和权限；服务重启或 Execution 恢复后，Phone 能安全恢复通知与合理的导航状态。
 
-### Phase 4：开放第三方 Agent App
+### Phase 4：开放第三方 Agent Application
 
 - 发布 App Contract SDK 和一致性测试套件；
 - 支持远程软件注册和受控网络访问；
@@ -712,7 +715,7 @@ BoardCommandService.AddComment(actor, command)
 3. **动作成功后直接返回新页面。** 减少一次网络与模型工具调用，并保证 Agent 立刻获得新状态。
 4. **Phone 只提供少量通用工具。** 新软件可以通过协议安装，不需要每安装一个软件就重新扩展模型工具定义。
 5. **Web 与 AI 前端共享应用服务层。** 双前端只是两种表现方式，不能产生两套事实和权限逻辑。
-6. **Board 是任务事实源，Relay 是通信通道。** Relay 可以引用和通知，但不能隐式修改 Board 状态。
+6. **Board 应用是任务与协同事实源，Relay 是其内部通信模块。** Relay 可以引用和通知，但不能隐式修改 Board 状态。
 7. **优先模块化单体，协议稳定后再拆服务。** 先验证交互模型，避免早期把精力消耗在分布式部署上。
 
 ## 16. 暂不纳入 V1
@@ -727,15 +730,15 @@ BoardCommandService.AddComment(actor, command)
 
 ## 17. 最小可行验收清单
 
-- [ ] Board 和 Relay 都有独立 `appId` 与 manifest；
-- [ ] 两个软件都通过 HTTP 提供 Web 与 AI 两套前端；
+- [ ] Board 有独立 `appId` 与 manifest，Relay 作为 Board Phone 模块注册；
+- [ ] Board 通过共享应用服务提供 Web 与 AI 两套前端；
 - [ ] AI 页面包含 App、Page、Revision、摘要、REF 与可用动作；
 - [ ] Agent 可执行 click、input、select、submit、back、home、refresh；
 - [ ] 动作后返回新的完整页面内容；
 - [ ] Web 页面可切换或并排预览 AI View；
 - [ ] 每个 Agent 有独立 Phone、软件安装列表和权限；
-- [ ] Phone 内置 Board 与 Relay，并支持通知和跨 App 深链接；
-- [ ] Board/Relay 服务端负责多方状态和消息传递；
+- [ ] Phone 安装 Board 后可访问 Board 与 Relay 模块，并支持通知和深链接；
+- [ ] Board 应用服务负责多方状态和消息传递；
 - [ ] 所有副作用支持鉴权、幂等、并发保护和审计；
 - [ ] 文本页面中的不可信内容不能伪造 REF；
 - [ ] E2E 测试覆盖 Agent 从 Home 到协作再回到任务完成的完整流程。

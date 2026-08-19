@@ -16,10 +16,10 @@ func TestEnginePinsModeAndCommitsEffectsExactlyOnce(t *testing.T) {
 	decisions := 0
 	if err := registry.Register(ModeFunc{ModeName: "test", ModeVersion: "1", DecideFunc: func(_ context.Context, event Event, binding Binding, snapshot Snapshot) ([]PlannedEffect, error) {
 		decisions++
-		if event.IssueID != "issue-1" || binding.CoordinationID != "task-1" || snapshot.Current.ID != "issue-1" {
+		if event.SubjectID != "issue-1" || binding.CoordinationID != "task-1" || snapshot.Current.ID != "issue-1" {
 			t.Fatalf("event=%+v binding=%+v snapshot=%+v", event, binding, snapshot)
 		}
-		return []PlannedEffect{{Type: EffectEnqueueIssue, Payload: json.RawMessage(`{"issueId":"issue-1"}`)}}, nil
+		return []PlannedEffect{{Type: testEffectEnqueueSubject, Payload: json.RawMessage(`{"issueId":"issue-1"}`)}}, nil
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestEnginePinsModeAndCommitsEffectsExactlyOnce(t *testing.T) {
 	engine := Engine{Repository: repository, Modes: registry, WorkerID: "decision-1", Now: func() time.Time { return now }, Snapshots: SnapshotLoaderFunc(func(context.Context, Event) (Snapshot, error) {
 		return Snapshot{Current: &WorkItem{ID: "issue-1", Status: WorkPending}}, nil
 	})}
-	event := Event{ID: "event-1", Type: EventIssueAssigned, CoordinationID: "task-1", IssueID: "issue-1"}
+	event := Event{ID: "event-1", Type: testEventSubjectAssigned, CoordinationID: "task-1", SubjectID: "issue-1"}
 	inserted, err := engine.Submit(context.Background(), event)
 	if err != nil || !inserted {
 		t.Fatalf("submit inserted=%v err=%v", inserted, err)
@@ -62,16 +62,26 @@ func TestEnginePinsModeAndCommitsEffectsExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestEventDecodesLegacyApplicationEnvelope(t *testing.T) {
+	var event Event
+	if err := json.Unmarshal([]byte(`{"id":"legacy","type":"assigned","coordinationId":"scope","taskId":"task","issueId":"item","parentIssueId":"parent","agentId":"actor","taskAgentId":"actor-instance","parentAgentId":"owner","parentTaskAgentId":"owner-instance"}`), &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.ScopeID != "task" || event.SubjectID != "item" || event.ParentSubjectID != "parent" || event.ActorID != "actor" || event.ActorInstanceID != "actor-instance" || event.ParentActorID != "owner" || event.ParentActorInstanceID != "owner-instance" {
+		t.Fatalf("legacy event=%+v", event)
+	}
+}
+
 func TestDecisionEffectConflictIsDeadLetteredAndDoesNotBlockFreshEvents(t *testing.T) {
 	base := time.Date(2026, 8, 2, 3, 0, 0, 0, time.UTC)
 	repository := NewMemoryRepository()
 	registry := NewRegistry()
 	if err := registry.Register(ModeFunc{ModeName: "conflict", ModeVersion: "1", DecideFunc: func(_ context.Context, event Event, _ Binding, _ Snapshot) ([]PlannedEffect, error) {
 		key := "shared-effect"
-		if event.IssueID == "fresh" {
+		if event.SubjectID == "fresh" {
 			key = "fresh-effect"
 		}
-		return []PlannedEffect{{Type: EffectEnqueueIssue, IdempotencyKey: key, Payload: json.RawMessage(`{"issueId":"` + event.IssueID + `"}`)}}, nil
+		return []PlannedEffect{{Type: testEffectEnqueueSubject, IdempotencyKey: key, Payload: json.RawMessage(`{"issueId":"` + event.SubjectID + `"}`)}}, nil
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +91,7 @@ func TestDecisionEffectConflictIsDeadLetteredAndDoesNotBlockFreshEvents(t *testi
 	current := base.Add(3 * time.Second)
 	engine := Engine{Repository: repository, Modes: registry, WorkerID: "decision", Now: func() time.Time { return current }}
 	for index, issueID := range []string{"first", "conflicting", "fresh"} {
-		_, err := engine.Submit(context.Background(), Event{ID: "event-" + issueID, Type: EventIssueAssigned, CoordinationID: "task", IssueID: issueID, OccurredAt: base.Add(time.Duration(index) * time.Second)})
+		_, err := engine.Submit(context.Background(), Event{ID: "event-" + issueID, Type: testEventSubjectAssigned, CoordinationID: "task", SubjectID: issueID, OccurredAt: base.Add(time.Duration(index) * time.Second)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -123,8 +133,8 @@ func TestEventRetryDoesNotStarveFreshWork(t *testing.T) {
 	base := time.Date(2026, 8, 2, 3, 0, 0, 0, time.UTC)
 	repository := NewMemoryRepository()
 	for _, event := range []Event{
-		{ID: "retry", Type: EventIssueAssigned, CoordinationID: "task", OccurredAt: base},
-		{ID: "fresh", Type: EventIssueAssigned, CoordinationID: "task", OccurredAt: base.Add(time.Second)},
+		{ID: "retry", Type: testEventSubjectAssigned, CoordinationID: "task", OccurredAt: base},
+		{ID: "fresh", Type: testEventSubjectAssigned, CoordinationID: "task", OccurredAt: base.Add(time.Second)},
 	} {
 		if _, err := repository.SubmitEvent(context.Background(), event); err != nil {
 			t.Fatal(err)
@@ -153,7 +163,7 @@ func TestDelayedEffectActsAsDurableTimer(t *testing.T) {
 	}})
 	_ = repository.SaveBinding(context.Background(), Binding{CoordinationID: "task-1", Mode: "timer", Version: "1", UpdatedAt: base})
 	engine := Engine{Repository: repository, Modes: registry, WorkerID: "decision", Now: func() time.Time { return current }}
-	_, _ = engine.Submit(context.Background(), Event{ID: "timer-request", Type: EventWaitRequested, CoordinationID: "task-1"})
+	_, _ = engine.Submit(context.Background(), Event{ID: "timer-request", Type: testEventWaitRequested, CoordinationID: "task-1"})
 	if processed, err := engine.ProcessNext(context.Background()); err != nil || !processed {
 		t.Fatalf("decision processed=%v err=%v", processed, err)
 	}
@@ -174,11 +184,11 @@ func TestEffectRetryKeepsStableIdentity(t *testing.T) {
 	repository := NewMemoryRepository()
 	registry := NewRegistry()
 	_ = registry.Register(ModeFunc{ModeName: "retry", ModeVersion: "1", DecideFunc: func(context.Context, Event, Binding, Snapshot) ([]PlannedEffect, error) {
-		return []PlannedEffect{{Type: EffectSendRelay, IdempotencyKey: "relay-1"}}, nil
+		return []PlannedEffect{{Type: testEffectSendMessage, IdempotencyKey: "relay-1"}}, nil
 	}})
 	_ = repository.SaveBinding(context.Background(), Binding{CoordinationID: "task", Mode: "retry", Version: "1", UpdatedAt: base})
 	engine := Engine{Repository: repository, Modes: registry, WorkerID: "decision", Now: func() time.Time { return current }}
-	_, _ = engine.Submit(context.Background(), Event{ID: "event", Type: EventRelayReceived, CoordinationID: "task"})
+	_, _ = engine.Submit(context.Background(), Event{ID: "event", Type: testEventMessageReceived, CoordinationID: "task"})
 	_, _ = engine.ProcessNext(context.Background())
 	var mu sync.Mutex
 	var ids []string
@@ -210,11 +220,11 @@ func TestPermanentEffectFailureStopsAtConfiguredAttemptLimit(t *testing.T) {
 	repository := NewMemoryRepository()
 	registry := NewRegistry()
 	_ = registry.Register(ModeFunc{ModeName: "failure", ModeVersion: "1", DecideFunc: func(context.Context, Event, Binding, Snapshot) ([]PlannedEffect, error) {
-		return []PlannedEffect{{Type: EffectStartSubagent}}, nil
+		return []PlannedEffect{{Type: testEffectStartWorker}}, nil
 	}})
 	_ = repository.SaveBinding(context.Background(), Binding{CoordinationID: "task", Mode: "failure", Version: "1", UpdatedAt: current})
 	engine := Engine{Repository: repository, Modes: registry, WorkerID: "decision", Now: func() time.Time { return current }}
-	_, _ = engine.Submit(context.Background(), Event{ID: "event", Type: EventDelegationRequested, CoordinationID: "task"})
+	_, _ = engine.Submit(context.Background(), Event{ID: "event", Type: testEventDelegationRequested, CoordinationID: "task"})
 	_, _ = engine.ProcessNext(context.Background())
 	attempts := 0
 	worker := EffectWorker{Repository: repository, WorkerID: "effects", MaxAttempts: 2, RetryDelay: time.Millisecond, Now: func() time.Time { return current }, Handler: EffectHandlerFunc(func(context.Context, Effect) error {

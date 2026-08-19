@@ -35,7 +35,7 @@ func (e *Engine) Submit(ctx context.Context, event Event) (bool, error) {
 	if event.OccurredAt.IsZero() {
 		event.OccurredAt = e.now()
 	}
-	ctx = observability.WithScope(ctx, observability.Scope{TaskID: event.TaskID, IssueID: event.IssueID, ExecutionID: event.ExecutionID, AgentID: event.AgentID, CoordinationID: event.CoordinationID, Component: "coordination.engine"})
+	ctx = observability.WithScope(ctx, observability.Scope{TaskID: event.ScopeID, IssueID: event.SubjectID, ExecutionID: event.ExecutionID, AgentID: event.ActorID, CoordinationID: event.CoordinationID, Component: "coordination.engine"})
 	inserted, err := e.Repository.SubmitEvent(ctx, event)
 	attrs := []slog.Attr{slog.String("event_id", event.ID), slog.String("event_type", string(event.Type)), slog.Bool("inserted", inserted)}
 	if err != nil {
@@ -58,7 +58,7 @@ func (e *Engine) ProcessNext(ctx context.Context) (bool, error) {
 	if err != nil || !ok {
 		return ok, err
 	}
-	ctx = observability.WithScope(ctx, observability.Scope{TaskID: claim.Event.TaskID, IssueID: claim.Event.IssueID, ExecutionID: claim.Event.ExecutionID, AgentID: claim.Event.AgentID, CoordinationID: claim.Event.CoordinationID, Component: "coordination.decision"})
+	ctx = observability.WithScope(ctx, observability.Scope{TaskID: claim.Event.ScopeID, IssueID: claim.Event.SubjectID, ExecutionID: claim.Event.ExecutionID, AgentID: claim.Event.ActorID, CoordinationID: claim.Event.CoordinationID, Component: "coordination.decision"})
 	observability.Default().Info(ctx, "coordination.event.claimed", slog.String("event_id", claim.Event.ID), slog.String("event_type", string(claim.Event.Type)), slog.Int("attempt", claim.Attempt), slog.String("worker_id", e.WorkerID))
 	binding, err := e.Repository.Binding(ctx, claim.Event.CoordinationID)
 	if err != nil {

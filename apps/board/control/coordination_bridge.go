@@ -10,11 +10,16 @@ import (
 	"time"
 
 	"aegis/agenthost"
+	boardcoordination "aegis/apps/board/coordination"
+	"aegis/apps/board/identity"
 	"aegis/capability"
 	"aegis/coordination"
-	coordinationmodes "aegis/coordination/modes"
 	coordinationsqlite "aegis/coordination/sqlitestore"
 	"aegis/observability"
+	"aegis/platform/dataspace"
+	platformwork "aegis/platform/work"
+	workcoordination "aegis/platform/work/coordinationadapter"
+	worksqlite "aegis/platform/work/sqlitestore"
 	"aegis/storage"
 	storagesqlite "aegis/storage/sqlitestore"
 	"github.com/z3r2ne/agentcore"
@@ -22,11 +27,11 @@ import (
 )
 
 type CoordinationDelivery interface {
-	DeliverCoordinationMessage(context.Context, coordination.AgentCommand) error
+	DeliverCoordinationMessage(context.Context, boardcoordination.AgentCommand) error
 }
 
 type CoordinationSubagentStarter interface {
-	StartCoordinationSubagent(context.Context, coordination.StartSubagentCommand) error
+	StartCoordinationSubagent(context.Context, boardcoordination.StartSubagentCommand) error
 }
 
 const (
@@ -44,6 +49,8 @@ type CoordinationBridge struct {
 	modes        *coordination.Registry
 	runtime      *coordination.Runtime
 	executions   *coordination.ExecutionQueue
+	works        *platformwork.Gateway
+	workInbox    *platformwork.Inbox
 	events       storage.EventStore
 	delivery     CoordinationDelivery
 	subagents    CoordinationSubagentStarter
@@ -122,7 +129,7 @@ func workspaceCapabilityRef(permissions PermissionBoundary) capability.Ref {
 	}
 }
 
-func (b *CoordinationBridge) PreviewAgentCapabilities(ctx context.Context, issueID string, child coordination.ChildWork) (coordination.CapabilityDecision, error) {
+func (b *CoordinationBridge) PreviewAgentCapabilities(ctx context.Context, issueID string, child boardcoordination.ChildWork) (coordination.CapabilityDecision, error) {
 	if b == nil || b.manager == nil {
 		return coordination.CapabilityDecision{}, errors.New("control coordination: runtime is disabled")
 	}
@@ -173,7 +180,7 @@ func NewCoordinationBridge(manager *Manager, options CoordinationBridgeOptions) 
 		return nil, err
 	}
 	modes := coordination.NewRegistry()
-	if err := coordinationmodes.RegisterBuiltins(modes); err != nil {
+	if err := boardcoordination.Register(modes); err != nil {
 		return nil, err
 	}
 	defaultMode := strings.TrimSpace(options.DefaultMode)
@@ -200,6 +207,16 @@ func NewCoordinationBridge(manager *Manager, options CoordinationBridgeOptions) 
 	engine := &coordination.Engine{Repository: repository, Modes: modes, Snapshots: coordination.SnapshotLoaderFunc(bridge.snapshot), WorkerID: workerID + "-decisions"}
 	effects := &coordination.EffectWorker{Repository: repository, Handler: router, WorkerID: workerID + "-effects"}
 	bridge.executions = &coordination.ExecutionQueue{Repository: repository, DefaultMaxAttempts: 3}
+	applicationWorkStore, err := worksqlite.New(manager.store.db)
+	if err != nil {
+		return nil, err
+	}
+	bridge.works = &platformwork.Gateway{
+		Repository: applicationWorkStore, Events: applicationWorkStore,
+		Scheduler: platformwork.SchedulerFunc(bridge.scheduleBoardWork),
+	}
+	bridge.workInbox = &platformwork.Inbox{Events: applicationWorkStore, Subscriptions: applicationWorkStore}
+	applicationLifecycle := &workcoordination.Lifecycle{Repository: applicationWorkStore, Events: applicationWorkStore}
 	concurrency := options.Concurrency
 	if concurrency <= 0 {
 		concurrency = manager.store.Config().Concurrency
@@ -212,13 +229,14 @@ func NewCoordinationBridge(manager *Manager, options CoordinationBridgeOptions) 
 	// so a saturated child wave can never starve its sleeping parent.
 	workers := make([]*coordination.ExecutionWorker, concurrency+1)
 	for index := 0; index < concurrency; index++ {
-		workers[index] = &coordination.ExecutionWorker{Repository: repository, Executor: options.Executor, WorkerID: fmt.Sprintf("%s-execution-%d", workerID, index+1)}
+		workers[index] = &coordination.ExecutionWorker{Repository: repository, Executor: options.Executor, Lifecycle: applicationLifecycle, WorkerID: fmt.Sprintf("%s-execution-%d", workerID, index+1)}
 		workers[index].Sinks = coordination.ExecutionEventSinkFactoryFunc(func(_ context.Context, execution coordination.Execution) (agentcore.EventSink, error) {
 			return storage.EventSink(events, execution.ID, execution.Attempt, nil), nil
 		})
 	}
 	workers[concurrency] = &coordination.ExecutionWorker{
 		Repository: repository, Executor: options.Executor, WorkerID: workerID + "-wakeups",
+		Lifecycle:       applicationLifecycle,
 		MinimumPriority: coordination.ExecutionPriorityWakeup,
 		Sinks: coordination.ExecutionEventSinkFactoryFunc(func(_ context.Context, execution coordination.Execution) (agentcore.EventSink, error) {
 			return storage.EventSink(events, execution.ID, execution.Attempt, nil), nil
@@ -230,16 +248,16 @@ func NewCoordinationBridge(manager *Manager, options CoordinationBridgeOptions) 
 	}
 	bridge.runtime = runtime
 	registrations := map[coordination.EffectType]coordination.EffectHandler{
-		coordination.EffectEnqueueIssue:   coordination.EffectHandlerFunc(bridge.enqueueIssue),
-		coordination.EffectCreateIssue:    coordination.EffectHandlerFunc(bridge.createIssue),
-		coordination.EffectAssignIssue:    coordination.EffectHandlerFunc(bridge.assignIssue),
-		coordination.EffectSendRelay:      coordination.EffectHandlerFunc(bridge.sendRelay),
-		coordination.EffectDeliverMessage: coordination.EffectHandlerFunc(bridge.deliverMessage),
-		coordination.EffectResumeAgent:    coordination.EffectHandlerFunc(bridge.deliverMessage),
-		coordination.EffectSuspendAgent:   coordination.EffectHandlerFunc(bridge.suspendAgent),
-		coordination.EffectCancelWork:     coordination.EffectHandlerFunc(bridge.cancelWork),
-		coordination.EffectStartSubagent:  coordination.EffectHandlerFunc(bridge.startSubagent),
-		coordination.EffectScheduleWakeup: coordination.WakeupHandler{Submit: runtime.Submit},
+		boardcoordination.EffectEnqueueIssue:   coordination.EffectHandlerFunc(bridge.enqueueIssue),
+		boardcoordination.EffectCreateIssue:    coordination.EffectHandlerFunc(bridge.createIssue),
+		boardcoordination.EffectAssignIssue:    coordination.EffectHandlerFunc(bridge.assignIssue),
+		boardcoordination.EffectSendRelay:      coordination.EffectHandlerFunc(bridge.sendRelay),
+		boardcoordination.EffectDeliverMessage: coordination.EffectHandlerFunc(bridge.deliverMessage),
+		boardcoordination.EffectResumeAgent:    coordination.EffectHandlerFunc(bridge.deliverMessage),
+		boardcoordination.EffectSuspendAgent:   coordination.EffectHandlerFunc(bridge.suspendAgent),
+		boardcoordination.EffectCancelWork:     coordination.EffectHandlerFunc(bridge.cancelWork),
+		boardcoordination.EffectStartSubagent:  coordination.EffectHandlerFunc(bridge.startSubagent),
+		coordination.EffectScheduleWakeup:      coordination.WakeupHandler{Submit: runtime.Submit},
 	}
 	for kind, handler := range registrations {
 		if err := router.Register(kind, handler); err != nil {
@@ -251,7 +269,7 @@ func NewCoordinationBridge(manager *Manager, options CoordinationBridgeOptions) 
 
 type unavailableCoordinationDelivery struct{}
 
-func (unavailableCoordinationDelivery) DeliverCoordinationMessage(context.Context, coordination.AgentCommand) error {
+func (unavailableCoordinationDelivery) DeliverCoordinationMessage(context.Context, boardcoordination.AgentCommand) error {
 	return errors.New("control coordination: task-local Agent delivery is unavailable")
 }
 
@@ -259,6 +277,33 @@ func (b *CoordinationBridge) Start(ctx context.Context) { b.runtime.Start(ctx) }
 func (b *CoordinationBridge) Close()                    { b.runtime.Close() }
 
 func (b *CoordinationBridge) Modes() []coordination.ModeDescriptor { return b.modes.Modes() }
+
+// RegisterAgentWorkSubscription creates a durable Board inbox cursor for one
+// task scope. Pull and Ack are deliberately separate so Board can commit its
+// domain projection before advancing delivery.
+func (b *CoordinationBridge) RegisterAgentWorkSubscription(ctx context.Context, subscription platformwork.Subscription) error {
+	if b == nil || b.workInbox == nil {
+		return errors.New("control coordination: application event inbox is unavailable")
+	}
+	if subscription.Filter.AppID != identity.AppID {
+		return errors.New("control coordination: subscription must belong to the Board application")
+	}
+	return b.workInbox.Register(ctx, subscription)
+}
+
+func (b *CoordinationBridge) PullAgentWorkEvents(ctx context.Context, subscriptionID string, limit int) (platformwork.Delivery, error) {
+	if b == nil || b.workInbox == nil {
+		return platformwork.Delivery{}, errors.New("control coordination: application event inbox is unavailable")
+	}
+	return b.workInbox.Pull(ctx, subscriptionID, limit)
+}
+
+func (b *CoordinationBridge) AckAgentWorkEvents(ctx context.Context, subscriptionID string, cursor platformwork.Cursor) error {
+	if b == nil || b.workInbox == nil {
+		return errors.New("control coordination: application event inbox is unavailable")
+	}
+	return b.workInbox.Ack(ctx, subscriptionID, cursor)
+}
 
 func (b *CoordinationBridge) DirectSubagentsAvailable() bool { return b != nil && b.subagents != nil }
 
@@ -285,7 +330,7 @@ func (b *CoordinationBridge) BindIssue(ctx context.Context, issueID, mode, versi
 		return coordination.Binding{}, err
 	}
 	payload, _ := json.Marshal(map[string]string{"mode": mode, "version": version})
-	_, err = b.runtime.Submit(ctx, coordination.Event{ID: fmt.Sprintf("coordination-mode:%s:%d", root.ID, binding.UpdatedAt.UnixNano()), Type: coordination.EventModeChanged, CoordinationID: root.ID, TaskID: root.ID, IssueID: issue.ID, OccurredAt: binding.UpdatedAt, Payload: payload})
+	_, err = b.runtime.Submit(ctx, coordination.Event{ID: fmt.Sprintf("coordination-mode:%s:%d", root.ID, binding.UpdatedAt.UnixNano()), Type: coordination.EventModeChanged, CoordinationID: root.ID, ScopeID: root.ID, SubjectID: issue.ID, OccurredAt: binding.UpdatedAt, Payload: payload})
 	if err != nil {
 		return coordination.Binding{}, err
 	}
@@ -309,11 +354,11 @@ func (b *CoordinationBridge) BindingForIssue(ctx context.Context, issueID string
 }
 
 func (b *CoordinationBridge) SubmitIssueCreated(ctx context.Context, issue Issue) error {
-	return b.submitSchedulableIssue(ctx, coordination.EventIssueCreated, issue, "created")
+	return b.submitSchedulableIssue(ctx, boardcoordination.EventIssueCreated, issue, "created")
 }
 
 func (b *CoordinationBridge) SubmitIssueAssigned(ctx context.Context, issue Issue) error {
-	return b.submitSchedulableIssue(ctx, coordination.EventIssueAssigned, issue, fmt.Sprintf("assigned:%s:%d", issue.AssigneeAgentID, issue.UpdatedAt.UnixNano()))
+	return b.submitSchedulableIssue(ctx, boardcoordination.EventIssueAssigned, issue, fmt.Sprintf("assigned:%s:%d", issue.AssigneeAgentID, issue.UpdatedAt.UnixNano()))
 }
 
 // DispatchIssue is the only public Issue execution gateway.
@@ -377,16 +422,16 @@ func (b *CoordinationBridge) SubmitIssueCompleted(ctx context.Context, issue Iss
 	if _, err := b.ensureBinding(ctx, root.ID); err != nil {
 		return err
 	}
-	payload, _ := json.Marshal(coordination.Completion{Result: issue.Result, Success: issue.Status == "done" || issue.Status == "in_review", Status: issue.Status, Error: issue.Error, ChildID: issue.ID})
+	payload, _ := json.Marshal(boardcoordination.Completion{Result: issue.Result, Success: issue.Status == "done" || issue.Status == "in_review", Status: issue.Status, Error: issue.Error, ChildID: issue.ID})
 	anchor := issue.UpdatedAt.UnixNano()
 	if issue.CompletedAt != nil {
 		anchor = issue.CompletedAt.UnixNano()
 	}
 	_, err = b.runtime.Submit(ctx, coordination.Event{
-		ID: fmt.Sprintf("issue-completed:%s:%s:%d", issue.ID, issue.Status, anchor), Type: coordination.EventIssueCompleted,
-		CoordinationID: root.ID, TaskID: root.ID, IssueID: issue.ID, ParentIssueID: parent.ID,
-		ExecutionID: issue.CurrentExecutionID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID,
-		ParentAgentID: parentAgent, ParentTaskAgentID: parentTaskAgent,
+		ID: fmt.Sprintf("issue-completed:%s:%s:%d", issue.ID, issue.Status, anchor), Type: boardcoordination.EventIssueCompleted,
+		CoordinationID: root.ID, ScopeID: root.ID, SubjectID: issue.ID, ParentSubjectID: parent.ID,
+		ExecutionID: issue.CurrentExecutionID, ActorID: issue.AssigneeAgentID, ActorInstanceID: issue.AssigneeTaskAgentID,
+		ParentActorID: parentAgent, ParentActorInstanceID: parentTaskAgent,
 		OccurredAt: issue.UpdatedAt.UTC(), Payload: payload,
 	})
 	return err
@@ -395,7 +440,7 @@ func (b *CoordinationBridge) SubmitIssueCompleted(ctx context.Context, issue Iss
 // ContinueTerminalChildIssue is the explicit parent decision that converts a
 // failed or budget-exceeded child back into schedulable work. It never mutates
 // or reuses the previous Agent Execution; normal assignment creates a new one.
-func (b *CoordinationBridge) ContinueTerminalChildIssue(ctx context.Context, invocation coordination.Invocation, request coordination.ContinueRequest) error {
+func (b *CoordinationBridge) ContinueTerminalChildIssue(ctx context.Context, invocation boardcoordination.Invocation, request boardcoordination.ContinueRequest) error {
 	if b == nil || b.manager == nil || b.manager.store == nil {
 		return errors.New("control coordination: runtime is disabled")
 	}
@@ -458,7 +503,7 @@ func (b *CoordinationBridge) ContinueTerminalChildIssue(ctx context.Context, inv
 	return b.SubmitIssueAssigned(ctx, reopened)
 }
 
-func (b *CoordinationBridge) SubmitDelegation(ctx context.Context, eventID, issueID, executionID, agentID string, request coordination.DelegationRequest) error {
+func (b *CoordinationBridge) SubmitDelegation(ctx context.Context, eventID, issueID, executionID, agentID string, request boardcoordination.DelegationRequest) error {
 	issue, err := b.manager.store.GetIssue(issueID)
 	if err != nil {
 		return err
@@ -482,7 +527,7 @@ func (b *CoordinationBridge) SubmitDelegation(ctx context.Context, eventID, issu
 	if strings.TrimSpace(eventID) == "" {
 		return errors.New("control coordination: delegation event ID is required")
 	}
-	_, err = b.runtime.Submit(ctx, coordination.Event{ID: eventID, Type: coordination.EventDelegationRequested, CoordinationID: root.ID, TaskID: root.ID, IssueID: issue.ID, ParentIssueID: issue.ParentID, ExecutionID: executionID, AgentID: agentID, TaskAgentID: issue.AssigneeTaskAgentID, OccurredAt: time.Now().UTC(), Payload: payload})
+	_, err = b.runtime.Submit(ctx, coordination.Event{ID: eventID, Type: boardcoordination.EventDelegationRequested, CoordinationID: root.ID, ScopeID: root.ID, SubjectID: issue.ID, ParentSubjectID: issue.ParentID, ExecutionID: executionID, ActorID: agentID, ActorInstanceID: issue.AssigneeTaskAgentID, OccurredAt: time.Now().UTC(), Payload: payload})
 	return err
 }
 
@@ -490,33 +535,33 @@ func (b *CoordinationBridge) SubmitDelegation(ctx context.Context, eventID, issu
 // It goes through the same durable mode decision and outbox as Agent-authored
 // Phone Board delegation and service calls share this path, so no caller
 // bypasses Coordination policy.
-func (b *CoordinationBridge) InvokeAgent(ctx context.Context, invocation coordination.AgentInvocation) (coordination.InvocationReceipt, error) {
+func (b *CoordinationBridge) InvokeAgent(ctx context.Context, invocation boardcoordination.AgentInvocation) (boardcoordination.InvocationReceipt, error) {
 	if b == nil || b.manager == nil {
-		return coordination.InvocationReceipt{}, errors.New("control coordination: runtime is disabled")
+		return boardcoordination.InvocationReceipt{}, errors.New("control coordination: runtime is disabled")
 	}
 	invocation.IssueID = strings.TrimSpace(invocation.IssueID)
 	invocation.Child.AgentID = strings.TrimSpace(invocation.Child.AgentID)
 	invocation.Child.Prompt = strings.TrimSpace(invocation.Child.Prompt)
 	if invocation.IssueID == "" || invocation.Child.AgentID == "" || invocation.Child.Prompt == "" {
-		return coordination.InvocationReceipt{}, errors.New("control coordination: issueId, child.agentId and child.prompt are required")
+		return boardcoordination.InvocationReceipt{}, errors.New("control coordination: issueId, child.agentId and child.prompt are required")
 	}
 	issue, err := b.manager.store.GetIssue(invocation.IssueID)
 	if err != nil {
-		return coordination.InvocationReceipt{}, err
+		return boardcoordination.InvocationReceipt{}, err
 	}
 	root, err := b.manager.store.taskRoot(issue)
 	if err != nil {
-		return coordination.InvocationReceipt{}, err
+		return boardcoordination.InvocationReceipt{}, err
 	}
 	eventID := "proactive-invoke:" + observability.NewID(16)
-	request := coordination.DelegationRequest{Children: []coordination.ChildWork{invocation.Child}, ParentBehavior: invocation.ParentBehavior, ResultDelivery: invocation.ResultDelivery}
+	request := boardcoordination.DelegationRequest{Children: []boardcoordination.ChildWork{invocation.Child}, ParentBehavior: invocation.ParentBehavior, ResultDelivery: invocation.ResultDelivery}
 	if err := b.SubmitDelegation(ctx, eventID, issue.ID, strings.TrimSpace(invocation.ParentExecutionID), fallback(strings.TrimSpace(invocation.ParentAgentID), "operator"), request); err != nil {
-		return coordination.InvocationReceipt{}, err
+		return boardcoordination.InvocationReceipt{}, err
 	}
-	return coordination.InvocationReceipt{EventID: eventID, CoordinationID: root.ID, IssueID: issue.ID, AgentID: invocation.Child.AgentID, Accepted: true}, nil
+	return boardcoordination.InvocationReceipt{EventID: eventID, CoordinationID: root.ID, IssueID: issue.ID, AgentID: invocation.Child.AgentID, Accepted: true}, nil
 }
 
-func (b *CoordinationBridge) SubmitWait(ctx context.Context, eventID, issueID, executionID, agentID string, request coordination.WaitRequest) error {
+func (b *CoordinationBridge) SubmitWait(ctx context.Context, eventID, issueID, executionID, agentID string, request boardcoordination.WaitRequest) error {
 	issue, err := b.manager.store.GetIssue(issueID)
 	if err != nil {
 		return err
@@ -535,11 +580,11 @@ func (b *CoordinationBridge) SubmitWait(ctx context.Context, eventID, issueID, e
 	if strings.TrimSpace(eventID) == "" {
 		return errors.New("control coordination: wait event ID is required")
 	}
-	_, err = b.runtime.Submit(ctx, coordination.Event{ID: eventID, Type: coordination.EventWaitRequested, CoordinationID: root.ID, TaskID: root.ID, IssueID: issue.ID, ParentIssueID: issue.ParentID, ExecutionID: executionID, AgentID: agentID, TaskAgentID: issue.AssigneeTaskAgentID, OccurredAt: time.Now().UTC(), Payload: payload})
+	_, err = b.runtime.Submit(ctx, coordination.Event{ID: eventID, Type: boardcoordination.EventWaitRequested, CoordinationID: root.ID, ScopeID: root.ID, SubjectID: issue.ID, ParentSubjectID: issue.ParentID, ExecutionID: executionID, ActorID: agentID, ActorInstanceID: issue.AssigneeTaskAgentID, OccurredAt: time.Now().UTC(), Payload: payload})
 	return err
 }
 
-func (b *CoordinationBridge) SubmitExecutionCompleted(ctx context.Context, eventID string, command coordination.StartSubagentCommand, executionID, childAgentID string, completed coordination.Completion) error {
+func (b *CoordinationBridge) SubmitExecutionCompleted(ctx context.Context, eventID string, command boardcoordination.StartSubagentCommand, executionID, childAgentID string, completed boardcoordination.Completion) error {
 	if strings.TrimSpace(eventID) == "" || strings.TrimSpace(command.CoordinationID) == "" || strings.TrimSpace(command.CorrelationID) == "" {
 		return errors.New("control coordination: completion event, coordination and correlation IDs are required")
 	}
@@ -551,8 +596,8 @@ func (b *CoordinationBridge) SubmitExecutionCompleted(ctx context.Context, event
 		return err
 	}
 	_, err = b.runtime.Submit(ctx, coordination.Event{
-		ID: eventID, Type: coordination.EventExecutionCompleted, CoordinationID: command.CoordinationID, TaskID: command.CoordinationID,
-		ParentIssueID: command.ParentIssueID, ExecutionID: executionID, AgentID: childAgentID, ParentAgentID: command.ParentAgentID,
+		ID: eventID, Type: boardcoordination.EventExecutionCompleted, CoordinationID: command.CoordinationID, ScopeID: command.CoordinationID,
+		ParentSubjectID: command.ParentIssueID, ExecutionID: executionID, ActorID: childAgentID, ParentActorID: command.ParentAgentID,
 		CorrelationID: command.CorrelationID, OccurredAt: time.Now().UTC(), Payload: payload,
 	})
 	return err
@@ -616,11 +661,11 @@ func (b *CoordinationBridge) SubmitRelay(ctx context.Context, message RelayMessa
 				parentAgentID, parentTaskAgentID = parent.AssigneeAgentID, parent.AssigneeTaskAgentID
 			}
 		}
-		payload, _ := json.Marshal(coordination.RelayReceived{Channel: "relay", MessageID: message.ID, SenderID: senderID, SenderTaskAgentID: senderTaskAgentID, SenderName: senderName, Body: message.Body})
+		payload, _ := json.Marshal(boardcoordination.RelayReceived{Channel: "relay", MessageID: message.ID, SenderID: senderID, SenderTaskAgentID: senderTaskAgentID, SenderName: senderName, Body: message.Body})
 		if _, err := b.runtime.Submit(ctx, coordination.Event{
-			ID: "relay-received:" + message.ID + ":" + recipientID, Type: coordination.EventRelayReceived,
-			CoordinationID: coordinationID, TaskID: coordinationID, IssueID: recipientIssue.ID, ParentIssueID: recipientIssue.ParentID,
-			AgentID: recipientAgentID, TaskAgentID: recipientTaskAgentID, ParentAgentID: parentAgentID, ParentTaskAgentID: parentTaskAgentID,
+			ID: "relay-received:" + message.ID + ":" + recipientID, Type: boardcoordination.EventRelayReceived,
+			CoordinationID: coordinationID, ScopeID: coordinationID, SubjectID: recipientIssue.ID, ParentSubjectID: recipientIssue.ParentID,
+			ActorID: recipientAgentID, ActorInstanceID: recipientTaskAgentID, ParentActorID: parentAgentID, ParentActorInstanceID: parentTaskAgentID,
 			OccurredAt: message.CreatedAt.UTC(), Payload: payload,
 		}); err != nil {
 			return err
@@ -679,11 +724,11 @@ func (b *CoordinationBridge) SubmitIssueComment(ctx context.Context, comment Iss
 	if err := b.manager.store.db.Where("source_comment_id = ?", comment.ID).First(&objective).Error; err == nil {
 		body += fmt.Sprintf("\n\n[Authoritative objective update · v%d]\n%s\n\nUse this as the current Issue objective for all subsequent work and delivery.", objective.Version, objective.Content)
 	}
-	payload, _ := json.Marshal(coordination.RelayReceived{Channel: "board_comment", MessageID: comment.ID, SenderID: comment.AuthorID, SenderName: "操作员", Body: body})
+	payload, _ := json.Marshal(boardcoordination.RelayReceived{Channel: "board_comment", MessageID: comment.ID, SenderID: comment.AuthorID, SenderName: "操作员", Body: body})
 	_, err = b.runtime.Submit(ctx, coordination.Event{
-		ID: "issue-comment:" + comment.ID, Type: coordination.EventRelayReceived,
-		CoordinationID: root.ID, TaskID: root.ID, IssueID: issue.ID, ParentIssueID: issue.ParentID,
-		AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID,
+		ID: "issue-comment:" + comment.ID, Type: boardcoordination.EventRelayReceived,
+		CoordinationID: root.ID, ScopeID: root.ID, SubjectID: issue.ID, ParentSubjectID: issue.ParentID,
+		ActorID: issue.AssigneeAgentID, ActorInstanceID: issue.AssigneeTaskAgentID,
 		OccurredAt: comment.CreatedAt.UTC(), Payload: payload,
 	})
 	return err
@@ -736,9 +781,9 @@ func (b *CoordinationBridge) submitIssue(ctx context.Context, kind coordination.
 	}
 	_, err = b.runtime.Submit(ctx, coordination.Event{
 		ID: fmt.Sprintf("%s:%s:%s", kind, issue.ID, discriminator), Type: kind,
-		CoordinationID: root.ID, TaskID: root.ID, IssueID: issue.ID, ParentIssueID: parent.ID,
-		ExecutionID: issue.CurrentExecutionID, AgentID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID,
-		ParentAgentID: parentAgent, ParentTaskAgentID: parentTaskAgent,
+		CoordinationID: root.ID, ScopeID: root.ID, SubjectID: issue.ID, ParentSubjectID: parent.ID,
+		ExecutionID: issue.CurrentExecutionID, ActorID: issue.AssigneeAgentID, ActorInstanceID: issue.AssigneeTaskAgentID,
+		ParentActorID: parentAgent, ParentActorInstanceID: parentTaskAgent,
 		OccurredAt: issue.UpdatedAt.UTC(),
 	})
 	return err
@@ -786,17 +831,17 @@ func (b *CoordinationBridge) Binding(ctx context.Context, coordinationID string)
 }
 
 func (b *CoordinationBridge) snapshot(_ context.Context, event coordination.Event) (coordination.Snapshot, error) {
-	if event.IssueID == "" {
+	if event.SubjectID == "" {
 		return coordination.Snapshot{}, nil
 	}
-	issue, err := b.manager.store.GetIssue(event.IssueID)
+	issue, err := b.manager.store.GetIssue(event.SubjectID)
 	if err != nil {
 		return coordination.Snapshot{}, err
 	}
 	snapshot := coordination.Snapshot{Current: b.workItem(issue)}
 	parentID := issue.ParentID
 	if parentID == "" {
-		parentID = event.ParentIssueID
+		parentID = event.ParentSubjectID
 	}
 	if parentID != "" {
 		parent, err := b.manager.store.GetIssue(parentID)
@@ -836,11 +881,11 @@ func (b *CoordinationBridge) workItem(issue Issue) *coordination.WorkItem {
 	if issue.ExecutionPhase == "waiting_children" {
 		status = coordination.WorkWaiting
 	}
-	item := &coordination.WorkItem{ID: issue.ID, ParentID: issue.ParentID, Title: issue.Title, AssigneeID: issue.AssigneeAgentID, TaskAgentID: issue.AssigneeTaskAgentID, Status: status, ExecutionPhase: issue.ExecutionPhase, SleepToken: issue.SleepToken, UpdatedAt: issue.UpdatedAt}
+	item := &coordination.WorkItem{ID: issue.ID, ParentID: issue.ParentID, Title: issue.Title, AssigneeID: issue.AssigneeAgentID, AssigneeInstanceID: issue.AssigneeTaskAgentID, Status: status, ExecutionPhase: issue.ExecutionPhase, SleepToken: issue.SleepToken, UpdatedAt: issue.UpdatedAt}
 	if issue.AssigneeTaskAgentID != "" {
 		var identity TaskAgent
 		if err := b.manager.store.db.First(&identity, "id = ?", issue.AssigneeTaskAgentID).Error; err == nil {
-			item.TaskAgentName = identity.Name
+			item.AssigneeInstanceName = identity.Name
 		}
 	}
 	var progress ExecutionProgress
@@ -852,7 +897,7 @@ func (b *CoordinationBridge) workItem(issue Issue) *coordination.WorkItem {
 }
 
 func (b *CoordinationBridge) enqueueIssue(ctx context.Context, effect coordination.Effect) error {
-	var command coordination.EnqueueIssueCommand
+	var command boardcoordination.EnqueueIssueCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}
@@ -860,56 +905,92 @@ func (b *CoordinationBridge) enqueueIssue(ctx context.Context, effect coordinati
 }
 
 func (b *CoordinationBridge) EnqueueIssueExecution(ctx context.Context, issueID string) error {
-	if b == nil || b.executions == nil {
-		return errors.New("control coordination: execution runtime is unavailable")
+	if b == nil || b.works == nil || b.manager == nil || b.manager.store == nil {
+		return errors.New("control coordination: Agent Work gateway is unavailable")
 	}
+	issue, err := b.manager.store.GetIssue(issueID)
+	if err != nil {
+		return err
+	}
+	root, err := b.manager.store.taskRoot(issue)
+	if err != nil {
+		return err
+	}
+	subjectID := fallback(strings.TrimSpace(issue.AssigneeTaskAgentID), strings.TrimSpace(issue.AssigneeAgentID))
+	_, err = b.works.Request(ctx, platformwork.Request{
+		AppID: identity.AppID, ScopeID: root.ID, CorrelationID: issue.ID,
+		IdempotencyKey: "board:issue-run:" + issue.ID + ":" + strings.TrimSpace(issue.CurrentExecutionID),
+		AgentProfileID: issue.AssigneeAgentID, SessionKey: issue.AssigneeTaskAgentID, Prompt: issue.Title,
+		Priority: issueExecutionPriority(issue.Priority), Capabilities: append([]capability.Ref(nil), issue.Capabilities...),
+		DataSpaces:    []dataspace.Grant{{Ref: dataspace.Ref{AppID: identity.AppID, Space: identity.PrimaryDataSpace, ScopeID: root.ID}, SubjectID: subjectID, Actions: []string{"read", "write"}}},
+		InstalledApps: []string{"aegis.board", "aegis.relay"},
+		Metadata:      map[string]string{"board.issueId": issue.ID, "board.taskId": root.ID},
+	})
+	return err
+}
+
+func (b *CoordinationBridge) scheduleBoardWork(ctx context.Context, scheduled platformwork.ScheduledWork) (string, error) {
+	if scheduled.Request.AppID != identity.AppID {
+		return "", fmt.Errorf("control coordination: unsupported application %q", scheduled.Request.AppID)
+	}
+	return b.enqueueIssueExecutionDirect(ctx, scheduled)
+}
+
+func (b *CoordinationBridge) enqueueIssueExecutionDirect(ctx context.Context, scheduled platformwork.ScheduledWork) (string, error) {
+	if b == nil || b.executions == nil {
+		return "", errors.New("control coordination: execution runtime is unavailable")
+	}
+	issueID := scheduled.Request.CorrelationID
 	coordinationExecutionID := issueID
 	if existing, lookupErr := b.executions.Get(ctx, issueID); lookupErr == nil {
 		if existing.Status == coordination.ExecutionQueued || existing.Status == coordination.ExecutionRunning {
-			return nil
+			return existing.ID, nil
 		}
 		// The stable first execution ID preserves simple Issue lookup. A reopened
 		// budget outcome gets a new durable Coordination execution and therefore a
 		// genuinely fresh Agent Execution budget.
 		coordinationExecutionID = "issue-run-" + observability.NewID(16)
 	} else if !errors.Is(lookupErr, coordination.ErrExecutionNotFound) {
-		return lookupErr
+		return "", lookupErr
 	}
 	issue, err := b.manager.store.GetIssue(issueID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if issue.Status != "todo" {
-		return errors.New("Issue 当前不可调度")
+		return "", errors.New("Issue 当前不可调度")
 	}
 	taskID := issue.ID
 	if root, rootErr := b.manager.store.taskRoot(issue); rootErr == nil {
 		taskID = root.ID
 	}
-	execution := coordination.Execution{ID: coordinationExecutionID, CoordinationID: taskID, MaxAttempts: 1, Priority: issueExecutionPriority(issue.Priority), Spec: agenthost.ExecutionSpec{
+	execution := coordination.Execution{ID: coordinationExecutionID, CoordinationID: taskID, MaxAttempts: 1, Priority: issueExecutionPriority(issue.Priority), Origin: coordination.ExecutionOrigin{
+		AppID: scheduled.Request.AppID, TenantID: scheduled.Request.TenantID, ScopeID: scheduled.Request.ScopeID,
+		CorrelationID: scheduled.Request.CorrelationID, RequestID: scheduled.RequestID, WorkID: scheduled.WorkID,
+	}, Spec: agenthost.ExecutionSpec{
 		ExecutionID: coordinationExecutionID, AgentID: issue.AssigneeAgentID, Workspace: issue.Workspace,
 		Model: agenthost.ModelRef{Provider: "coordination", Model: "issue"}, Prompt: issue.Title,
 		Values: map[string]any{controlIssueIDValue: issue.ID, "control.taskId": taskID, "control.taskAgentId": issue.AssigneeTaskAgentID},
 	}}
 	if _, err = b.manager.EnsureTaskPhone(ctx, taskID, issue); err != nil {
-		return fmt.Errorf("provision task Phone: %w", err)
+		return "", fmt.Errorf("provision task Phone: %w", err)
 	}
 	if err = b.executions.Enqueue(ctx, execution); err != nil {
 		if errors.Is(err, coordination.ErrExecutionConflict) {
-			return nil
+			return coordinationExecutionID, nil
 		}
-		return err
+		return "", err
 	}
 	updated := b.manager.store.db.Model(&Issue{}).Where("id = ? AND status IN ?", issue.ID, []string{"todo"}).Updates(map[string]any{"execution_phase": "scheduled", "updated_at": time.Now()})
 	if updated.Error != nil || updated.RowsAffected != 1 {
 		_ = b.executions.Cancel(ctx, coordinationExecutionID, "Issue became unavailable before Coordination execution ownership was recorded")
 		if updated.Error != nil {
-			return updated.Error
+			return "", updated.Error
 		}
-		return errors.New("Issue 当前不可调度")
+		return "", errors.New("Issue 当前不可调度")
 	}
 	b.manager.store.notify()
-	return nil
+	return coordinationExecutionID, nil
 }
 
 func issueExecutionPriority(priority string) int {
@@ -971,7 +1052,7 @@ func (b *CoordinationBridge) EnqueuePreparedIssueExecution(ctx context.Context, 
 // Coordination execution. A sleeping Agent never occupies an ExecutionWorker;
 // the stable task Session is restored by NativeSessionDelivery when this new
 // turn is claimed.
-func (b *CoordinationBridge) EnqueueIssueResumeExecution(ctx context.Context, command coordination.AgentCommand) error {
+func (b *CoordinationBridge) EnqueueIssueResumeExecution(ctx context.Context, command boardcoordination.AgentCommand) error {
 	if b == nil || b.executions == nil || b.manager == nil || b.manager.store == nil {
 		return errors.New("control coordination: execution runtime is unavailable")
 	}
@@ -1107,7 +1188,7 @@ func (b *CoordinationBridge) CancelExecution(ctx context.Context, executionID, r
 }
 
 func (b *CoordinationBridge) createIssue(ctx context.Context, effect coordination.Effect) error {
-	var command coordination.CreateIssueCommand
+	var command boardcoordination.CreateIssueCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}
@@ -1123,7 +1204,7 @@ func (b *CoordinationBridge) createIssue(ctx context.Context, effect coordinatio
 }
 
 func (b *CoordinationBridge) assignIssue(ctx context.Context, effect coordination.Effect) error {
-	var command coordination.EnqueueIssueCommand
+	var command boardcoordination.EnqueueIssueCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}
@@ -1135,7 +1216,7 @@ func (b *CoordinationBridge) assignIssue(ctx context.Context, effect coordinatio
 }
 
 func (b *CoordinationBridge) sendRelay(ctx context.Context, effect coordination.Effect) error {
-	var command coordination.RelayCommand
+	var command boardcoordination.RelayCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}
@@ -1148,7 +1229,7 @@ func (b *CoordinationBridge) sendRelay(ctx context.Context, effect coordination.
 }
 
 func (b *CoordinationBridge) deliverMessage(ctx context.Context, effect coordination.Effect) error {
-	var command coordination.AgentCommand
+	var command boardcoordination.AgentCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}
@@ -1157,7 +1238,7 @@ func (b *CoordinationBridge) deliverMessage(ctx context.Context, effect coordina
 }
 
 func (b *CoordinationBridge) suspendAgent(_ context.Context, effect coordination.Effect) error {
-	var command coordination.AgentCommand
+	var command boardcoordination.AgentCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}
@@ -1169,7 +1250,7 @@ func (b *CoordinationBridge) suspendAgent(_ context.Context, effect coordination
 }
 
 func (b *CoordinationBridge) cancelWork(_ context.Context, effect coordination.Effect) error {
-	var command coordination.AgentCommand
+	var command boardcoordination.AgentCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}
@@ -1184,7 +1265,7 @@ func (b *CoordinationBridge) startSubagent(ctx context.Context, effect coordinat
 	if b.subagents == nil {
 		return errors.New("control coordination: direct subagent starter is not configured")
 	}
-	var command coordination.StartSubagentCommand
+	var command boardcoordination.StartSubagentCommand
 	if err := json.Unmarshal(effect.Payload, &command); err != nil {
 		return err
 	}

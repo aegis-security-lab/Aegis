@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"aegis/agenthost"
-	"aegis/coordination"
+	boardcoordination "aegis/apps/board/coordination"
 	"github.com/z3r2ne/agentcore"
 )
 
@@ -158,7 +158,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 	child, _ := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Child", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	now := time.Now()
 	_ = store.db.Model(&Issue{}).Where("id = ?", child.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"budget_exceeded"}), "execution_phase": "budget_exceeded", "result": "promising evidence", "completed_at": now}).Error
-	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: child.ID, Reason: "证据有价值，继续验证"}); err != nil {
+	if err = bridge.ContinueTerminalChildIssue(context.Background(), boardcoordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, boardcoordination.ContinueRequest{ChildIssueID: child.ID, Reason: "证据有价值，继续验证"}); err != nil {
 		t.Fatal(err)
 	}
 	reopened, _ := store.GetIssue(child.ID)
@@ -166,7 +166,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 		t.Fatalf("child was not reopened: %+v", reopened)
 	}
 	var pending int64
-	if err = store.db.Table("coordination_events").Where("payload LIKE ? AND payload LIKE ?", "%"+child.ID+"%", "%"+string(coordination.EventIssueAssigned)+"%").Count(&pending).Error; err != nil {
+	if err = store.db.Table("coordination_events").Where("payload LIKE ? AND payload LIKE ?", "%"+child.ID+"%", "%"+string(boardcoordination.EventIssueAssigned)+"%").Count(&pending).Error; err != nil {
 		t.Fatal(err)
 	}
 	if pending != 1 {
@@ -174,7 +174,7 @@ func TestParentCanExplicitlyContinueFailedOrBudgetExceededChild(t *testing.T) {
 	}
 	failedChild, _ := store.CreateIssue(CreateIssueInput{ParentID: root.ID, Title: "Failed child", Priority: "high", WorkMode: "autonomous", AssigneeAgentID: "frontend-engineer"})
 	_ = store.db.Model(&Issue{}).Where("id = ?", failedChild.ID).Updates(map[string]any{"status": "done", "labels": issueLabelsColumn([]string{"failed"}), "execution_phase": "completed", "error": "provider unavailable", "completed_at": now}).Error
-	if err = bridge.ContinueTerminalChildIssue(context.Background(), coordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, coordination.ContinueRequest{ChildIssueID: failedChild.ID, Reason: "临时错误，可以恢复"}); err != nil {
+	if err = bridge.ContinueTerminalChildIssue(context.Background(), boardcoordination.Invocation{IssueID: root.ID, AgentID: root.AssigneeAgentID, ExecutionID: "parent-execution"}, boardcoordination.ContinueRequest{ChildIssueID: failedChild.ID, Reason: "临时错误，可以恢复"}); err != nil {
 		t.Fatal(err)
 	}
 	retried, _ := store.GetIssue(failedChild.ID)

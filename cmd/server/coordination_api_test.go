@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"aegis/agenthost"
+	"aegis/apps/board/control"
 	"aegis/coordination"
-	"aegis/internal/control"
 	"github.com/z3r2ne/agentcore"
 )
 

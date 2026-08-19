@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"aegis/internal/control"
+	"aegis/apps/board/control"
 )
 
 func TestInputAttachmentUploadAPIsStreamAndDeleteStagedFiles(t *testing.T) {

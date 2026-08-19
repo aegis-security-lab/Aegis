@@ -26,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	"aegis/agenthost"
+	boardcoordination "aegis/apps/board/coordination"
 	"aegis/capability"
 	"aegis/coordination"
 	"aegis/observability"
@@ -1173,7 +1174,7 @@ func (m *Manager) resumeParent(parent Issue, children []Issue) {
 		}
 		commandID := fmt.Sprintf("child-outcome:%s:%d", parent.ID, latest.UnixNano())
 		message := childOutcomeWakeMessage(parent, children)
-		err := bridge.EnqueueIssueResumeExecution(context.Background(), coordination.AgentCommand{
+		err := bridge.EnqueueIssueResumeExecution(context.Background(), boardcoordination.AgentCommand{
 			CommandID: commandID, AgentID: parent.AssigneeAgentID, TaskAgentID: parent.AssigneeTaskAgentID,
 			IssueID: parent.ID, Message: message, Delivery: "steer",
 		})

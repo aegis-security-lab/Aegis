@@ -1,6 +1,7 @@
 # Go Agent Runtime 模块边界
 
 > 状态：原生 Go Agent loop、能力系统、协同决策、可靠执行和 SQLite 持久化已接入 Aegis。独立 Scheduler、兼容 Runner、切流开关和 legacy coordination mode 已删除。
+> 目标平台化边界见 [`agent-application-platform.md`](agent-application-platform.md)。本文中的 Board/Relay/Issue 是当前实现；最终它们迁入 Board Application，通用 Runtime 只接收 Agent Work 和 ExecutionSpec。
 
 ## 架构
 

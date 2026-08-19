@@ -1,6 +1,10 @@
-package agentapp
+package boardphone
 
-import "time"
+import (
+	"time"
+
+	. "aegis/agentapp"
+)
 
 // NewExampleModule returns a self-contained module with Board and Relay. It is
 // useful for protocol development and can be replaced with production

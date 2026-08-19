@@ -21,12 +21,15 @@ import (
 
 	"aegis/agentapp"
 	phonecap "aegis/agentapp/agentcoreadapter"
+	boardapp "aegis/apps/board"
+	"aegis/apps/board/control"
+	boardcoordination "aegis/apps/board/coordination"
 	"aegis/capability"
 	"aegis/coordination"
-	"aegis/internal/control"
 	"aegis/internal/webui"
 	"aegis/observability"
 	observabilitysqlite "aegis/observability/sqlitestore"
+	platformapp "aegis/platform/application"
 	"github.com/gin-gonic/gin"
 )
 
@@ -66,6 +69,10 @@ func main() {
 		log.Fatal(err)
 	}
 	defer manager.Close()
+	applications := platformapp.NewCatalog()
+	if err = applications.Register(boardapp.Module{}); err != nil {
+		log.Fatal(err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	workerID := envOr("AEGIS_WORKER_ID", "control-worker")
@@ -115,7 +122,7 @@ func main() {
 	manager.SetCoordination(coordinationBridge)
 	nativeCoordination.Bridge = coordinationBridge
 	defer coordinationBridge.Close()
-	router := buildRouterWithAuth(store, manager, envOr("AEGIS_DIST", "dist"), auth)
+	router := buildRouterWithApplications(store, manager, envOr("AEGIS_DIST", "dist"), auth, applications)
 	// Input attachments can be multi-gigabyte audit images. Keep the header
 	// timeout, but do not terminate a healthy streaming request after 30 seconds.
 	server := &http.Server{Addr: fmt.Sprintf("%s:%d", *listenHost, *port), Handler: router, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
@@ -183,6 +190,10 @@ func buildRouter(store *control.Store, manager *control.Manager, dist string) *g
 }
 
 func buildRouterWithAuth(store *control.Store, manager *control.Manager, dist string, auth *authService) *gin.Engine {
+	return buildRouterWithApplications(store, manager, dist, auth, nil)
+}
+
+func buildRouterWithApplications(store *control.Store, manager *control.Manager, dist string, auth *authService, applications *platformapp.Catalog) *gin.Engine {
 	r := gin.New()
 	r.Use(securityHeadersMiddleware(), observabilityMiddleware(store), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
@@ -196,6 +207,13 @@ func buildRouterWithAuth(store *control.Store, manager *control.Manager, dist st
 		api.GET("/auth/session", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	}
 	api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "time": time.Now()}) })
+	api.GET("/applications", func(c *gin.Context) {
+		if applications == nil {
+			c.JSON(http.StatusOK, gin.H{"applications": []any{}, "dataSpaces": []any{}})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"applications": applications.Applications(), "dataSpaces": applications.DataSpaces()})
+	})
 	api.GET("/observability/metrics", func(c *gin.Context) {
 		if system := store.Observability(); system != nil {
 			c.JSON(http.StatusOK, system.Metrics.Snapshot())
@@ -521,7 +539,7 @@ func buildRouterWithAuth(store *control.Store, manager *control.Manager, dist st
 			writeError(c, http.StatusServiceUnavailable, errors.New("coordination runtime is disabled"))
 			return
 		}
-		var input coordination.AgentInvocation
+		var input boardcoordination.AgentInvocation
 		if !bindJSON(c, &input) {
 			return
 		}
@@ -547,8 +565,8 @@ func buildRouterWithAuth(store *control.Store, manager *control.Manager, dist st
 			return
 		}
 		var input struct {
-			IssueID string                 `json:"issueId"`
-			Child   coordination.ChildWork `json:"child"`
+			IssueID string                      `json:"issueId"`
+			Child   boardcoordination.ChildWork `json:"child"`
 		}
 		if !bindJSON(c, &input) {
 			return

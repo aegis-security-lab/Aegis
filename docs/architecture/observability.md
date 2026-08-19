@@ -2,7 +2,7 @@
 
 ## Runtime observability
 
-`observability` is an independent Go package. It provides correlation context, structured logging, redaction, in-memory metrics, and lightweight spans. `observability/sqlitestore` implements `slog.Handler` over the control-plane GORM connection, so log records and task state share the same SQLite database without coupling runtime libraries to `internal/control`.
+`observability` is an independent Go package. It provides correlation context, structured logging, redaction, in-memory metrics, and lightweight spans. `observability/sqlitestore` implements `slog.Handler` over the control-plane GORM connection, so log records and task state share the same SQLite database without coupling runtime libraries to `apps/board/control`.
 
 Correlation fields are propagated rather than reconstructed from log text:
 

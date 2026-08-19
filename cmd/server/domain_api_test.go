@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"aegis/internal/control"
+	"aegis/apps/board/control"
 )
 
 func TestFindingsAPI(t *testing.T) {

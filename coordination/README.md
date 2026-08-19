@@ -22,7 +22,7 @@ type Mode interface {
 
 `MemoryRepository` 用于嵌入与测试，`sqlitestore` 提供 WAL、原子 claim、租约 fencing、幂等 outbox、延迟 effect 和重启恢复。默认失败八次后进入 `failed`，避免永久错误饿死队列。
 
-Aegis 适配位于 `internal/control/coordination_bridge.go`；它不是该库的依赖。AgentCore 工具适配位于 `agentcoreadapter`。
+Aegis 适配位于 `apps/board/control/coordination_bridge.go`；它不是该库的依赖。AgentCore 工具适配位于 `agentcoreadapter`。
 
 ## 能力与插件控制
 

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"aegis/agenthost"
+	boardcoordination "aegis/apps/board/coordination"
 	"aegis/capability"
-	"aegis/coordination"
 	"github.com/z3r2ne/agentcore"
 )
 
@@ -81,7 +81,7 @@ func TestNativeSessionDeliveryInjectsFollowUpIntoRunningParent(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("parent did not start")
 	}
-	if err = delivery.DeliverCoordinationMessage(context.Background(), coordination.AgentCommand{AgentID: "parent-agent", IssueID: "parent-issue", Message: "child evidence", Delivery: "follow_up"}); err != nil {
+	if err = delivery.DeliverCoordinationMessage(context.Background(), boardcoordination.AgentCommand{AgentID: "parent-agent", IssueID: "parent-issue", Message: "child evidence", Delivery: "follow_up"}); err != nil {
 		t.Fatal(err)
 	}
 	close(model.release)

@@ -53,10 +53,45 @@ type Execution struct {
 	FinishedAt     *time.Time              `json:"finishedAt,omitempty"`
 	LastError      string                  `json:"lastError,omitempty"`
 	Result         *agenthost.Result       `json:"result,omitempty"`
+	Origin         ExecutionOrigin         `json:"origin,omitempty"`
 
 	LeaseOwner     string     `json:"leaseOwner,omitempty"`
 	LeaseToken     string     `json:"leaseToken,omitempty"`
 	LeaseExpiresAt *time.Time `json:"leaseExpiresAt,omitempty"`
+}
+
+// ExecutionOrigin links a generic platform execution back to the Application
+// Work request that created it. It contains correlation only, never product
+// domain fields such as Issue ID.
+type ExecutionOrigin struct {
+	AppID         string `json:"appId,omitempty"`
+	TenantID      string `json:"tenantId,omitempty"`
+	ScopeID       string `json:"scopeId,omitempty"`
+	CorrelationID string `json:"correlationId,omitempty"`
+	RequestID     string `json:"requestId,omitempty"`
+	WorkID        string `json:"workId,omitempty"`
+	TraceID       string `json:"traceId,omitempty"`
+}
+
+type ExecutionTransition string
+
+const (
+	TransitionClaimed        ExecutionTransition = "claimed"
+	TransitionStarted        ExecutionTransition = "started"
+	TransitionAttemptFailed  ExecutionTransition = "attempt_failed"
+	TransitionRetryScheduled ExecutionTransition = "retry_scheduled"
+	TransitionCompleted      ExecutionTransition = "completed"
+	TransitionFailed         ExecutionTransition = "failed"
+)
+
+type ExecutionLifecycleSink interface {
+	RecordExecutionTransition(context.Context, Execution, ExecutionTransition, error) error
+}
+
+type ExecutionLifecycleSinkFunc func(context.Context, Execution, ExecutionTransition, error) error
+
+func (f ExecutionLifecycleSinkFunc) RecordExecutionTransition(ctx context.Context, execution Execution, transition ExecutionTransition, runErr error) error {
+	return f(ctx, execution, transition, runErr)
 }
 
 type ExecutionClaim struct {

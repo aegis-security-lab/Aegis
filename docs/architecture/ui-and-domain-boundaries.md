@@ -1,8 +1,10 @@
 # UI 与领域边界
 
+> 当前实现说明。目标应用边界见 [`agent-application-platform.md`](agent-application-platform.md)。最终 React shell 负责组合已注册应用；Task、Issue、验收、Relay 及其页面属于 Board Web Application，不是平台固定导航或领域。
+
 ## 产品信息架构
 
-管理端不是由每个 Go 模块各自携带一套 Web UI。所有人类操作界面由 `src/` 下的 React 应用统一组合；Go 模块提供领域能力、接口和持久化，`cmd/server` 只负责装配和 HTTP 适配。
+当前所有人类操作界面由 `src/` 下的 React 应用统一组合。目标状态仍保留统一 shell，但应用注册自己的路由、导航和页面 bundle；Go 平台不固定 Board 信息架构，`cmd/server` 只负责平台与应用装配和 HTTP 适配。
 
 左侧导航按使用者的工作心智分成三组：
 
@@ -16,7 +18,7 @@
 
 | 场景 | React UI | 领域逻辑 | 持久化 |
 | --- | --- | --- | --- |
-| 编辑 Agent 类型默认能力 | `src/pages/agents.tsx` | `internal/control/agent_types.go`、Store Agent API | `agents` |
+| 编辑 Agent 类型默认能力 | `src/pages/agents.tsx` | `apps/board/control/agent_types.go`、Store Agent API | `agents` |
 | 查看能力注册与最终能力包 | `src/pages/capabilities.tsx` | `coordination.CapabilityPlanner`、`capability.Registry` | Coordination binding / Execution snapshot |
 | 创建任务并选择根 Agent 类型 | `src/pages/task-new.tsx` | Store 创建根 Issue，Coordination 接管分配 | `issues`、`task_agents`、Coordination tables |
 | 查看任务编队和每台 Phone | `src/pages/task-detail.tsx` | `TaskAgents`、`TaskPhones` 查询 | `task_agents`、`agent_app_phone_sessions` |

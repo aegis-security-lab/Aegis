@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"aegis/agentapp"
+	boardphone "aegis/apps/board/phone"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	_, _, server, _, err := agentapp.NewPersistentExampleModule(databasePath)
+	_, _, server, _, err := boardphone.NewPersistentExampleModule(databasePath)
 	if err != nil {
 		log.Fatal(err)
 	}

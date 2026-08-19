@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"aegis/agentapp"
+	boardcoordination "aegis/apps/board/coordination"
+	boardphone "aegis/apps/board/phone"
 	"aegis/capability"
 	"aegis/coordination"
 )
@@ -161,7 +163,7 @@ func (c AgentPhoneClient) RunShortcut(ctx context.Context, request agentapp.Shor
 
 type controlBoardRepository struct{ manager *Manager }
 
-func (r controlBoardRepository) ListIssues(ctx context.Context, actor agentapp.Actor, query string) ([]agentapp.BoardIssue, error) {
+func (r controlBoardRepository) ListIssues(ctx context.Context, actor agentapp.Actor, query string) ([]boardphone.BoardIssue, error) {
 	if r.manager == nil || r.manager.store == nil {
 		return nil, errors.New("control: Board store is unavailable")
 	}
@@ -187,7 +189,7 @@ func (r controlBoardRepository) ListIssues(ctx context.Context, actor agentapp.A
 		return nil, agentapp.ErrPermissionDenied
 	}
 	query = strings.ToLower(strings.TrimSpace(query))
-	result := make([]agentapp.BoardIssue, 0, len(issues))
+	result := make([]boardphone.BoardIssue, 0, len(issues))
 	taskSourceByIssueID := map[string]string{coordinationRoot.ID: taskSourceID}
 	for _, issue := range issues {
 		issueTaskSourceID, found := taskSourceIDFromIssueSet(issue, issueByID, taskSourceByIssueID)
@@ -202,25 +204,25 @@ func (r controlBoardRepository) ListIssues(ctx context.Context, actor agentapp.A
 	return result, nil
 }
 
-func (r controlBoardRepository) GetIssue(_ context.Context, actor agentapp.Actor, id string) (agentapp.BoardIssue, []agentapp.BoardComment, error) {
+func (r controlBoardRepository) GetIssue(_ context.Context, actor agentapp.Actor, id string) (boardphone.BoardIssue, []boardphone.BoardComment, error) {
 	if r.manager == nil || r.manager.store == nil {
-		return agentapp.BoardIssue{}, nil, errors.New("control: Board store is unavailable")
+		return boardphone.BoardIssue{}, nil, errors.New("control: Board store is unavailable")
 	}
 	taskSourceID, err := r.actorTaskSourceID(actor)
 	if err != nil {
-		return agentapp.BoardIssue{}, nil, err
+		return boardphone.BoardIssue{}, nil, err
 	}
 	detail, err := r.manager.store.GetIssueDetail(id)
 	if err != nil {
-		return agentapp.BoardIssue{}, nil, err
+		return boardphone.BoardIssue{}, nil, err
 	}
 	root, rootErr := r.manager.store.taskRoot(detail.Issue)
 	if rootErr != nil || strings.TrimSpace(root.TaskSourceID) == "" || root.TaskSourceID != taskSourceID {
-		return agentapp.BoardIssue{}, nil, agentapp.ErrPermissionDenied
+		return boardphone.BoardIssue{}, nil, agentapp.ErrPermissionDenied
 	}
-	comments := make([]agentapp.BoardComment, len(detail.Comments))
+	comments := make([]boardphone.BoardComment, len(detail.Comments))
 	for index, comment := range detail.Comments {
-		comments[index] = agentapp.BoardComment{ID: comment.ID, IssueID: comment.IssueID, AuthorID: comment.AuthorID, Body: comment.Body, CreatedAt: comment.CreatedAt}
+		comments[index] = boardphone.BoardComment{ID: comment.ID, IssueID: comment.IssueID, AuthorID: comment.AuthorID, Body: comment.Body, CreatedAt: comment.CreatedAt}
 	}
 	return r.boardIssue(detail.Issue), comments, nil
 }
@@ -277,22 +279,22 @@ func taskSourceIDFromIssueSet(issue Issue, issueByID map[string]Issue, cache map
 	}
 }
 
-func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.Actor, input agentapp.BoardCreateIssueRequest, _ string) (agentapp.BoardIssue, error) {
+func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.Actor, input boardphone.BoardCreateIssueRequest, _ string) (boardphone.BoardIssue, error) {
 	current, err := r.currentIssue(actor)
 	if err != nil {
-		return agentapp.BoardIssue{}, err
+		return boardphone.BoardIssue{}, err
 	}
 	parentID := strings.TrimSpace(input.ParentIssueID)
 	if parentID == "" {
 		parentID = current.ID
 	}
 	if _, _, err = r.GetIssue(ctx, actor, parentID); err != nil {
-		return agentapp.BoardIssue{}, err
+		return boardphone.BoardIssue{}, err
 	}
 	assigneeID := strings.TrimSpace(input.AssigneeAgentID)
 	if assigneeID != "" {
 		if err = r.manager.store.ValidateDelegation(actor.AgentID, assigneeID); err != nil {
-			return agentapp.BoardIssue{}, err
+			return boardphone.BoardIssue{}, err
 		}
 	}
 	status := strings.TrimSpace(input.Status)
@@ -300,7 +302,7 @@ func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.
 		status = "todo"
 	}
 	if status != "todo" {
-		return agentapp.BoardIssue{}, errors.New("Phone Board 创建 Issue 时状态只能是 todo")
+		return boardphone.BoardIssue{}, errors.New("Phone Board 创建 Issue 时状态只能是 todo")
 	}
 	attachmentIDs := r.manager.store.InputAttachmentIDsForExecution(actor.ExecutionID)
 	created, err := r.manager.store.CreateIssue(CreateIssueInput{
@@ -310,12 +312,12 @@ func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.
 		CreatedBy: actorRoutingID(actor),
 	})
 	if err != nil {
-		return agentapp.BoardIssue{}, err
+		return boardphone.BoardIssue{}, err
 	}
 	if assigneeID != "" && created.Status == "todo" {
 		if bridge := r.manager.Coordination(); bridge != nil {
 			if err = bridge.SubmitIssueCreated(ctx, created); err != nil {
-				return agentapp.BoardIssue{}, err
+				return boardphone.BoardIssue{}, err
 			}
 		} else {
 			r.manager.notifyBoardAssignment(actorRoutingID(actor), created, "Phone Board 创建并委派了 Issue")
@@ -325,19 +327,19 @@ func (r controlBoardRepository) CreateIssue(ctx context.Context, actor agentapp.
 	return r.boardIssue(created), nil
 }
 
-func (r controlBoardRepository) UpdateIssue(ctx context.Context, actor agentapp.Actor, input agentapp.BoardUpdateIssueRequest, _ string) (agentapp.BoardIssue, error) {
+func (r controlBoardRepository) UpdateIssue(ctx context.Context, actor agentapp.Actor, input boardphone.BoardUpdateIssueRequest, _ string) (boardphone.BoardIssue, error) {
 	issueID := strings.TrimSpace(input.IssueID)
 	if issueID == "" {
-		return agentapp.BoardIssue{}, agentapp.ErrValidation
+		return boardphone.BoardIssue{}, agentapp.ErrValidation
 	}
 	if _, _, err := r.GetIssue(ctx, actor, issueID); err != nil {
-		return agentapp.BoardIssue{}, err
+		return boardphone.BoardIssue{}, err
 	}
 	if input.AssigneeAgentID != nil {
 		*input.AssigneeAgentID = strings.TrimSpace(*input.AssigneeAgentID)
 		if *input.AssigneeAgentID != "" {
 			if err := r.manager.store.ValidateDelegation(actor.AgentID, *input.AssigneeAgentID); err != nil {
-				return agentapp.BoardIssue{}, err
+				return boardphone.BoardIssue{}, err
 			}
 		}
 	}
@@ -351,22 +353,22 @@ func (r controlBoardRepository) UpdateIssue(ctx context.Context, actor agentapp.
 		update.Status = nil
 		if hasBoardIssueUpdate(update) {
 			if _, err := r.manager.UpdateBoardIssue(issueID, update); err != nil {
-				return agentapp.BoardIssue{}, err
+				return boardphone.BoardIssue{}, err
 			}
 		}
 		reason := fallback(strings.TrimSpace(input.Reason), "Agent 通过 Phone Board 取消了 Issue")
 		cancelled, err := r.manager.archiveBoardIssue(issueID, reason)
 		if err != nil {
-			return agentapp.BoardIssue{}, err
+			return boardphone.BoardIssue{}, err
 		}
 		return r.boardIssue(cancelled), nil
 	}
 	if !hasBoardIssueUpdate(update) {
-		return agentapp.BoardIssue{}, agentapp.ErrValidation
+		return boardphone.BoardIssue{}, agentapp.ErrValidation
 	}
 	updated, err := r.manager.UpdateBoardIssue(issueID, update)
 	if err != nil {
-		return agentapp.BoardIssue{}, err
+		return boardphone.BoardIssue{}, err
 	}
 	return r.boardIssue(updated), nil
 }
@@ -386,21 +388,21 @@ func (r controlBoardRepository) DeleteIssue(ctx context.Context, actor agentapp.
 	return result.DeletedIssues, nil
 }
 
-func (r controlBoardRepository) Delegate(ctx context.Context, actor agentapp.Actor, request agentapp.BoardDelegationRequest, key string) error {
+func (r controlBoardRepository) Delegate(ctx context.Context, actor agentapp.Actor, request boardphone.BoardDelegationRequest, key string) error {
 	issue, err := r.currentIssue(actor)
 	if err != nil {
 		return err
 	}
-	children := make([]coordination.ChildWork, len(request.Children))
+	children := make([]boardcoordination.ChildWork, len(request.Children))
 	for index, child := range request.Children {
 		capabilities := make([]capability.Ref, len(child.Capabilities))
 		for capabilityIndex, item := range child.Capabilities {
 			capabilities[capabilityIndex] = capability.Ref{Kind: capability.Kind(item.Kind), Name: item.Name, Version: item.Version, Config: item.Config, Optional: item.Optional}
 		}
-		children[index] = coordination.ChildWork{AgentID: child.AgentID, Title: child.Title, Prompt: child.Prompt, Priority: child.Priority, Workspace: child.Workspace, Capabilities: capabilities, CapabilitySelection: coordination.CapabilitySelection(child.CapabilitySelection)}
+		children[index] = boardcoordination.ChildWork{AgentID: child.AgentID, Title: child.Title, Prompt: child.Prompt, Priority: child.Priority, Workspace: child.Workspace, Capabilities: capabilities, CapabilitySelection: coordination.CapabilitySelection(child.CapabilitySelection)}
 	}
 	invocation := r.invocation(actor, issue, key, "delegate")
-	return ManagerBoardCoordinator{Manager: r.manager}.Delegate(ctx, invocation, coordination.DelegationRequest{Children: children, ParentBehavior: request.ParentBehavior, ResultDelivery: request.ResultDelivery})
+	return ManagerBoardCoordinator{Manager: r.manager}.Delegate(ctx, invocation, boardcoordination.DelegationRequest{Children: children, ParentBehavior: request.ParentBehavior, ResultDelivery: request.ResultDelivery})
 }
 
 func (r controlBoardRepository) Continue(ctx context.Context, actor agentapp.Actor, childIssueID, reason, key string) error {
@@ -408,7 +410,7 @@ func (r controlBoardRepository) Continue(ctx context.Context, actor agentapp.Act
 	if err != nil {
 		return err
 	}
-	return ManagerBoardCoordinator{Manager: r.manager}.Continue(ctx, r.invocation(actor, issue, key, "continue"), coordination.ContinueRequest{ChildIssueID: childIssueID, Reason: reason})
+	return ManagerBoardCoordinator{Manager: r.manager}.Continue(ctx, r.invocation(actor, issue, key, "continue"), boardcoordination.ContinueRequest{ChildIssueID: childIssueID, Reason: reason})
 }
 
 func (r controlBoardRepository) Wait(ctx context.Context, actor agentapp.Actor, childIDs []string, wakeAfterSeconds int64, message, key string) error {
@@ -416,7 +418,7 @@ func (r controlBoardRepository) Wait(ctx context.Context, actor agentapp.Actor, 
 	if err != nil {
 		return err
 	}
-	return ManagerBoardCoordinator{Manager: r.manager}.Wait(ctx, r.invocation(actor, issue, key, "sleep"), coordination.WaitRequest{ChildIDs: childIDs, WakeAfterSeconds: wakeAfterSeconds, Message: message})
+	return ManagerBoardCoordinator{Manager: r.manager}.Wait(ctx, r.invocation(actor, issue, key, "sleep"), boardcoordination.WaitRequest{ChildIDs: childIDs, WakeAfterSeconds: wakeAfterSeconds, Message: message})
 }
 
 func (r controlBoardRepository) currentIssue(actor agentapp.Actor) (Issue, error) {
@@ -438,28 +440,28 @@ func (r controlBoardRepository) currentIssue(actor agentapp.Actor) (Issue, error
 	return issue, nil
 }
 
-func (r controlBoardRepository) invocation(actor agentapp.Actor, issue Issue, key, action string) coordination.Invocation {
+func (r controlBoardRepository) invocation(actor agentapp.Actor, issue Issue, key, action string) boardcoordination.Invocation {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		key = nextID("phone-shortcut")
 	}
-	return coordination.Invocation{EventID: fmt.Sprintf("phone-board:%s:%s:%s", actor.ExecutionID, action, key), IssueID: issue.ID, ExecutionID: actor.ExecutionID, AgentID: actor.AgentID}
+	return boardcoordination.Invocation{EventID: fmt.Sprintf("phone-board:%s:%s:%s", actor.ExecutionID, action, key), IssueID: issue.ID, ExecutionID: actor.ExecutionID, AgentID: actor.AgentID}
 }
 
-func (r controlBoardRepository) AddComment(ctx context.Context, actor agentapp.Actor, issueID, body, _ string) (agentapp.BoardComment, error) {
+func (r controlBoardRepository) AddComment(ctx context.Context, actor agentapp.Actor, issueID, body, _ string) (boardphone.BoardComment, error) {
 	if _, _, err := r.GetIssue(ctx, actor, issueID); err != nil {
-		return agentapp.BoardComment{}, err
+		return boardphone.BoardComment{}, err
 	}
 	comment := r.manager.addTypedAgentComment(issueID, actorRoutingID(actor), "normal", body, actor.ExecutionID, []commentWakeupTarget{})
 	if comment == nil {
-		return agentapp.BoardComment{}, agentapp.ErrValidation
+		return boardphone.BoardComment{}, agentapp.ErrValidation
 	}
 	r.manager.store.notify()
-	return agentapp.BoardComment{ID: comment.ID, IssueID: comment.IssueID, AuthorID: comment.AuthorID, Body: comment.Body, CreatedAt: comment.CreatedAt}, nil
+	return boardphone.BoardComment{ID: comment.ID, IssueID: comment.IssueID, AuthorID: comment.AuthorID, Body: comment.Body, CreatedAt: comment.CreatedAt}, nil
 }
 
-func (r controlBoardRepository) boardIssue(issue Issue) agentapp.BoardIssue {
-	result := agentapp.BoardIssue{
+func (r controlBoardRepository) boardIssue(issue Issue) boardphone.BoardIssue {
+	result := boardphone.BoardIssue{
 		ID: issue.ID, Identifier: issue.Identifier, Title: issue.Title, Description: issue.Description, Objective: issue.Objective,
 		Status: issue.Status, WorkflowStatus: issue.Status, Priority: issue.Priority, AssigneeID: issue.AssigneeAgentID, AssigneeTaskAgentID: issue.AssigneeTaskAgentID,
 		ExecutionPhase: issue.ExecutionPhase, Blocked: hasIssueLabel(issue, issueLabelBlocked) || issue.ExecutionPhase == "blocked", UpdatedAt: issue.UpdatedAt,
@@ -484,34 +486,34 @@ func (r controlBoardRepository) boardIssue(issue Issue) agentapp.BoardIssue {
 type controlRelayRepository struct {
 	store *Store
 	mu    sync.Mutex
-	keys  map[string]agentapp.RelayMessage
+	keys  map[string]boardphone.RelayMessage
 }
 
-func (r *controlRelayRepository) Inbox(_ context.Context, actor agentapp.Actor) ([]agentapp.RelayThread, error) {
+func (r *controlRelayRepository) Inbox(_ context.Context, actor agentapp.Actor) ([]boardphone.RelayThread, error) {
 	items, err := r.store.RelayInboxForTask(actorRoutingID(actor), actor.TaskID)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]agentapp.RelayThread, len(items))
+	result := make([]boardphone.RelayThread, len(items))
 	for index, item := range items {
-		result[index] = agentapp.RelayThread{ID: item.Thread.ID, Title: item.Thread.Title, ParticipantIDs: append([]string(nil), item.Thread.ParticipantIDs...), UpdatedAt: item.Thread.UpdatedAt}
+		result[index] = boardphone.RelayThread{ID: item.Thread.ID, Title: item.Thread.Title, ParticipantIDs: append([]string(nil), item.Thread.ParticipantIDs...), UpdatedAt: item.Thread.UpdatedAt}
 	}
 	return result, nil
 }
 
-func (r *controlRelayRepository) Messages(_ context.Context, actor agentapp.Actor, threadID string) ([]agentapp.RelayMessage, error) {
+func (r *controlRelayRepository) Messages(_ context.Context, actor agentapp.Actor, threadID string) ([]boardphone.RelayMessage, error) {
 	conversation, err := r.store.RelayConversationForTask(actorRoutingID(actor), threadID, actor.TaskID, true)
 	if err != nil {
 		return nil, agentapp.ErrPermissionDenied
 	}
-	result := make([]agentapp.RelayMessage, len(conversation.Messages))
+	result := make([]boardphone.RelayMessage, len(conversation.Messages))
 	for index, message := range conversation.Messages {
-		result[index] = agentapp.RelayMessage{ID: message.ID, ThreadID: message.ThreadID, SenderID: message.SenderID, Body: message.Body, CreatedAt: message.CreatedAt}
+		result[index] = boardphone.RelayMessage{ID: message.ID, ThreadID: message.ThreadID, SenderID: message.SenderID, Body: message.Body, CreatedAt: message.CreatedAt}
 	}
 	return result, nil
 }
 
-func (r *controlRelayRepository) Send(_ context.Context, actor agentapp.Actor, threadID, body, key string) (agentapp.RelayMessage, error) {
+func (r *controlRelayRepository) Send(_ context.Context, actor agentapp.Actor, threadID, body, key string) (boardphone.RelayMessage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if key != "" {
@@ -523,7 +525,7 @@ func (r *controlRelayRepository) Send(_ context.Context, actor agentapp.Actor, t
 	senderRoutingID := actorRoutingID(actor)
 	conversation, err := r.store.RelayConversationForTask(senderRoutingID, threadID, actor.TaskID, false)
 	if err != nil {
-		return agentapp.RelayMessage{}, agentapp.ErrPermissionDenied
+		return boardphone.RelayMessage{}, agentapp.ErrPermissionDenied
 	}
 	recipient := ""
 	for _, id := range conversation.Thread.ParticipantIDs {
@@ -533,7 +535,7 @@ func (r *controlRelayRepository) Send(_ context.Context, actor agentapp.Actor, t
 		}
 	}
 	if recipient == "" {
-		return agentapp.RelayMessage{}, agentapp.ErrValidation
+		return boardphone.RelayMessage{}, agentapp.ErrValidation
 	}
 	input := SendRelayMessageInput{Body: body, TaskID: actor.TaskID, IssueID: actor.TaskID}
 	if identity, identityErr := r.store.taskAgent(actor.TaskID, recipient); identityErr == nil {
@@ -544,9 +546,9 @@ func (r *controlRelayRepository) Send(_ context.Context, actor agentapp.Actor, t
 	}
 	message, err := r.store.SendRelayMessage("agent", senderRoutingID, input)
 	if err != nil {
-		return agentapp.RelayMessage{}, err
+		return boardphone.RelayMessage{}, err
 	}
-	converted := agentapp.RelayMessage{ID: message.ID, ThreadID: message.ThreadID, SenderID: message.SenderID, Body: message.Body, CreatedAt: message.CreatedAt}
+	converted := boardphone.RelayMessage{ID: message.ID, ThreadID: message.ThreadID, SenderID: message.SenderID, Body: message.Body, CreatedAt: message.CreatedAt}
 	if key != "" {
 		r.keys[key] = converted
 	}
@@ -561,11 +563,11 @@ func NewControlAgentPhone(manager *Manager) (*agentapp.Phone, AgentPhoneClient, 
 	}
 	registry := agentapp.NewRegistry()
 	board := controlBoardRepository{manager: manager}
-	if err := registry.Register(agentapp.NewCoordinatedBoardApp(board, board)); err != nil {
+	if err := registry.Register(boardphone.NewCoordinatedBoardApp(board, board)); err != nil {
 		return nil, AgentPhoneClient{}, err
 	}
-	relay := &controlRelayRepository{store: manager.store, keys: make(map[string]agentapp.RelayMessage)}
-	if err := registry.Register(agentapp.NewRelayApp(relay)); err != nil {
+	relay := &controlRelayRepository{store: manager.store, keys: make(map[string]boardphone.RelayMessage)}
+	if err := registry.Register(boardphone.NewRelayApp(relay)); err != nil {
 		return nil, AgentPhoneClient{}, err
 	}
 	persistence, err := agentapp.NewGormStore(manager.store.db)
@@ -576,7 +578,7 @@ func NewControlAgentPhone(manager *Manager) (*agentapp.Phone, AgentPhoneClient, 
 	return phone, AgentPhoneClient{Phone: phone}, nil
 }
 
-var _ agentapp.BoardRepository = controlBoardRepository{}
-var _ agentapp.BoardCoordinator = controlBoardRepository{}
-var _ agentapp.BoardIssueManager = controlBoardRepository{}
-var _ agentapp.RelayRepository = (*controlRelayRepository)(nil)
+var _ boardphone.BoardRepository = controlBoardRepository{}
+var _ boardphone.BoardCoordinator = controlBoardRepository{}
+var _ boardphone.BoardIssueManager = controlBoardRepository{}
+var _ boardphone.RelayRepository = (*controlRelayRepository)(nil)

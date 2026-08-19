@@ -1,18 +1,20 @@
-# Coordination 控制平面
+# Coordination 控制平面（当前实现与迁移）
+
+> 目标边界以 [`agent-application-platform.md`](agent-application-platform.md) 为准。本文描述当前 Board 驱动实现以及向通用 Agent Work Scheduler 迁移时需要保留的可靠性机制。目标状态下，Queue、lease、retry、inbox/outbox 和 timer 属于平台；Issue、Relay、验收和 `board_autonomy` 属于 Board Application Controller。
 
 ## 责任边界
 
-Coordination 是编排逻辑的单一入口，但不是一个吞掉所有实现的巨型包。它拥有决策，其他模块拥有机制：
+当前 Coordination 是 Board 编排逻辑的单一入口，但不是未来所有应用共享的一套业务工作流。迁移后平台拥有机制，各应用 Controller 拥有决策：
 
 | 责任 | 所有者 |
 | --- | --- |
-| 选择协同模式、父子关系、继续或等待、结果路由 | Coordination Mode |
+| Board 父子关系、继续或等待、结果路由 | Board Application Controller |
 | 决定一次 Agent 执行可见的插件、Skill、软件和工具 | Coordination CapabilityPlanner |
-| 接收主动调用、Board 事件、Relay 事件、定时唤醒 | Coordination gateway |
+| 接收应用 Agent Work/Control 请求 | 平台 Agent Work gateway |
 | 可靠保存决策、重试副作用 | Coordination inbox/outbox |
 | 排队、租约、重试、取消、调用 Runner | Coordination Execution |
 | 解析模型与 capability、运行 Agent loop | AgentHost / AgentCore |
-| 提供 Board、Relay 等软件行为 | Agent Phone App |
+| 提供 Board、Relay 等软件行为 | Board Application / Board Phone 模块 |
 | 建立 MCP 连接和发现工具 | MCP Connector |
 | 保存业务、执行与审计事实 | 各 Store adapter |
 
@@ -33,7 +35,7 @@ flowchart LR
     R --> Apps["Phone apps / Skills / MCP / Web / Tools"]
 ```
 
-当前产品只注册 `board_autonomy`；若未来替换协作策略，决策代码仍只需实现纯 `Mode.Decide`。“新插件/软件”只实现 `capability.Source` 或注册 Phone App；两者不互相依赖。
+当前产品只注册 `board_autonomy`。迁移中保留纯决策和 durable effect 的优点，但把该 Mode 及其 Issue/Relay typed contracts 移入 Board。新应用注册自己的 Controller、Phone App、DataSpace、Agent/Prompt 和 Capability，不修改平台调度核心。
 
 ## 一次执行的授权链
 

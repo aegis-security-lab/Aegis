@@ -1,4 +1,4 @@
-package agentapp
+package agentapp_test
 
 import (
 	"bytes"
@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	. "aegis/agentapp"
+	. "aegis/apps/board/phone"
 )
 
 func testModule(t *testing.T) (*Phone, *MemoryBoardRepository, *MemoryRelayRepository) {

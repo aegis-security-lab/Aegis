@@ -11,31 +11,14 @@ import (
 type EventType string
 
 const (
-	EventDelegationRequested EventType = "delegation_requested"
-	EventIssueCreated        EventType = "issue_created"
-	EventIssueAssigned       EventType = "issue_assigned"
-	EventIssueCompleted      EventType = "issue_completed"
-	EventExecutionCompleted  EventType = "execution_completed"
-	EventRelayReceived       EventType = "relay_received"
-	EventWaitRequested       EventType = "wait_requested"
-	EventTimerFired          EventType = "timer_fired"
-	EventAgentStopped        EventType = "agent_stopped"
-	EventModeChanged         EventType = "mode_changed"
+	EventTimerFired  EventType = "timer_fired"
+	EventModeChanged EventType = "mode_changed"
 )
 
 type EffectType string
 
 const (
-	EffectCreateIssue    EffectType = "create_issue"
-	EffectAssignIssue    EffectType = "assign_issue"
-	EffectEnqueueIssue   EffectType = "enqueue_issue"
-	EffectStartSubagent  EffectType = "start_subagent"
-	EffectSuspendAgent   EffectType = "suspend_agent"
-	EffectResumeAgent    EffectType = "resume_agent"
-	EffectDeliverMessage EffectType = "deliver_message"
-	EffectSendRelay      EffectType = "send_relay"
 	EffectScheduleWakeup EffectType = "schedule_wakeup"
-	EffectCancelWork     EffectType = "cancel_work"
 )
 
 type Status string
@@ -47,23 +30,70 @@ const (
 	StatusFailed     Status = "failed"
 )
 
-// Event is the durable input to a coordination Mode. CoordinationID normally
-// identifies a Task; it is the unit on which a mode/version is pinned.
+// Event is the durable, application-neutral input to a coordination Mode.
+// CoordinationID is the scope on which a mode/version is pinned; SubjectID
+// and actor fields are opaque identifiers interpreted only by that mode.
 type Event struct {
-	ID                string          `json:"id"`
-	Type              EventType       `json:"type"`
-	CoordinationID    string          `json:"coordinationId"`
-	TaskID            string          `json:"taskId,omitempty"`
-	IssueID           string          `json:"issueId,omitempty"`
-	ParentIssueID     string          `json:"parentIssueId,omitempty"`
-	ExecutionID       string          `json:"executionId,omitempty"`
-	AgentID           string          `json:"agentId,omitempty"`
-	TaskAgentID       string          `json:"taskAgentId,omitempty"`
-	ParentAgentID     string          `json:"parentAgentId,omitempty"`
-	ParentTaskAgentID string          `json:"parentTaskAgentId,omitempty"`
-	CorrelationID     string          `json:"correlationId,omitempty"`
-	OccurredAt        time.Time       `json:"occurredAt"`
-	Payload           json.RawMessage `json:"payload,omitempty"`
+	ID                    string          `json:"id"`
+	Type                  EventType       `json:"type"`
+	CoordinationID        string          `json:"coordinationId"`
+	ScopeID               string          `json:"scopeId,omitempty"`
+	SubjectID             string          `json:"subjectId,omitempty"`
+	ParentSubjectID       string          `json:"parentSubjectId,omitempty"`
+	ExecutionID           string          `json:"executionId,omitempty"`
+	ActorID               string          `json:"actorId,omitempty"`
+	ActorInstanceID       string          `json:"actorInstanceId,omitempty"`
+	ParentActorID         string          `json:"parentActorId,omitempty"`
+	ParentActorInstanceID string          `json:"parentActorInstanceId,omitempty"`
+	CorrelationID         string          `json:"correlationId,omitempty"`
+	OccurredAt            time.Time       `json:"occurredAt"`
+	Payload               json.RawMessage `json:"payload,omitempty"`
+}
+
+// UnmarshalJSON accepts the generic envelope and the legacy Board field names
+// previously persisted by Aegis. New events are always marshalled with generic
+// names, while existing queues remain restart-compatible during migration.
+func (e *Event) UnmarshalJSON(data []byte) error {
+	type eventAlias Event
+	var current eventAlias
+	if err := json.Unmarshal(data, &current); err != nil {
+		return err
+	}
+	var legacy struct {
+		LegacyTaskID            string `json:"taskId"`
+		LegacyIssueID           string `json:"issueId"`
+		LegacyParentIssueID     string `json:"parentIssueId"`
+		LegacyAgentID           string `json:"agentId"`
+		LegacyTaskAgentID       string `json:"taskAgentId"`
+		LegacyParentAgentID     string `json:"parentAgentId"`
+		LegacyParentTaskAgentID string `json:"parentTaskAgentId"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	*e = Event(current)
+	if e.ScopeID == "" {
+		e.ScopeID = legacy.LegacyTaskID
+	}
+	if e.SubjectID == "" {
+		e.SubjectID = legacy.LegacyIssueID
+	}
+	if e.ParentSubjectID == "" {
+		e.ParentSubjectID = legacy.LegacyParentIssueID
+	}
+	if e.ActorID == "" {
+		e.ActorID = legacy.LegacyAgentID
+	}
+	if e.ActorInstanceID == "" {
+		e.ActorInstanceID = legacy.LegacyTaskAgentID
+	}
+	if e.ParentActorID == "" {
+		e.ParentActorID = legacy.LegacyParentAgentID
+	}
+	if e.ParentActorInstanceID == "" {
+		e.ParentActorInstanceID = legacy.LegacyParentTaskAgentID
+	}
+	return nil
 }
 
 // Effect is a durable outbox command. AvailableAt makes timers ordinary
@@ -109,18 +139,18 @@ const (
 )
 
 type WorkItem struct {
-	ID              string     `json:"id"`
-	ParentID        string     `json:"parentId,omitempty"`
-	Title           string     `json:"title,omitempty"`
-	AssigneeID      string     `json:"assigneeId,omitempty"`
-	TaskAgentID     string     `json:"taskAgentId,omitempty"`
-	TaskAgentName   string     `json:"taskAgentName,omitempty"`
-	Status          WorkStatus `json:"status"`
-	ExecutionPhase  string     `json:"executionPhase,omitempty"`
-	SleepToken      string     `json:"sleepToken,omitempty"`
-	ProgressSummary string     `json:"progressSummary,omitempty"`
-	CurrentActivity string     `json:"currentActivity,omitempty"`
-	UpdatedAt       time.Time  `json:"updatedAt,omitempty"`
+	ID                   string     `json:"id"`
+	ParentID             string     `json:"parentId,omitempty"`
+	Title                string     `json:"title,omitempty"`
+	AssigneeID           string     `json:"assigneeId,omitempty"`
+	AssigneeInstanceID   string     `json:"assigneeInstanceId,omitempty"`
+	AssigneeInstanceName string     `json:"assigneeInstanceName,omitempty"`
+	Status               WorkStatus `json:"status"`
+	ExecutionPhase       string     `json:"executionPhase,omitempty"`
+	SleepToken           string     `json:"sleepToken,omitempty"`
+	ProgressSummary      string     `json:"progressSummary,omitempty"`
+	CurrentActivity      string     `json:"currentActivity,omitempty"`
+	UpdatedAt            time.Time  `json:"updatedAt,omitempty"`
 }
 
 func (w WorkItem) Terminal() bool {

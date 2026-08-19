@@ -1,4 +1,4 @@
-package modes
+package boardcoordination
 
 import (
 	"context"
@@ -36,8 +36,8 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 	notifyAssignment := config.NotifyAssignment == nil || *config.NotifyAssignment
 
 	switch event.Type {
-	case coordination.EventDelegationRequested:
-		request, err := decode[coordination.DelegationRequest](event.Payload)
+	case EventDelegationRequested:
+		request, err := decode[DelegationRequest](event.Payload)
 		if err != nil {
 			return nil, err
 		}
@@ -46,8 +46,8 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 			if strings.TrimSpace(child.AgentID) == "" || strings.TrimSpace(child.Prompt) == "" {
 				return nil, fmt.Errorf("board_autonomy: child %d requires agentId and prompt", index)
 			}
-			create, err := effect(coordination.EffectCreateIssue, fmt.Sprintf("board:create:%s:%d", event.ID, index), coordination.CreateIssueCommand{
-				ParentIssueID: event.IssueID, ParentAgentID: event.AgentID, ParentTaskAgentID: event.TaskAgentID, Child: child,
+			create, err := effect(EffectCreateIssue, fmt.Sprintf("board:create:%s:%d", event.ID, index), CreateIssueCommand{
+				ParentIssueID: event.SubjectID, ParentAgentID: event.ActorID, ParentTaskAgentID: event.ActorInstanceID, Child: child,
 			})
 			if err != nil {
 				return nil, err
@@ -56,19 +56,19 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 		}
 		return result, nil
 
-	case coordination.EventIssueCreated, coordination.EventIssueAssigned:
-		if event.IssueID == "" || event.AgentID == "" {
+	case EventIssueCreated, EventIssueAssigned:
+		if event.SubjectID == "" || event.ActorID == "" {
 			return nil, nil
 		}
-		enqueue, err := effect(coordination.EffectEnqueueIssue, "board:enqueue:"+event.ID, coordination.EnqueueIssueCommand{IssueID: event.IssueID, AgentID: event.AgentID})
+		enqueue, err := effect(EffectEnqueueIssue, "board:enqueue:"+event.ID, EnqueueIssueCommand{IssueID: event.SubjectID, AgentID: event.ActorID})
 		if err != nil {
 			return nil, err
 		}
 		result := []coordination.PlannedEffect{enqueue}
-		if notifyAssignment && event.ParentTaskAgentID != "" && event.ParentTaskAgentID != event.TaskAgentID {
-			relay, err := effect(coordination.EffectSendRelay, "board:assignment:"+event.ID, coordination.RelayCommand{
-				SenderID: event.ParentAgentID, SenderTaskAgentID: event.ParentTaskAgentID,
-				RecipientID: event.AgentID, RecipientTaskAgentID: event.TaskAgentID, IssueID: event.IssueID,
+		if notifyAssignment && event.ParentActorInstanceID != "" && event.ParentActorInstanceID != event.ActorInstanceID {
+			relay, err := effect(EffectSendRelay, "board:assignment:"+event.ID, RelayCommand{
+				SenderID: event.ParentActorID, SenderTaskAgentID: event.ParentActorInstanceID,
+				RecipientID: event.ActorID, RecipientTaskAgentID: event.ActorInstanceID, IssueID: event.SubjectID,
 				Body: "你收到了一条新的看板 Issue。请在手机中打开 Board，确认目标、上下文和验收要求后开始执行。",
 			})
 			if err != nil {
@@ -79,8 +79,8 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 			// Root Issues have no parent TaskAgent to send a Relay message. Deliver
 			// the assignment directly so the newly created root TaskAgent receives
 			// the same task-local wake/steer signal as delegated TaskAgents.
-			assignment, err := effect(coordination.EffectDeliverMessage, "board:assignment-delivery:"+event.ID, coordination.AgentCommand{
-				AgentID: event.AgentID, TaskAgentID: event.TaskAgentID, ExecutionID: event.ExecutionID, IssueID: event.IssueID,
+			assignment, err := effect(EffectDeliverMessage, "board:assignment-delivery:"+event.ID, AgentCommand{
+				AgentID: event.ActorID, TaskAgentID: event.ActorInstanceID, ExecutionID: event.ExecutionID, IssueID: event.SubjectID,
 				Message: "你收到了一条新的看板 Issue。请在手机中打开 Board，确认目标、上下文和验收要求后开始执行。", Delivery: "assignment",
 			})
 			if err != nil {
@@ -95,8 +95,8 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 		result = append(result, heartbeat)
 		return result, nil
 
-	case coordination.EventWaitRequested:
-		request, err := decode[coordination.WaitRequest](event.Payload)
+	case EventWaitRequested:
+		request, err := decode[WaitRequest](event.Payload)
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +104,7 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 		if seconds <= 0 {
 			seconds = config.HeartbeatIntervalSeconds
 		}
-		wake := coordination.WakeupPayload{
+		wake := WakeupPayload{
 			Kind: "sleep", RequestedAt: event.OccurredAt, WakeAfterSeconds: seconds,
 			ChildIDs: request.ChildIDs, Message: request.Message,
 		}
@@ -114,7 +114,7 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 		if snapshot.Current == nil || snapshot.Current.Terminal() {
 			return nil, nil
 		}
-		wake, err := decode[coordination.WakeupPayload](event.Payload)
+		wake, err := decode[WakeupPayload](event.Payload)
 		if err != nil {
 			return nil, err
 		}
@@ -142,8 +142,8 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 		} else if strings.TrimSpace(message) == "" {
 			message = "你主动设置的休息时间已经结束。请打开手机查看 Board 和 Relay 的最新变化，然后继续当前 Issue 中价值最高的工作。"
 		}
-		deliver, err := effect(coordination.EffectDeliverMessage, "board:wake:delivery:"+event.ID, coordination.AgentCommand{
-			AgentID: event.AgentID, TaskAgentID: event.TaskAgentID, ExecutionID: event.ExecutionID, IssueID: event.IssueID,
+		deliver, err := effect(EffectDeliverMessage, "board:wake:delivery:"+event.ID, AgentCommand{
+			AgentID: event.ActorID, TaskAgentID: event.ActorInstanceID, ExecutionID: event.ExecutionID, IssueID: event.SubjectID,
 			Message: message, Delivery: "steer",
 		})
 		if err != nil {
@@ -159,37 +159,37 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 		}
 		return result, nil
 
-	case coordination.EventIssueCompleted, coordination.EventExecutionCompleted:
+	case EventIssueCompleted, EventExecutionCompleted:
 		// A root Issue has no parent Issue to notify. CreatedBy may be "operator",
 		// but that is audit identity rather than a routable Agent recipient.
-		if event.ParentIssueID == "" || event.ParentAgentID == "" {
+		if event.ParentSubjectID == "" || event.ParentActorID == "" {
 			return nil, nil
 		}
-		completed, err := decode[coordination.Completion](event.Payload)
+		completed, err := decode[Completion](event.Payload)
 		if err != nil {
 			return nil, err
 		}
 		message := completionMessage(event, completed)
-		relay, err := effect(coordination.EffectSendRelay, "board:completed:relay:"+event.ID, coordination.RelayCommand{
-			SenderID: event.AgentID, SenderTaskAgentID: event.TaskAgentID,
-			RecipientID: event.ParentAgentID, RecipientTaskAgentID: event.ParentTaskAgentID, IssueID: event.IssueID, Body: message,
+		relay, err := effect(EffectSendRelay, "board:completed:relay:"+event.ID, RelayCommand{
+			SenderID: event.ActorID, SenderTaskAgentID: event.ActorInstanceID,
+			RecipientID: event.ParentActorID, RecipientTaskAgentID: event.ParentActorInstanceID, IssueID: event.SubjectID, Body: message,
 		})
 		if err != nil {
 			return nil, err
 		}
-		deliver, err := effect(coordination.EffectDeliverMessage, "board:completed:delivery:"+event.ID, coordination.AgentCommand{
-			AgentID: event.ParentAgentID, TaskAgentID: event.ParentTaskAgentID, IssueID: event.ParentIssueID, Message: message, Delivery: "steer",
+		deliver, err := effect(EffectDeliverMessage, "board:completed:delivery:"+event.ID, AgentCommand{
+			AgentID: event.ParentActorID, TaskAgentID: event.ParentActorInstanceID, IssueID: event.ParentSubjectID, Message: message, Delivery: "steer",
 		})
 		if err != nil {
 			return nil, err
 		}
 		return []coordination.PlannedEffect{relay, deliver}, nil
 
-	case coordination.EventRelayReceived:
-		if event.AgentID == "" {
+	case EventRelayReceived:
+		if event.ActorID == "" {
 			return nil, nil
 		}
-		relay, err := decode[coordination.RelayReceived](event.Payload)
+		relay, err := decode[RelayReceived](event.Payload)
 		if err != nil {
 			return nil, err
 		}
@@ -200,8 +200,8 @@ func (BoardAutonomy) Decide(_ context.Context, event coordination.Event, binding
 			followup = "稍后从手机 Board 中查看"
 		}
 		message := fmt.Sprintf("手机收到来自 %s 的%s（messageId: %s）：\n\n%s\n\n这是任务内消息通知。请自行判断是立即处理、回复、调整当前工作，还是%s。", fallbackText(relay.SenderName, fallbackText(relay.SenderID, "未知发送者")), channel, relay.MessageID, relay.Body, followup)
-		return one(effect(coordination.EffectDeliverMessage, "board:relay-delivery:"+event.ID, coordination.AgentCommand{
-			AgentID: event.AgentID, TaskAgentID: event.TaskAgentID, IssueID: event.IssueID, Message: message, Delivery: "steer",
+		return one(effect(EffectDeliverMessage, "board:relay-delivery:"+event.ID, AgentCommand{
+			AgentID: event.ActorID, TaskAgentID: event.ActorInstanceID, IssueID: event.SubjectID, Message: message, Delivery: "steer",
 		}))
 	default:
 		return nil, nil
@@ -219,7 +219,7 @@ func heartbeatEffect(event coordination.Event, seconds int64, key string) (coord
 	if seconds <= 0 {
 		seconds = 60
 	}
-	wake := coordination.WakeupPayload{Kind: "heartbeat", RequestedAt: event.OccurredAt, WakeAfterSeconds: seconds}
+	wake := WakeupPayload{Kind: "heartbeat", RequestedAt: event.OccurredAt, WakeAfterSeconds: seconds}
 	base := event.OccurredAt
 	if base.IsZero() {
 		base = time.Now().UTC()
@@ -228,22 +228,22 @@ func heartbeatEffect(event coordination.Event, seconds int64, key string) (coord
 	return wakeupEffect(event, wake, base.Add(time.Duration(seconds)*time.Second), key)
 }
 
-func wakeupEffect(event coordination.Event, wake coordination.WakeupPayload, availableAt time.Time, key string) (coordination.PlannedEffect, error) {
+func wakeupEffect(event coordination.Event, wake WakeupPayload, availableAt time.Time, key string) (coordination.PlannedEffect, error) {
 	raw, err := payload(wake)
 	if err != nil {
 		return coordination.PlannedEffect{}, err
 	}
 	command := coordination.ScheduleWakeupCommand{Event: coordination.Event{
-		Type: coordination.EventTimerFired, CoordinationID: event.CoordinationID, TaskID: event.TaskID,
-		IssueID: event.IssueID, ParentIssueID: event.ParentIssueID, ExecutionID: event.ExecutionID,
-		AgentID: event.AgentID, TaskAgentID: event.TaskAgentID, ParentAgentID: event.ParentAgentID, ParentTaskAgentID: event.ParentTaskAgentID, CorrelationID: event.ID, Payload: raw,
+		Type: coordination.EventTimerFired, CoordinationID: event.CoordinationID, ScopeID: event.ScopeID,
+		SubjectID: event.SubjectID, ParentSubjectID: event.ParentSubjectID, ExecutionID: event.ExecutionID,
+		ActorID: event.ActorID, ActorInstanceID: event.ActorInstanceID, ParentActorID: event.ParentActorID, ParentActorInstanceID: event.ParentActorInstanceID, CorrelationID: event.ID, Payload: raw,
 	}}
 	result, err := effect(coordination.EffectScheduleWakeup, key, command)
 	result.AvailableAt = availableAt
 	return result, err
 }
 
-func heartbeatMessage(event coordination.Event, snapshot coordination.Snapshot, wake coordination.WakeupPayload) string {
+func heartbeatMessage(event coordination.Event, snapshot coordination.Snapshot, wake WakeupPayload) string {
 	elapsed := event.OccurredAt.Sub(wake.RequestedAt)
 	if elapsed < 0 {
 		elapsed = 0
@@ -254,7 +254,7 @@ func heartbeatMessage(event coordination.Event, snapshot coordination.Snapshot, 
 	}
 	childDetails := make([]string, 0, len(snapshot.Children))
 	for _, child := range snapshot.Children {
-		owner := fallbackText(child.TaskAgentName, fallbackText(child.AssigneeID, "未分配"))
+		owner := fallbackText(child.AssigneeInstanceName, fallbackText(child.AssigneeID, "未分配"))
 		progress := fallbackText(child.ProgressSummary, "尚无进度摘要")
 		if child.CurrentActivity != "" {
 			progress += "；当前：" + child.CurrentActivity

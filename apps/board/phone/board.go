@@ -1,4 +1,4 @@
-package agentapp
+package boardphone
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	. "aegis/agentapp"
 )
 
 type BoardIssue struct {

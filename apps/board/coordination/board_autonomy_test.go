@@ -1,4 +1,4 @@
-package modes
+package boardcoordination
 
 import (
 	"context"
@@ -13,28 +13,28 @@ import (
 func TestBoardAutonomyAssignmentEnqueuesNotifiesAndSchedulesHeartbeat(t *testing.T) {
 	base := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
-		ID: "assigned", Type: coordination.EventIssueAssigned, CoordinationID: "task", TaskID: "task",
-		IssueID: "child", AgentID: "worker", TaskAgentID: "task-agent-child",
-		ParentAgentID: "worker", ParentTaskAgentID: "task-agent-parent", OccurredAt: base,
+		ID: "assigned", Type: EventIssueAssigned, CoordinationID: "task", ScopeID: "task",
+		SubjectID: "child", ActorID: "worker", ActorInstanceID: "task-agent-child",
+		ParentActorID: "worker", ParentActorInstanceID: "task-agent-parent", OccurredAt: base,
 	}, coordination.Binding{}, coordination.Snapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 3 || effects[0].Type != coordination.EffectEnqueueIssue || effects[1].Type != coordination.EffectSendRelay || effects[2].Type != coordination.EffectScheduleWakeup {
+	if len(effects) != 3 || effects[0].Type != EffectEnqueueIssue || effects[1].Type != EffectSendRelay || effects[2].Type != coordination.EffectScheduleWakeup {
 		t.Fatalf("effects=%+v", effects)
 	}
 	if !effects[2].AvailableAt.Equal(base.Add(time.Minute)) {
 		t.Fatalf("heartbeat due=%s", effects[2].AvailableAt)
 	}
 	for _, effect := range effects {
-		if effect.Type == coordination.EffectSuspendAgent || effect.Type == coordination.EffectStartSubagent {
+		if effect.Type == EffectSuspendAgent || effect.Type == EffectStartSubagent {
 			t.Fatalf("board autonomy bypassed Board or suspended parent: %+v", effects)
 		}
 	}
 	second, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
-		ID: "reassigned", Type: coordination.EventIssueAssigned, CoordinationID: "task", TaskID: "task",
-		IssueID: "child", AgentID: "worker", TaskAgentID: "task-agent-child",
-		ParentAgentID: "worker", ParentTaskAgentID: "task-agent-parent", OccurredAt: base.Add(time.Minute),
+		ID: "reassigned", Type: EventIssueAssigned, CoordinationID: "task", ScopeID: "task",
+		SubjectID: "child", ActorID: "worker", ActorInstanceID: "task-agent-child",
+		ParentActorID: "worker", ParentActorInstanceID: "task-agent-parent", OccurredAt: base.Add(time.Minute),
 	}, coordination.Binding{}, coordination.Snapshot{})
 	if err != nil {
 		t.Fatal(err)
@@ -48,16 +48,16 @@ func TestBoardAutonomyAssignmentEnqueuesNotifiesAndSchedulesHeartbeat(t *testing
 
 func TestBoardAutonomyRootAssignmentCannotBecomeResumeWake(t *testing.T) {
 	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
-		ID: "root-assigned", Type: coordination.EventIssueAssigned, CoordinationID: "task", TaskID: "task",
-		IssueID: "root", AgentID: "leader", TaskAgentID: "task-agent-root", OccurredAt: time.Now(),
+		ID: "root-assigned", Type: EventIssueAssigned, CoordinationID: "task", ScopeID: "task",
+		SubjectID: "root", ActorID: "leader", ActorInstanceID: "task-agent-root", OccurredAt: time.Now(),
 	}, coordination.Binding{}, coordination.Snapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 3 || effects[0].Type != coordination.EffectEnqueueIssue || effects[1].Type != coordination.EffectDeliverMessage || effects[2].Type != coordination.EffectScheduleWakeup {
+	if len(effects) != 3 || effects[0].Type != EffectEnqueueIssue || effects[1].Type != EffectDeliverMessage || effects[2].Type != coordination.EffectScheduleWakeup {
 		t.Fatalf("effects=%+v", effects)
 	}
-	var command coordination.AgentCommand
+	var command AgentCommand
 	if err = json.Unmarshal(effects[1].Payload, &command); err != nil {
 		t.Fatal(err)
 	}
@@ -67,24 +67,24 @@ func TestBoardAutonomyRootAssignmentCannotBecomeResumeWake(t *testing.T) {
 }
 
 func TestBoardAutonomyDelegationAlwaysCreatesChildIssues(t *testing.T) {
-	payload, _ := json.Marshal(coordination.DelegationRequest{Children: []coordination.ChildWork{
+	payload, _ := json.Marshal(DelegationRequest{Children: []ChildWork{
 		{AgentID: "child-agent", Prompt: "work independently"},
 		{AgentID: "child-agent", Prompt: "work on a second slice"},
 	}})
-	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "delegate", Type: coordination.EventDelegationRequested, CoordinationID: "task", IssueID: "parent", AgentID: "parent-agent", Payload: payload}, coordination.Binding{}, coordination.Snapshot{})
+	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "delegate", Type: EventDelegationRequested, CoordinationID: "task", SubjectID: "parent", ActorID: "parent-agent", Payload: payload}, coordination.Binding{}, coordination.Snapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 2 || effects[0].Type != coordination.EffectCreateIssue || effects[1].Type != coordination.EffectCreateIssue {
+	if len(effects) != 2 || effects[0].Type != EffectCreateIssue || effects[1].Type != EffectCreateIssue {
 		t.Fatalf("effects=%+v", effects)
 	}
 }
 
 func TestBoardAutonomyRootCompletionDoesNotNotifySyntheticParent(t *testing.T) {
-	payload, _ := json.Marshal(coordination.Completion{Result: "done", Success: true})
+	payload, _ := json.Marshal(Completion{Result: "done", Success: true})
 	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
-		ID: "root-completed", Type: coordination.EventIssueCompleted, CoordinationID: "root", IssueID: "root",
-		AgentID: "worker", ParentAgentID: "operator", OccurredAt: time.Now(), Payload: payload,
+		ID: "root-completed", Type: EventIssueCompleted, CoordinationID: "root", SubjectID: "root",
+		ActorID: "worker", ParentActorID: "operator", OccurredAt: time.Now(), Payload: payload,
 	}, coordination.Binding{}, coordination.Snapshot{})
 	if err != nil {
 		t.Fatal(err)
@@ -95,23 +95,23 @@ func TestBoardAutonomyRootCompletionDoesNotNotifySyntheticParent(t *testing.T) {
 }
 
 func TestBoardAutonomyChildCompletionTargetsRealParent(t *testing.T) {
-	payload, _ := json.Marshal(coordination.Completion{Result: "verified", Success: true, ChildID: "child"})
+	payload, _ := json.Marshal(Completion{Result: "verified", Success: true, ChildID: "child"})
 	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
-		ID: "child-completed", Type: coordination.EventIssueCompleted, CoordinationID: "root",
-		IssueID: "child", ParentIssueID: "parent", AgentID: "worker", TaskAgentID: "task-child",
-		ParentAgentID: "lead", ParentTaskAgentID: "task-parent", OccurredAt: time.Now(), Payload: payload,
+		ID: "child-completed", Type: EventIssueCompleted, CoordinationID: "root",
+		SubjectID: "child", ParentSubjectID: "parent", ActorID: "worker", ActorInstanceID: "task-child",
+		ParentActorID: "lead", ParentActorInstanceID: "task-parent", OccurredAt: time.Now(), Payload: payload,
 	}, coordination.Binding{}, coordination.Snapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 2 || effects[0].Type != coordination.EffectSendRelay || effects[1].Type != coordination.EffectDeliverMessage {
+	if len(effects) != 2 || effects[0].Type != EffectSendRelay || effects[1].Type != EffectDeliverMessage {
 		t.Fatalf("effects=%+v", effects)
 	}
-	var relay coordination.RelayCommand
+	var relay RelayCommand
 	if err = json.Unmarshal(effects[0].Payload, &relay); err != nil {
 		t.Fatal(err)
 	}
-	var delivery coordination.AgentCommand
+	var delivery AgentCommand
 	if err = json.Unmarshal(effects[1].Payload, &delivery); err != nil {
 		t.Fatal(err)
 	}
@@ -122,13 +122,13 @@ func TestBoardAutonomyChildCompletionTargetsRealParent(t *testing.T) {
 
 func TestBoardAutonomyHeartbeatDoesNotSteerActiveModelLoop(t *testing.T) {
 	base := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	payload, _ := json.Marshal(coordination.WakeupPayload{Kind: "heartbeat", RequestedAt: base.Add(-time.Minute), WakeAfterSeconds: 60})
+	payload, _ := json.Marshal(WakeupPayload{Kind: "heartbeat", RequestedAt: base.Add(-time.Minute), WakeAfterSeconds: 60})
 	snapshot := coordination.Snapshot{Current: &coordination.WorkItem{ID: "parent", Status: coordination.WorkRunning, ExecutionPhase: "active"}, Children: []coordination.WorkItem{
 		{ID: "one", Status: coordination.WorkRunning}, {ID: "two", Status: coordination.WorkSucceeded},
 	}}
 	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
-		ID: "heartbeat", Type: coordination.EventTimerFired, CoordinationID: "task", TaskID: "task",
-		IssueID: "parent", AgentID: "leader", OccurredAt: base, Payload: payload,
+		ID: "heartbeat", Type: coordination.EventTimerFired, CoordinationID: "task", ScopeID: "task",
+		SubjectID: "parent", ActorID: "leader", OccurredAt: base, Payload: payload,
 	}, coordination.Binding{}, snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -143,21 +143,21 @@ func TestBoardAutonomyHeartbeatDoesNotSteerActiveModelLoop(t *testing.T) {
 
 func TestBoardAutonomyHeartbeatWakesWaitingAgentAndRepeats(t *testing.T) {
 	base := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	payload, _ := json.Marshal(coordination.WakeupPayload{Kind: "heartbeat", RequestedAt: base.Add(-time.Minute), WakeAfterSeconds: 60})
+	payload, _ := json.Marshal(WakeupPayload{Kind: "heartbeat", RequestedAt: base.Add(-time.Minute), WakeAfterSeconds: 60})
 	snapshot := coordination.Snapshot{Current: &coordination.WorkItem{ID: "parent", Status: coordination.WorkWaiting, ExecutionPhase: "waiting_children"}, Children: []coordination.WorkItem{
 		{ID: "one", Status: coordination.WorkRunning}, {ID: "two", Status: coordination.WorkSucceeded},
 	}}
 	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{
-		ID: "heartbeat", Type: coordination.EventTimerFired, CoordinationID: "task", TaskID: "task",
-		IssueID: "parent", AgentID: "leader", OccurredAt: base, Payload: payload,
+		ID: "heartbeat", Type: coordination.EventTimerFired, CoordinationID: "task", ScopeID: "task",
+		SubjectID: "parent", ActorID: "leader", OccurredAt: base, Payload: payload,
 	}, coordination.Binding{}, snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 2 || effects[0].Type != coordination.EffectDeliverMessage || effects[1].Type != coordination.EffectScheduleWakeup {
+	if len(effects) != 2 || effects[0].Type != EffectDeliverMessage || effects[1].Type != coordination.EffectScheduleWakeup {
 		t.Fatalf("effects=%+v", effects)
 	}
-	var command coordination.AgentCommand
+	var command AgentCommand
 	if err = json.Unmarshal(effects[0].Payload, &command); err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +168,8 @@ func TestBoardAutonomyHeartbeatWakesWaitingAgentAndRepeats(t *testing.T) {
 
 func TestBoardAutonomySleepIsOneShotAndHeartbeatMayPreemptIt(t *testing.T) {
 	base := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	waitPayload, _ := json.Marshal(coordination.WaitRequest{WakeAfterSeconds: 300, Message: "resume planned review"})
-	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "sleep", Type: coordination.EventWaitRequested, CoordinationID: "task", IssueID: "issue", AgentID: "agent", OccurredAt: base, Payload: waitPayload}, coordination.Binding{}, coordination.Snapshot{})
+	waitPayload, _ := json.Marshal(WaitRequest{WakeAfterSeconds: 300, Message: "resume planned review"})
+	effects, err := (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "sleep", Type: EventWaitRequested, CoordinationID: "task", SubjectID: "issue", ActorID: "agent", OccurredAt: base, Payload: waitPayload}, coordination.Binding{}, coordination.Snapshot{})
 	if err != nil || len(effects) != 1 || effects[0].Type != coordination.EffectScheduleWakeup || !effects[0].AvailableAt.Equal(base.Add(5*time.Minute)) {
 		t.Fatalf("sleep effects=%+v err=%v", effects, err)
 	}
@@ -178,21 +178,21 @@ func TestBoardAutonomySleepIsOneShotAndHeartbeatMayPreemptIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	wakeSnapshot := coordination.Snapshot{Current: &coordination.WorkItem{ID: "issue", Status: coordination.WorkWaiting, ExecutionPhase: "sleeping", SleepToken: "sleep"}}
-	effects, err = (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "sleep-fired", Type: coordination.EventTimerFired, CoordinationID: "task", IssueID: "issue", AgentID: "agent", CorrelationID: scheduled.Event.CorrelationID, OccurredAt: base.Add(5 * time.Minute), Payload: scheduled.Event.Payload}, coordination.Binding{}, wakeSnapshot)
-	if err != nil || len(effects) != 1 || effects[0].Type != coordination.EffectDeliverMessage {
+	effects, err = (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "sleep-fired", Type: coordination.EventTimerFired, CoordinationID: "task", SubjectID: "issue", ActorID: "agent", CorrelationID: scheduled.Event.CorrelationID, OccurredAt: base.Add(5 * time.Minute), Payload: scheduled.Event.Payload}, coordination.Binding{}, wakeSnapshot)
+	if err != nil || len(effects) != 1 || effects[0].Type != EffectDeliverMessage {
 		t.Fatalf("wake effects=%+v err=%v", effects, err)
 	}
 
 	staleSnapshot := coordination.Snapshot{Current: &coordination.WorkItem{ID: "issue", Status: coordination.WorkWaiting, ExecutionPhase: "sleeping", SleepToken: "newer-sleep"}}
-	effects, err = (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "old-sleep-fired", Type: coordination.EventTimerFired, CoordinationID: "task", IssueID: "issue", AgentID: "agent", CorrelationID: scheduled.Event.CorrelationID, OccurredAt: base.Add(5 * time.Minute), Payload: scheduled.Event.Payload}, coordination.Binding{}, staleSnapshot)
+	effects, err = (BoardAutonomy{}).Decide(context.Background(), coordination.Event{ID: "old-sleep-fired", Type: coordination.EventTimerFired, CoordinationID: "task", SubjectID: "issue", ActorID: "agent", CorrelationID: scheduled.Event.CorrelationID, OccurredAt: base.Add(5 * time.Minute), Payload: scheduled.Event.Payload}, coordination.Binding{}, staleSnapshot)
 	if err != nil || len(effects) != 0 {
 		t.Fatalf("stale sleep timer was not ignored: effects=%+v err=%v", effects, err)
 	}
 }
 
-func TestRegisterBuiltinsExposesOnlyBoardAutonomy(t *testing.T) {
+func TestRegisterExposesOnlyBoardAutonomy(t *testing.T) {
 	registry := coordination.NewRegistry()
-	if err := RegisterBuiltins(registry); err != nil {
+	if err := Register(registry); err != nil {
 		t.Fatal(err)
 	}
 	modes := registry.Modes()

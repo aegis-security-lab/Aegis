@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"aegis/agenthost"
+	boardcoordination "aegis/apps/board/coordination"
 	"aegis/capability"
-	"aegis/coordination"
 	"github.com/z3r2ne/agentcore"
 	agentcoresqlite "github.com/z3r2ne/agentcore/sqlitestore"
 )
@@ -178,7 +178,7 @@ func terminalChildrenPrompt(children []Issue) string {
 	return fmt.Sprintf("所有直属子 Issue 已经结束。请在同一任务会话中检查 Phone Board/Relay 与以下结果，完成父 Issue 的整合、验证和最终交付；不要只复述子项。若子项状态为 failed 或 budget_exceeded，必须明确选择：使用 phone_board_continue_issue 重新派发同一 Issue、使用 phone_board_delegate 创建新 Issue 探索其他方向，或接受部分结果并继续。重新执行不会重置 Task 总时钟墙预算。\n\n%s", summary.String())
 }
 
-func (d *NativeSessionDelivery) DeliverCoordinationMessage(ctx context.Context, command coordination.AgentCommand) error {
+func (d *NativeSessionDelivery) DeliverCoordinationMessage(ctx context.Context, command boardcoordination.AgentCommand) error {
 	if d == nil || strings.TrimSpace(command.Message) == "" {
 		return nil
 	}

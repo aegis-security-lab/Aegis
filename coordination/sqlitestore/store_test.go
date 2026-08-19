@@ -22,7 +22,7 @@ func TestSQLiteCoordinationDecisionOutboxAndRestart(t *testing.T) {
 	base := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	registry := coordination.NewRegistry()
 	if err := registry.Register(coordination.ModeFunc{ModeName: "board", ModeVersion: "1", DecideFunc: func(context.Context, coordination.Event, coordination.Binding, coordination.Snapshot) ([]coordination.PlannedEffect, error) {
-		return []coordination.PlannedEffect{{Type: coordination.EffectEnqueueIssue, IdempotencyKey: "enqueue:issue-1", Payload: json.RawMessage(`{"issueId":"issue-1"}`)}}, nil
+		return []coordination.PlannedEffect{{Type: coordination.EffectType("enqueue_subject"), IdempotencyKey: "enqueue:issue-1", Payload: json.RawMessage(`{"issueId":"issue-1"}`)}}, nil
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestSQLiteCoordinationDecisionOutboxAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := coordination.Engine{Repository: store, Modes: registry, WorkerID: "decision", Now: func() time.Time { return base }}
-	inserted, err := engine.Submit(context.Background(), coordination.Event{ID: "event-1", Type: coordination.EventIssueAssigned, CoordinationID: "task-1", IssueID: "issue-1"})
+	inserted, err := engine.Submit(context.Background(), coordination.Event{ID: "event-1", Type: coordination.EventType("subject_assigned"), CoordinationID: "task-1", SubjectID: "issue-1"})
 	if err != nil || !inserted {
 		t.Fatalf("inserted=%v err=%v", inserted, err)
 	}
@@ -70,7 +70,7 @@ func TestSQLiteClaimsAreAtomicAndFenced(t *testing.T) {
 	defer store.Close()
 	base := time.Now().UTC()
 	_ = store.SaveBinding(context.Background(), coordination.Binding{CoordinationID: "task", Mode: "unused", Version: "1", UpdatedAt: base})
-	inserted, err := store.SubmitEvent(context.Background(), coordination.Event{ID: "event", Type: coordination.EventIssueCreated, CoordinationID: "task", OccurredAt: base})
+	inserted, err := store.SubmitEvent(context.Background(), coordination.Event{ID: "event", Type: coordination.EventType("subject_created"), CoordinationID: "task", OccurredAt: base})
 	if err != nil || !inserted {
 		t.Fatalf("inserted=%v err=%v", inserted, err)
 	}
@@ -121,14 +121,14 @@ func TestSQLiteCommitDecisionAcceptsExactExistingEffect(t *testing.T) {
 	}
 	defer store.Close()
 	base := time.Now().UTC()
-	if _, err = store.SubmitEvent(context.Background(), coordination.Event{ID: "event", Type: coordination.EventIssueCreated, CoordinationID: "task", OccurredAt: base}); err != nil {
+	if _, err = store.SubmitEvent(context.Background(), coordination.Event{ID: "event", Type: coordination.EventType("subject_created"), CoordinationID: "task", OccurredAt: base}); err != nil {
 		t.Fatal(err)
 	}
 	claim, ok, err := store.ClaimEvent(context.Background(), coordination.ClaimRequest{WorkerID: "decision", Now: base, LeaseDuration: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim ok=%v err=%v", ok, err)
 	}
-	effect := coordination.Effect{ID: "effect", EventID: "event", CoordinationID: "task", Type: coordination.EffectEnqueueIssue, IdempotencyKey: "enqueue:event", AvailableAt: base, Payload: json.RawMessage(`{"issueId":"issue"}`)}
+	effect := coordination.Effect{ID: "effect", EventID: "event", CoordinationID: "task", Type: coordination.EffectType("enqueue_subject"), IdempotencyKey: "enqueue:event", AvailableAt: base, Payload: json.RawMessage(`{"issueId":"issue"}`)}
 	payload, err := marshal(effect)
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +153,8 @@ func TestSQLiteRetriedEventDoesNotStarveFreshEvent(t *testing.T) {
 	defer store.Close()
 	base := time.Now().UTC()
 	for _, event := range []coordination.Event{
-		{ID: "retry", Type: coordination.EventIssueCreated, CoordinationID: "task", OccurredAt: base},
-		{ID: "fresh", Type: coordination.EventIssueCreated, CoordinationID: "task", OccurredAt: base.Add(time.Second)},
+		{ID: "retry", Type: coordination.EventType("subject_created"), CoordinationID: "task", OccurredAt: base},
+		{ID: "fresh", Type: coordination.EventType("subject_created"), CoordinationID: "task", OccurredAt: base.Add(time.Second)},
 	} {
 		if _, err = store.SubmitEvent(context.Background(), event); err != nil {
 			t.Fatal(err)
@@ -182,7 +182,7 @@ func TestSQLiteDelayedEffectSurvivesUntilDue(t *testing.T) {
 	defer store.Close()
 	base := time.Now().UTC()
 	_ = store.SaveBinding(context.Background(), coordination.Binding{CoordinationID: "task", Mode: "timer", Version: "1", UpdatedAt: base})
-	_, _ = store.SubmitEvent(context.Background(), coordination.Event{ID: "event", Type: coordination.EventWaitRequested, CoordinationID: "task", OccurredAt: base})
+	_, _ = store.SubmitEvent(context.Background(), coordination.Event{ID: "event", Type: coordination.EventType("wait_requested"), CoordinationID: "task", OccurredAt: base})
 	claim, ok, err := store.ClaimEvent(context.Background(), coordination.ClaimRequest{WorkerID: "decision", Now: base, LeaseDuration: time.Minute})
 	if err != nil || !ok {
 		t.Fatalf("claim ok=%v err=%v", ok, err)

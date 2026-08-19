@@ -1,13 +1,17 @@
-package agentapp
+package boardphone
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	. "aegis/agentapp"
 )
 
 type RelayThread struct {
@@ -227,4 +231,10 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func newID(prefix string) string {
+	var data [10]byte
+	_, _ = rand.Read(data[:])
+	return prefix + "_" + hex.EncodeToString(data[:])
 }

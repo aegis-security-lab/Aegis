@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"aegis/internal/control"
+	"aegis/apps/board/control"
 )
 
 func TestUncoverProviderAPIStoresAndRedactsCredentials(t *testing.T) {

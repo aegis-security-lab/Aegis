@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"aegis/internal/control"
+	"aegis/apps/board/control"
 )
 
 func TestAuthenticatedRouterProtectsEveryAPI(t *testing.T) {

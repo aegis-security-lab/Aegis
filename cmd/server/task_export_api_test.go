@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"aegis/internal/control"
+	"aegis/apps/board/control"
 )
 
 func TestTaskEvidenceDownloadAPI(t *testing.T) {

@@ -1,6 +1,6 @@
 # agentapp
 
-`agentapp` 是一个独立、无 `internal/control` 依赖的 Go 模块，用来构建同时面向人类和 AI Agent 的 HTTP 软件。
+`agentapp` 是无具体业务依赖的 Agent Phone Kernel，用来承载同时面向人类和 AI Agent 的 HTTP/文本应用界面。平台总边界见 [`../docs/architecture/agent-application-platform.md`](../docs/architecture/agent-application-platform.md)。
 
 它提供：
 
@@ -12,9 +12,9 @@
 - 幂等动作、过期页面保护、权限边界和操作审计接口；
 - 可发现、最多 20 个、按使用频率裁剪的 Phone 快捷指令；
 - 人类 Web UI 与并排 AI View；
-- Board 和 Relay 的标准 App 实现；
-- 可替换的 `BoardRepository`、`RelayRepository`；
-- 用于独立运行和验证协议的内存 Repository。
+- 通用远程 Client 与 AgentCore Capability adapter。
+
+Board、Relay、它们的 Repository 合同和协议演示已经迁入 [`../apps/board/phone`](../apps/board/phone)。Phone Kernel 不内置任何产品应用；宿主必须显式注册 Board 或其他应用的 Phone 模块。
 
 ## 独立运行
 
@@ -40,8 +40,8 @@ AGENTAPP_ADDR=:9090 go run ./cmd/agentapp
 
 ```go
 registry := agentapp.NewRegistry()
-_ = registry.Register(agentapp.NewBoardApp(productionBoardRepository))
-_ = registry.Register(agentapp.NewRelayApp(productionRelayRepository))
+_ = registry.Register(boardphone.NewCoordinatedBoardApp(productionBoardRepository, boardCoordinator))
+_ = registry.Register(boardphone.NewRelayApp(productionRelayRepository))
 
 phone := agentapp.NewPhone(registry, productionAuditor)
 server := agentapp.NewHTTPServer(registry, phone)
@@ -73,7 +73,7 @@ server := agentapp.NewAuthenticatedHTTPServer(registry, phone, agentapp.BearerTo
 
 认证服务会把 Phone Session 绑定到 Token 对应的 Task、TaskAgent 和 Agent 类型。请求不能伪造这些身份或 Token 已绑定的 Execution/Workspace；需要由一个短期服务 Token 代为创建多个 Execution 时，必须显式授予对应 bind scope。其他任务或 TaskAgent 即使获得 Session ID 也不能读取或操作页面。`NewHTTPServer` 明确用于本地开发，会信任创建会话时提交的身份。
 
-生产接入只需实现：
+Board 生产接入实现以下 Board-owned 接口（定义位于 `apps/board/phone`）：
 
 ```go
 type BoardRepository interface {
@@ -95,7 +95,7 @@ type BoardCoordinator interface {
 }
 ```
 
-需要委派、继续和休眠功能时，使用 `NewCoordinatedBoardApp(repository, coordinator)`；普通 `NewBoardApp` 仍提供列表、详情和评论。Board 与 Relay 都实现可选的 `ShortcutApp`，Phone 只会发现当前 Session 已安装 App 的快捷指令，按 `Frequency` 从高到低选择前 20 个。
+需要委派、继续和休眠功能时，使用 `boardphone.NewCoordinatedBoardApp(repository, coordinator)`；普通 `boardphone.NewBoardApp` 仍提供列表、详情和评论。Board 与 Relay 都实现可选的 `ShortcutApp`，Phone 只会发现当前 Session 已安装 App 的快捷指令，按 `Frequency` 从高到低选择前 20 个。
 
 ## HTTP 接口
 
@@ -170,4 +170,4 @@ AI 操作不使用像素坐标。页面文本会为每个 REF 输出允许动作
 
 ## 边界
 
-当前包负责协议、导航和表现层，不负责 Agent 唤醒、长期通知持久化、生产认证或 Aegis 领域模型迁移。这些能力应由宿主系统通过 Repository、Auditor 和后续 Token Verifier 适配进来。
+当前包只负责 Phone 协议、导航、会话、幂等、持久化、审计和 transport，不负责 Board、Agent 调度、DataSpace 业务模型或领域迁移。应用通过平台 SDK 申请 Agent Work，并在自己的持久化 Inbox 消费生命周期事件。

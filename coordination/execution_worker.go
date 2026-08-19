@@ -18,6 +18,7 @@ type ExecutionWorker struct {
 	Repository ExecutionRepository
 	Executor   agenthost.Runner
 	Sinks      ExecutionEventSinkFactory
+	Lifecycle  ExecutionLifecycleSink
 	Retry      ExecutionRetryPolicy
 	WorkerID   string
 
@@ -45,6 +46,7 @@ func (w *ExecutionWorker) RunNext(ctx context.Context) (outcome ExecutionOutcome
 	started := time.Now()
 	logger := observability.Default()
 	logger.Info(ctx, "coordination.execution.claimed", slog.Int("attempt", execution.Attempt), slog.Int("max_attempts", execution.MaxAttempts), slog.String("worker_id", w.WorkerID))
+	w.recordLifecycle(ctx, execution, TransitionClaimed, nil)
 	observability.DefaultMetrics().AddCounter("coordination_executions_claimed_total", 1, observability.Labels{"worker": w.WorkerID})
 	defer func() {
 		attrs := []slog.Attr{slog.String("status", string(outcome.Status)), slog.Int("attempt", outcome.Attempt), slog.Float64("duration_ms", float64(time.Since(started).Microseconds())/1000)}
@@ -74,6 +76,7 @@ func (w *ExecutionWorker) RunNext(ctx context.Context) (outcome ExecutionOutcome
 	heartbeatDone := make(chan struct{})
 	heartbeatResult := make(chan error, 1)
 	go w.heartbeat(runCtx, claim, leaseDuration, heartbeatDone, heartbeatResult, cancel)
+	w.recordLifecycle(ctx, execution, TransitionStarted, nil)
 	result, runErr := w.Executor.Run(runCtx, execution.Spec, sink)
 	close(heartbeatDone)
 	heartbeatErr := <-heartbeatResult
@@ -90,9 +93,11 @@ func (w *ExecutionWorker) RunNext(ctx context.Context) (outcome ExecutionOutcome
 			return outcome, true, err
 		}
 		outcome.Status = ExecutionSucceeded
+		w.recordLifecycle(ctx, execution, TransitionCompleted, nil)
 		return outcome, true, nil
 	}
 	outcome.RunError = runErr
+	w.recordLifecycle(ctx, execution, TransitionAttemptFailed, runErr)
 	if delay, retry := w.retryPolicy().NextExecutionRetry(execution, runErr); retry {
 		if delay < 0 {
 			delay = 0
@@ -101,13 +106,25 @@ func (w *ExecutionWorker) RunNext(ctx context.Context) (outcome ExecutionOutcome
 			return outcome, true, err
 		}
 		outcome.Status = ExecutionQueued
+		w.recordLifecycle(ctx, execution, TransitionRetryScheduled, runErr)
 		return outcome, true, nil
 	}
 	if err := w.Repository.FailExecution(ctx, FailExecutionRequest{ExecutionID: execution.ID, LeaseToken: claim.LeaseToken, Now: now, Error: runErr.Error()}); err != nil {
 		return outcome, true, err
 	}
 	outcome.Status = ExecutionFailed
+	w.recordLifecycle(ctx, execution, TransitionFailed, runErr)
 	return outcome, true, nil
+}
+
+func (w *ExecutionWorker) recordLifecycle(ctx context.Context, execution Execution, transition ExecutionTransition, runErr error) {
+	if w == nil || w.Lifecycle == nil || strings.TrimSpace(execution.Origin.WorkID) == "" {
+		return
+	}
+	if err := w.Lifecycle.RecordExecutionTransition(ctx, execution, transition, runErr); err != nil {
+		observability.Default().Error(ctx, "coordination.execution.lifecycle_publish_failed", slog.String("transition", string(transition)), slog.String("error", err.Error()))
+		observability.DefaultMetrics().AddCounter("coordination_execution_lifecycle_publish_failures_total", 1, observability.Labels{"transition": string(transition)})
+	}
 }
 
 func (w *ExecutionWorker) heartbeat(ctx context.Context, claim ExecutionClaim, leaseDuration time.Duration, done <-chan struct{}, result chan<- error, cancel context.CancelFunc) {

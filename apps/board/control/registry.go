@@ -661,6 +661,19 @@ OUTPUT RULES
 	return agents
 }
 
+// DefaultAgentProfileIDs is the public installation descriptor for the
+// Agent profiles owned by the Board application. It intentionally exposes
+// identity only; mutable prompt/configuration data remains in Board's
+// DataSpace and is resolved when an execution is prepared.
+func DefaultAgentProfileIDs() []string {
+	agents := defaultAgents(time.Time{})
+	ids := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		ids = append(ids, agent.ID)
+	}
+	return ids
+}
+
 func (s *Store) loadRegistry() error {
 	var skillRecords []skillRecord
 	if err := s.db.Order("created_at ASC").Find(&skillRecords).Error; err != nil {
