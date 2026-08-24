@@ -15,6 +15,7 @@ dist-ssr
 bin/
 /server
 *.local
+.env
 data/
 
 # Editor directories and files

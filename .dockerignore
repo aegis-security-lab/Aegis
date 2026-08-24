@@ -1,5 +1,8 @@
 .git
 .github
+.env
+.env.*
+!.env.example
 .idea
 .vscode
 data

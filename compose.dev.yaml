@@ -1,0 +1,24 @@
+services:
+  aegis:
+    image: aegis:dev
+    build:
+      target: development
+    restart: "no"
+    command: ["make", "dev-local"]
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    environment:
+      AEGIS_DATA_DIR: /var/lib/aegis
+      AEGIS_DIST: /app/dist
+    volumes:
+      - .:/app
+      - aegis-dev-node-modules:/app/node_modules
+      - aegis-dev-go-modules:/go/pkg/mod
+      - aegis-dev-go-build:/root/.cache/go-build
+      - aegis-dev-data:/var/lib/aegis
+
+volumes:
+  aegis-dev-node-modules:
+  aegis-dev-go-modules:
+  aegis-dev-go-build:
+  aegis-dev-data:

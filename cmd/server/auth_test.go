@@ -44,6 +44,11 @@ func TestAuthenticatedRouterProtectsEveryAPI(t *testing.T) {
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated API status = %d, want 401", unauthorized.Code)
 	}
+	containerHealth := httptest.NewRecorder()
+	router.ServeHTTP(containerHealth, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if containerHealth.Code != http.StatusOK {
+		t.Fatalf("container health status = %d, want 200", containerHealth.Code)
+	}
 
 	wrongBody, _ := json.Marshal(map[string]string{"password": "wrong"})
 	wrong := httptest.NewRecorder()

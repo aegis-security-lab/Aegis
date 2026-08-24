@@ -27,27 +27,48 @@ Aegis 是一个由 Go AgentCore 驱动的本地任务控制台。它把可复用
 
 ## 环境要求
 
-- Go 1.25+
-- Node.js 22.19+
-- Docker Desktop 或兼容的 Docker daemon（运行任务工具沙箱时需要）
+- Docker Desktop 或兼容的 Docker daemon
+- Docker Compose v2
+
+只有不使用容器的本地开发流程才需要 Go 1.25+ 与 Node.js 22.19+。
 
 ## 启动
 
 ```bash
 cd /Users/patrick/Code/aegis
-npm install
-AEGIS_PASSWORD='请替换为强密码' make run
+cp .env.example .env
+# 编辑 .env，至少替换 AEGIS_PASSWORD
+make up
 ```
 
-打开 `http://localhost:8080`，输入启动密码后进入界面。首次访问会进入初始化向导；模型密钥只会写入本机 `data/aegis.db`，API 与 UI 只返回是否已配置，不返回密钥内容。除登录入口外，全部 API、SSE、上传和下载都要求有效的会话 Token。
+打开 `http://localhost:8080`，输入启动密码后进入界面。首次访问会进入初始化向导；模型密钥只会写入持久化数据卷中的 `aegis.db`，API 与 UI 只返回是否已配置，不返回密钥内容。除登录入口和容器存活探针 `/healthz` 外，全部 API、SSE、上传和下载都要求有效的会话 Token。
+
+生产服务由 `compose.yaml` 启动。前端会在镜像构建阶段编译并嵌入 Go 二进制，运行容器不包含项目源码；数据保存在 `aegis-data` named volume。Aegis 需要创建隔离的任务 Worker，因此 Compose 会把宿主机的 Docker socket 挂载进应用容器。该挂载等价于宿主机 Docker 管理权限，只应在可信主机上运行。
+
+查看日志或停止服务：
+
+```bash
+make logs
+make down
+```
 
 前后端开发模式：
 
 ```bash
-AEGIS_PASSWORD='请替换为强密码' make dev
+cp .env.example .env
+# 编辑 .env，至少替换 AEGIS_PASSWORD
+make dev
 ```
 
-Vite 地址为 `http://localhost:5173`，`/api` 会代理到 `http://localhost:8080`。
+开发模式使用 `compose.dev.yaml` 覆盖生产配置：项目源码映射到容器内的 `/app`，Air 监听 Go 源码并重启后端，Vite 提供前端 HMR。依赖、Go 构建缓存和开发数据使用独立 named volume，不会写入源码目录。Vite 地址为 `http://localhost:5173`，`/api` 会代理到同一开发容器的 `http://localhost:8080`。
+
+停止开发容器：
+
+```bash
+make dev-stop
+```
+
+如需绕过容器在宿主机直接开发，仍可执行 `AEGIS_PASSWORD='...' make dev-local`。
 
 ### Release 二进制
 

@@ -197,6 +197,7 @@ func buildRouterWithApplications(store *control.Store, manager *control.Manager,
 	r := gin.New()
 	r.Use(securityHeadersMiddleware(), observabilityMiddleware(store), gin.Recovery())
 	_ = r.SetTrustedProxies(nil)
+	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok", "time": time.Now()}) })
 	if auth != nil {
 		r.POST("/auth/login", auth.login)
 	}
