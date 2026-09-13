@@ -1,0 +1,188 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh_port:
+        description: SSH port
+        required: true
+        default: "22"
+      app_port:
+        description: Public application port
+        required: true
+        default: "8080"
+      deploy_path:
+        description: Deployment directory on the server
+        required: true
+        default: /opt/aegis
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  DEPLOY_HOST: 198.46.216.110
+  IMAGE_NAME: aegis
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify source
+        run: |
+          npm ci
+          go test $(go list ./... | grep -v '/node_modules/')
+          go vet $(go list ./... | grep -v '/node_modules/')
+          npm run typecheck
+          npm run lint -- --max-warnings=0
+
+      - name: Build production image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: docker build --file Dockerfile.app --target production --build-arg "VERSION=${IMAGE_TAG}" --tag "${IMAGE_NAME}:${IMAGE_TAG}" .
+
+      - name: Export image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: docker save "${IMAGE_NAME}:${IMAGE_TAG}" | gzip > aegis-image.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-image
+          path: aegis-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aegis-image
+
+      - name: Validate deployment configuration
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          AEGIS_PASSWORD: ${{ secrets.AEGIS_PASSWORD }}
+          SSH_PORT: ${{ inputs.ssh_port }}
+          APP_PORT: ${{ inputs.app_port }}
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+        run: |
+          test -n "$DEPLOY_USER" || { echo "Missing secret: DEPLOY_USER"; exit 1; }
+          test -n "$DEPLOY_SSH_PRIVATE_KEY" || { echo "Missing secret: DEPLOY_SSH_PRIVATE_KEY"; exit 1; }
+          test -n "$DEPLOY_KNOWN_HOSTS" || { echo "Missing secret: DEPLOY_KNOWN_HOSTS"; exit 1; }
+          test -n "$AEGIS_PASSWORD" || { echo "Missing secret: AEGIS_PASSWORD"; exit 1; }
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] || { echo "ssh_port must be numeric"; exit 1; }
+          [[ "$APP_PORT" =~ ^[0-9]{1,5}$ ]] || { echo "app_port must be numeric"; exit 1; }
+          [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "deploy_path must be an absolute path without spaces"; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "DEPLOY_USER is invalid"; exit 1; }
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Create deployment files
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          APP_PORT: ${{ inputs.app_port }}
+          AEGIS_PASSWORD: ${{ secrets.AEGIS_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          cat > compose.deploy.yaml <<'COMPOSE'
+          name: aegis
+          services:
+            aegis:
+              image: ${AEGIS_IMAGE}
+              container_name: aegis
+              init: true
+              restart: unless-stopped
+              stop_grace_period: 15s
+              ports:
+                - "${AEGIS_PORT}:8080"
+              env_file: .env
+              environment:
+                AEGIS_HOST: 0.0.0.0
+                PORT: 8080
+                AEGIS_DATA_DIR: /var/lib/aegis
+                AEGIS_CONTROL_URL: http://localhost:8080
+              volumes:
+                - aegis-data:/var/lib/aegis
+                - /var/run/docker.sock:/var/run/docker.sock
+              healthcheck:
+                test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/healthz"]
+                interval: 10s
+                timeout: 3s
+                retries: 10
+                start_period: 20s
+          volumes:
+            aegis-data:
+          COMPOSE
+
+          printf 'AEGIS_IMAGE=%s:%s\n' "$IMAGE_NAME" "$IMAGE_TAG" > .env
+          printf 'AEGIS_PORT=%s\n' "$APP_PORT" >> .env
+          printf 'AEGIS_PASSWORD=%s\n' "$AEGIS_PASSWORD" >> .env
+          printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY" >> .env
+          printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" >> .env
+          printf 'OPENCODE_API_KEY=%s\n' "$OPENCODE_API_KEY" >> .env
+          printf 'AEGIS_LOG_LEVEL=info\nTZ=Asia/Shanghai\n' >> .env
+          chmod 600 .env
+
+      - name: Upload deployment package
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_PORT: ${{ inputs.ssh_port }}
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" aegis-image.tar.gz compose.deploy.yaml .env "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Start application
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_PORT: ${{ inputs.ssh_port }}
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && chmod 600 .env && docker load < aegis-image.tar.gz && docker compose --env-file .env -f compose.deploy.yaml up -d --remove-orphans && rm -f aegis-image.tar.gz && docker image prune -f"
+
+      - name: Verify deployment
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_PORT: ${{ inputs.ssh_port }}
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && for attempt in \$(seq 1 12); do if docker compose --env-file .env -f compose.deploy.yaml exec -T aegis curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null; then exit 0; fi; sleep 5; done; docker compose --env-file .env -f compose.deploy.yaml logs --tail=100 aegis; exit 1"

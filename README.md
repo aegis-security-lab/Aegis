@@ -52,6 +52,24 @@ make logs
 make down
 ```
 
+### 手动部署到生产服务器
+
+仓库包含 `.github/workflows/deploy.yml`，可在 GitHub 的 **Actions → Deploy → Run workflow** 中手动执行。工作流会先运行测试、构建生产镜像，再通过 SSH 部署到 `198.46.216.110`；服务器需要预先安装 Docker 与 Docker Compose v2。
+
+在仓库的 **Settings → Secrets and variables → Actions** 中配置：
+
+| Secret | 是否必需 | 用途 |
+| --- | --- | --- |
+| `DEPLOY_USER` | 是 | 服务器 SSH 用户，需要有执行 Docker 的权限 |
+| `DEPLOY_SSH_PRIVATE_KEY` | 是 | SSH 私钥完整内容 |
+| `DEPLOY_KNOWN_HOSTS` | 是 | 服务器 SSH host key，例如在可信环境运行 `ssh-keyscan -H 198.46.216.110` 得到的内容 |
+| `AEGIS_PASSWORD` | 是 | Aegis Web 登录密码 |
+| `OPENAI_API_KEY` | 否 | OpenAI API token |
+| `ANTHROPIC_API_KEY` | 否 | Anthropic API token |
+| `OPENCODE_API_KEY` | 否 | OpenCode API token |
+
+首次执行前，将 `DEPLOY_SSH_PRIVATE_KEY` 对应的公钥加入服务器用户的 `~/.ssh/authorized_keys`。手动执行时可覆盖 SSH 端口、应用端口和部署目录；默认分别为 `22`、`8080` 和 `/opt/aegis`。持久数据保存在服务器的 `aegis-data` Docker volume 中，后续部署不会删除该 volume。
+
 前后端开发模式：
 
 ```bash
